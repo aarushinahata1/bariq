@@ -1,6 +1,5 @@
 import { useRoute } from "wouter";
-import { useAppointments } from "@/hooks/use-appointments";
-import { useDoctors } from "@/hooks/use-doctors";
+import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { Loader2, Clock, Users, Wifi } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -8,16 +7,22 @@ import { cn } from "@/lib/utils";
 export default function PublicQueue() {
   const [, params] = useRoute("/queue/:doctorId");
   const doctorId = params?.doctorId;
-  const today = format(new Date(), "yyyy-MM-dd");
 
-  const { data: appointments, isLoading } = useAppointments({
-    date: today,
-    doctorId: doctorId || undefined,
-    status: "booked,checked_in,in_progress",
+  const { data, isLoading } = useQuery<{ doctor: any; queue: any[] }>({
+    queryKey: ["public-queue", doctorId],
+    queryFn: async () => {
+      const res = await fetch(`/api/public-queue/${doctorId}`);
+      if (!res.ok) throw new Error("Doctor not found");
+      return res.json();
+    },
+    refetchInterval: 15000,
+    refetchIntervalInBackground: true,
+    staleTime: 0,
+    enabled: !!doctorId,
   });
 
-  const { data: doctors } = useDoctors();
-  const doctor = doctors?.find((d) => d.id === doctorId);
+  const doctor = data?.doctor;
+  const queue = data?.queue || [];
 
   if (isLoading) {
     return (
@@ -38,8 +43,8 @@ export default function PublicQueue() {
     );
   }
 
-  const currentPatient = appointments?.find((a) => a.status === "in_progress");
-  const waitingList = appointments?.filter((a) => a.status === "checked_in") || [];
+  const currentPatient = queue.find((a: any) => a.status === "in_progress");
+  const waitingList = queue.filter((a: any) => a.status === "checked_in");
   const avgConsultTime = doctor.doctorProfile?.avgConsultationTime || 15;
   const totalWaitMins = waitingList.length * avgConsultTime;
 
@@ -127,7 +132,7 @@ export default function PublicQueue() {
           <div className="w-full max-w-3xl">
             <p className="text-slate-400 text-xs uppercase tracking-widest font-bold mb-4 px-1">Up Next</p>
             <div className="space-y-3">
-              {waitingList.slice(0, 5).map((apt, idx) => (
+              {waitingList.slice(0, 5).map((apt: any, idx: number) => (
                 <div
                   key={apt.id}
                   className={cn(

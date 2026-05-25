@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle } from "lucide-react";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
@@ -94,6 +94,40 @@ export default function Settings() {
   const isTrialExpired = clinic?.planStatus === "trial" && !!clinic.trialEndsAt && new Date(clinic.trialEndsAt) < now;
   const effectivePlanStatus = (isSubExpired || isTrialExpired) ? "expired" : (clinic?.planStatus ?? "trial");
 
+  const [selectedPlan, setSelectedPlan] = useState<"monthly" | "quarterly" | "annual">("quarterly");
+  const [utr, setUtr] = useState("");
+  const [upiCopied, setUpiCopied] = useState(false);
+
+  const UPI_ID = "akshatnahata05@okibl";
+  const PLANS = [
+    { key: "monthly" as const, label: "Monthly", display: "₹4,999/mo" },
+    { key: "quarterly" as const, label: "Quarterly", display: "₹12,999/qtr", note: "Save ₹1,998" },
+    { key: "annual" as const, label: "Annual", display: "₹49,999/yr", note: "Save ₹9,989" },
+  ];
+
+  const submitPayment = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", "/api/payments", { utr: utr.trim(), planType: selectedPlan });
+      if (!r.ok) throw new Error((await r.json()).message);
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/payments"] });
+      qc.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      toast({ title: "Payment submitted", description: "We'll verify and activate your account shortly." });
+      setUtr("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Submission failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  function handleUpiCopy() {
+    navigator.clipboard.writeText(UPI_ID);
+    setUpiCopied(true);
+    setTimeout(() => setUpiCopied(false), 2000);
+  }
+
   const { data: settings, isLoading } = useQuery<Record<string, any>>({
     queryKey: ["/api/settings"],
     queryFn: async () => {
@@ -134,6 +168,8 @@ export default function Settings() {
     queryKey: ["/api/payments"],
     queryFn: () => apiRequest("GET", "/api/payments").then(r => r.json()),
   });
+
+  const hasPending = payments.some((p: any) => p.status === "pending");
 
   const tabs: { id: Tab; label: string; icon: typeof MessageCircle; color: string }[] = [
     { id: "billing", label: "Plan & Billing", icon: CreditCard, color: "text-teal-700" },
@@ -238,31 +274,90 @@ export default function Settings() {
               )}
             </Card>
 
-            {/* Pricing */}
+            {/* Payment form */}
             {effectivePlanStatus !== "active" && (
-              <Card className="p-6">
-                <h2 className="font-semibold text-slate-900 mb-1">Upgrade to BariQ</h2>
-                <p className="text-sm text-slate-500 mb-5">Pay via UPI to <span className="font-mono font-semibold text-teal-700">akshatnahata05@okibl</span>, then submit your UTR below.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                  {[
-                    { label: "Monthly", price: "₹4,999/mo" },
-                    { label: "Quarterly", price: "₹12,999/qtr", note: "Save ₹1,998" },
-                    { label: "Annual", price: "₹49,999/yr", note: "Save ₹9,989" },
-                  ].map(p => (
-                    <div key={p.label} className="border border-slate-200 rounded-xl p-4 flex sm:flex-col items-center sm:text-center justify-between sm:justify-start gap-2">
-                      <p className="text-xs font-semibold text-slate-600">{p.label}</p>
-                      <div className="text-right sm:text-center">
-                        <p className="text-sm font-bold text-slate-900">{p.price}</p>
-                        {p.note && <p className="text-[10px] text-teal-600">{p.note}</p>}
-                      </div>
-                    </div>
-                  ))}
+              <Card className="p-6 space-y-5">
+                <div>
+                  <h2 className="font-semibold text-slate-900">Upgrade to BariQ</h2>
+                  <p className="text-sm text-slate-500 mt-0.5">Choose a plan, pay via UPI, then paste your UTR to activate.</p>
                 </div>
-                <a href="/settings" onClick={() => window.location.href = "/"} className="hidden" />
-                <p className="text-xs text-slate-400 text-center">
-                  Go to the payment page to submit your UTR — or{" "}
-                  <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">WhatsApp us</a>
-                </p>
+
+                {hasPending ? (
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
+                    <Clock className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-semibold text-amber-800">Payment under review</p>
+                      <p className="text-xs text-amber-700 mt-0.5">Your payment request is being verified. We'll activate your account shortly. Questions? <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="underline">WhatsApp us</a>.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Plan selector */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      {PLANS.map(p => (
+                        <button
+                          key={p.key}
+                          type="button"
+                          onClick={() => setSelectedPlan(p.key)}
+                          className={cn(
+                            "relative rounded-xl border-2 p-4 text-left transition-all",
+                            selectedPlan === p.key ? "border-teal-600 bg-teal-50" : "border-slate-200 hover:border-slate-300"
+                          )}
+                        >
+                          {p.key === "quarterly" && (
+                            <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-teal-600 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">Popular</span>
+                          )}
+                          <p className="text-xs font-semibold text-slate-600">{p.label}</p>
+                          <p className="text-base font-bold text-slate-900 mt-0.5">{p.display}</p>
+                          {p.note && <p className="text-[10px] text-teal-600 font-medium">{p.note}</p>}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Step 1 — UPI */}
+                    <div className="bg-teal-50 border border-teal-100 rounded-xl p-4 space-y-2">
+                      <p className="text-xs font-semibold text-slate-700">Step 1 — Pay via UPI</p>
+                      <div className="flex items-center gap-3 bg-white rounded-lg border border-teal-200 px-4 py-3">
+                        <span className="font-mono font-semibold text-slate-900 flex-1 text-sm">{UPI_ID}</span>
+                        <button
+                          type="button"
+                          onClick={handleUpiCopy}
+                          className="flex items-center gap-1.5 text-xs text-teal-700 font-medium hover:text-teal-800 transition-colors"
+                        >
+                          {upiCopied ? <CheckCircle className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          {upiCopied ? "Copied!" : "Copy"}
+                        </button>
+                      </div>
+                      <p className="text-xs text-slate-500">Open GPay, PhonePe, or Paytm → pay to UPI ID above → note the UTR / Ref No.</p>
+                    </div>
+
+                    {/* Step 2 — UTR */}
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold text-slate-700">Step 2 — Enter UTR / Reference Number</Label>
+                      <Input
+                        value={utr}
+                        onChange={e => setUtr(e.target.value)}
+                        placeholder="e.g. 423198765432 (12-digit UTR from your payment app)"
+                        className="font-mono h-11 rounded-xl"
+                      />
+                      <p className="text-xs text-slate-400">Find this in your UPI app under transaction details.</p>
+                    </div>
+
+                    <Button
+                      onClick={() => submitPayment.mutate()}
+                      disabled={!utr.trim() || submitPayment.isPending}
+                      className="w-full h-11 rounded-xl bg-teal-600 hover:bg-teal-700 font-semibold"
+                    >
+                      {submitPayment.isPending ? (
+                        <><RefreshCw className="w-4 h-4 mr-2 animate-spin" /> Submitting…</>
+                      ) : "Submit Payment Request"}
+                    </Button>
+                    <p className="text-center text-xs text-slate-400">
+                      Need help?{" "}
+                      <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">WhatsApp us</a>
+                    </p>
+                  </>
+                )}
               </Card>
             )}
 

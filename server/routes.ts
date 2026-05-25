@@ -242,8 +242,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
 
-      const [doctor] = await db.select().from(users).where(eq(users.id, doctorId));
-      if (!doctor) return res.status(404).json({ message: "Doctor not found" });
+      const [doctorRow] = await db.select().from(users)
+        .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
+        .where(eq(users.id, doctorId));
+      if (!doctorRow) return res.status(404).json({ message: "Doctor not found" });
 
       const todaysAppts = await db.select().from(appointments)
         .leftJoin(patients, eq(patients.id, appointments.patientId))
@@ -251,7 +253,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .orderBy(appointments.queuePosition);
 
       res.json({
-        doctor,
+        doctor: { ...doctorRow.users, doctorProfile: doctorRow.doctor_profiles || null },
         queue: todaysAppts.map(r => ({
           ...r.appointments,
           patientName: r.patients?.name || "Patient",
