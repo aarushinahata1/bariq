@@ -1,0 +1,17 @@
+[build]
+  command = "npx vite build --config client/vite.config.ts"
+  publish = "dist/public"
+
+# Proxy all /api/* calls to Render backend
+# Replace the URL below with your actual Render URL after deployment
+[[redirects]]
+  from = "/api/*"
+  to = "https://bariq.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback — serve index.html for all unmatched routes
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

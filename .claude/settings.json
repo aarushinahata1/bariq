@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(del .replit)",
+      "Bash(del replit.md)",
+      "Bash(taskkill:*)",
+      "Bash(npm run dev:*)",
+      "Bash(ping:*)"
+    ]
+  }
+}

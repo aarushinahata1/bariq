@@ -1,0 +1,12 @@
+node_modules
+dist
+*.db
+*.db-shm
+*.db-wal
+.git
+.env
+.env.local
+e2e
+e2e-screenshots
+test-results
+.cursor
