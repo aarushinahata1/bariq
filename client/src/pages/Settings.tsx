@@ -89,6 +89,11 @@ export default function Settings() {
   const qc = useQueryClient();
   const { clinic } = useAuth();
 
+  const now = new Date();
+  const isSubExpired = clinic?.planStatus === "active" && !!clinic.subscriptionEndsAt && new Date(clinic.subscriptionEndsAt) < now;
+  const isTrialExpired = clinic?.planStatus === "trial" && !!clinic.trialEndsAt && new Date(clinic.trialEndsAt) < now;
+  const effectivePlanStatus = (isSubExpired || isTrialExpired) ? "expired" : (clinic?.planStatus ?? "trial");
+
   const { data: settings, isLoading } = useQuery<Record<string, any>>({
     queryKey: ["/api/settings"],
     queryFn: async () => {
@@ -145,7 +150,7 @@ export default function Settings() {
         </div>
 
         {/* Tab strip */}
-        <div className="flex gap-2 border-b border-slate-200">
+        <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
           {tabs.map(tab => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
@@ -157,7 +162,7 @@ export default function Settings() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors",
+                  "flex items-center gap-1.5 px-3 sm:px-5 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap flex-shrink-0",
                   active
                     ? "border-teal-600 text-teal-700"
                     : "border-transparent text-slate-500 hover:text-slate-700"
@@ -190,11 +195,11 @@ export default function Settings() {
                     <span className="text-sm text-slate-500">Status</span>
                     <span className={cn(
                       "px-3 py-1 rounded-full text-xs font-bold",
-                      clinic.planStatus === "active" ? "bg-emerald-100 text-emerald-700" :
-                      clinic.planStatus === "trial" ? "bg-amber-100 text-amber-700" :
+                      effectivePlanStatus === "active" ? "bg-emerald-100 text-emerald-700" :
+                      effectivePlanStatus === "trial" ? "bg-amber-100 text-amber-700" :
                       "bg-red-100 text-red-700"
                     )}>
-                      {clinic.planStatus === "trial" ? "Free Trial" : clinic.planStatus.charAt(0).toUpperCase() + clinic.planStatus.slice(1)}
+                      {effectivePlanStatus === "trial" ? "Free Trial" : effectivePlanStatus.charAt(0).toUpperCase() + effectivePlanStatus.slice(1)}
                     </span>
                   </div>
                   {clinic.planStatus === "trial" && clinic.trialEndsAt && (
@@ -234,20 +239,22 @@ export default function Settings() {
             </Card>
 
             {/* Pricing */}
-            {clinic?.planStatus !== "active" && (
+            {effectivePlanStatus !== "active" && (
               <Card className="p-6">
                 <h2 className="font-semibold text-slate-900 mb-1">Upgrade to BariQ</h2>
                 <p className="text-sm text-slate-500 mb-5">Pay via UPI to <span className="font-mono font-semibold text-teal-700">akshatnahata05@okibl</span>, then submit your UTR below.</p>
-                <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                   {[
                     { label: "Monthly", price: "₹4,999/mo" },
                     { label: "Quarterly", price: "₹12,999/qtr", note: "Save ₹1,998" },
                     { label: "Annual", price: "₹49,999/yr", note: "Save ₹9,989" },
                   ].map(p => (
-                    <div key={p.label} className="border border-slate-200 rounded-xl p-4 text-center">
+                    <div key={p.label} className="border border-slate-200 rounded-xl p-4 flex sm:flex-col items-center sm:text-center justify-between sm:justify-start gap-2">
                       <p className="text-xs font-semibold text-slate-600">{p.label}</p>
-                      <p className="text-sm font-bold text-slate-900 mt-1">{p.price}</p>
-                      {p.note && <p className="text-[10px] text-teal-600 mt-0.5">{p.note}</p>}
+                      <div className="text-right sm:text-center">
+                        <p className="text-sm font-bold text-slate-900">{p.price}</p>
+                        {p.note && <p className="text-[10px] text-teal-600">{p.note}</p>}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -400,7 +407,7 @@ export default function Settings() {
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-slate-100">
               <a
                 href={
                   wa.provider === "meta" ? "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
@@ -419,7 +426,7 @@ export default function Settings() {
               <Button
                 onClick={() => saveMutation.mutate({ key: "whatsapp", data: wa })}
                 disabled={saveMutation.isPending}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2"
+                className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 w-full sm:w-auto"
               >
                 <Save className="w-4 h-4" />
                 {saveMutation.isPending ? "Saving…" : "Save WhatsApp Settings"}
@@ -500,7 +507,7 @@ export default function Settings() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-slate-100">
               <a
                 href={
                   sms.provider === "msg91" ? "https://docs.msg91.com"
@@ -519,7 +526,7 @@ export default function Settings() {
               <Button
                 onClick={() => saveMutation.mutate({ key: "sms", data: sms })}
                 disabled={saveMutation.isPending}
-                className="bg-teal-600 hover:bg-teal-700 text-white gap-2"
+                className="bg-teal-600 hover:bg-teal-700 text-white gap-2 w-full sm:w-auto"
               >
                 <Save className="w-4 h-4" />
                 {saveMutation.isPending ? "Saving…" : "Save SMS Settings"}

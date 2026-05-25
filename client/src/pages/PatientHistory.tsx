@@ -165,16 +165,14 @@ export default function PatientHistory() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const { data: patientData, isLoading: isLoadingPatient } = usePatient(Number(id));
-  const { data: allAppointments, isLoading: isLoadingAppts } = useAppointments();
+  const { data: patientAppointments, isLoading: isLoadingAppts } = useAppointments({ patientId: Number(id) });
   const updatePatient = useUpdatePatient();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [showFollowUp, setShowFollowUp] = useState(false);
 
   const patient = patientData;
-  const appointments = allAppointments
-    ?.filter(a => a.patientId === Number(id))
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const appointments = [...(patientAppointments || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState("");

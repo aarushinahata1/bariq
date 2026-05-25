@@ -23,16 +23,16 @@ export default function CRM() {
   const { toast } = useToast();
   const [selectedPatients, setSelectedPatients] = useState<number[]>([]);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [funnelFilter, setFunnelFilter] = useState("all");
   const [message, setMessage] = useState("");
   const [channel, setChannel] = useState<"whatsapp" | "sms">("whatsapp");
 
   const { data: patients, isLoading } = useQuery<Patient[]>({
-    queryKey: ["/api/patients", { search, status: statusFilter === "all" ? undefined : statusFilter }],
+    queryKey: ["/api/patients", { search, funnelStage: funnelFilter === "all" ? undefined : funnelFilter }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (search) params.append("search", search);
-      if (statusFilter && statusFilter !== "all") params.append("status", statusFilter);
+      // funnelStage filtering is done client-side since the API filters by patient.status
       const url = params.toString() ? `/api/patients?${params.toString()}` : "/api/patients";
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch patients");
@@ -69,14 +69,17 @@ export default function CRM() {
   };
 
   const toggleAll = () => {
-    if (selectedPatients.length === patients?.length) {
+    if (selectedPatients.length === filteredPatients.length) {
       setSelectedPatients([]);
     } else {
-      setSelectedPatients(patients?.map(p => p.id) || []);
+      setSelectedPatients(filteredPatients.map(p => p.id));
     }
   };
 
-  const filteredPatients = patients || [];
+  const filteredPatients = (patients || []).filter(p => {
+    if (funnelFilter === "all") return true;
+    return (p as any).funnelStage === funnelFilter;
+  });
 
   if (isLoading) return <Layout><Loading /></Layout>;
 
@@ -105,18 +108,16 @@ export default function CRM() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <Select value={funnelFilter} onValueChange={setFunnelFilter}>
                   <SelectTrigger className="w-full sm:w-36">
-                    <SelectValue placeholder="Status" />
+                    <SelectValue placeholder="Stage" />
                   </SelectTrigger>
                   <SelectContent position="item-aligned">
-                    <SelectItem value="all">All Status</SelectItem>
-                    <SelectItem value="booked">Booked</SelectItem>
-                    <SelectItem value="checked_in">Paid</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
-                    <SelectItem value="completed">Consulted</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                    <SelectItem value="no_show">No Show</SelectItem>
+                    <SelectItem value="all">All Stages</SelectItem>
+                    <SelectItem value="new">New</SelectItem>
+                    <SelectItem value="consulted">Consulted</SelectItem>
+                    <SelectItem value="follow_up">Follow-up</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

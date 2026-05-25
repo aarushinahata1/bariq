@@ -3,7 +3,7 @@ import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import type { InsertAppointment } from "@shared/schema";
 
-export function useAppointments(filters?: { date?: string; doctorId?: string; status?: string }) {
+export function useAppointments(filters?: { date?: string; doctorId?: string; status?: string; patientId?: number }) {
   return useQuery({
     queryKey: [api.appointments.list.path, filters],
     queryFn: async () => {
@@ -13,6 +13,7 @@ export function useAppointments(filters?: { date?: string; doctorId?: string; st
         if (filters.date) params.append("date", filters.date);
         if (filters.doctorId) params.append("doctorId", filters.doctorId);
         if (filters.status) params.append("status", filters.status);
+        if (filters.patientId) params.append("patientId", String(filters.patientId));
         url += `?${params.toString()}`;
       }
       const res = await fetch(url, { credentials: "include" });

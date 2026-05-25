@@ -69,7 +69,8 @@ function Router() {
     const now = new Date();
     const trialExpired = clinic.planStatus === "trial" && clinic.trialEndsAt && new Date(clinic.trialEndsAt) < now;
     const planExpired = clinic.planStatus === "expired" || clinic.planStatus === "cancelled";
-    if (trialExpired || planExpired) {
+    const subExpired = clinic.planStatus === "active" && clinic.subscriptionEndsAt && new Date(clinic.subscriptionEndsAt) < now;
+    if (trialExpired || planExpired || subExpired) {
       return <PaymentWall />;
     }
   }

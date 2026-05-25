@@ -34,8 +34,9 @@ export function useUpdatePatient() {
       if (!res.ok) throw new Error("Failed to update patient");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_data, { id }) => {
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.patients.get.path, id] });
     },
   });
 }

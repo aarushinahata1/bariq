@@ -280,7 +280,7 @@ export default function Appointments() {
                         {apt.patient.phone && (
                           <div className="flex items-center gap-1">
                             <a
-                              href={`https://wa.me/${apt.patient.phone.replace(/[^0-9]/g, '')}`}
+                              href={(() => { const d = apt.patient.phone.replace(/[^0-9]/g, ''); return `https://wa.me/${d.length === 10 ? '91' + d : d}`; })()}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="w-5 h-5 rounded-full bg-green-100 text-green-600 hover:bg-green-200 flex items-center justify-center"
@@ -438,7 +438,7 @@ export default function Appointments() {
                           {apt.patient.phone && (
                             <div className="flex items-center gap-1">
                               <a
-                                href={`https://wa.me/${apt.patient.phone.replace(/[^0-9]/g, '')}`}
+                                href={(() => { const d = apt.patient.phone.replace(/[^0-9]/g, ''); return `https://wa.me/${d.length === 10 ? '91' + d : d}`; })()}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="w-5 h-5 rounded-full bg-green-100 text-green-600 hover:bg-green-200 flex items-center justify-center"

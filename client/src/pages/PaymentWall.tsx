@@ -52,10 +52,10 @@ export default function PaymentWall() {
   const [utr, setUtr] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const trialExpired =
-    clinic?.planStatus === "trial" &&
-    clinic.trialEndsAt &&
-    new Date(clinic.trialEndsAt) < new Date();
+  // After auto-expire, planStatus is "expired" for both trial and subscription.
+  // Use subscriptionEndsAt as the discriminator: if it exists, they were a paying subscriber.
+  const wasSubscription = !!clinic?.subscriptionEndsAt;
+  const trialExpired = !wasSubscription;
 
   const { data: payments = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/payments"],
@@ -131,8 +131,8 @@ export default function PaymentWall() {
               </p>
               <p className={cn("text-sm mt-1", trialExpired ? "text-amber-700" : "text-red-700")}>
                 {trialExpired
-                  ? `Trial ended on ${new Date(clinic!.trialEndsAt!).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}. Subscribe to continue using BariQ.`
-                  : "Your plan has expired. Please renew to continue using BariQ."}
+                  ? `${clinic?.trialEndsAt ? `Trial ended on ${new Date(clinic.trialEndsAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}. ` : ""}Subscribe to continue using BariQ.`
+                  : `Subscription expired on ${new Date(clinic!.subscriptionEndsAt!).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}. Please renew to continue using BariQ.`}
               </p>
             </div>
           </div>

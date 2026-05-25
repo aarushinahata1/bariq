@@ -33,7 +33,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
-    staleTime: 30_000,
+    staleTime: 10_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
   });
 
   const isSuperAdmin = (data as any)?.isSuperAdmin === true;

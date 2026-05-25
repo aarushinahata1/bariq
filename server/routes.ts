@@ -145,11 +145,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const appt = await storage(req).getAppointment(id);
       if (!appt) return res.status(404).json({ message: "Appointment not found" });
 
+      if (updates.status === "checked_in" && !appt.checkInTime) {
+        updates.checkInTime = new Date();
+      }
       if (updates.status === "in_progress" && !appt.consultationStartTime) {
         updates.consultationStartTime = new Date();
       }
       if (updates.status === "completed") {
-        if (!appt.checkInTime) updates.checkInTime = new Date();
         updates.completedAt = new Date();
         await db.update(patients)
           .set({ status: "active", funnelStage: "consulted", lastContactedAt: new Date() })
@@ -262,9 +264,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── NOTIFY DELAY ──────────────────────────────────────────────────────────
 
-  app.post("/api/appointments/notify-delay", requireAuth, async (req, res) => {
+  app.post("/api/doctors/:id/delay", requireAuth, async (req, res) => {
     try {
-      const { doctorId, delayMinutes } = req.body;
+      const doctorId = req.params.id;
+      const { delayMinutes } = req.body;
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
 
@@ -443,19 +446,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── CLINIC PAYMENT SUBMISSION (from clinic) ────────────────────────────────
 
+  // Authoritative plan prices (paise) — client-sent amount is ignored
+  const PLAN_PRICES: Record<string, number> = {
+    monthly: 499900,
+    quarterly: 1299900,
+    annual: 4999900,
+  };
+
   app.post("/api/payments", requireAuth, async (req, res) => {
     try {
-      const { amount, utr, planType } = req.body;
-      if (!amount || !utr) return res.status(400).json({ message: "Amount and UTR are required" });
+      const { utr, planType } = req.body;
+      if (!utr) return res.status(400).json({ message: "UTR is required" });
+      const resolvedPlan = (PLAN_PRICES[planType] ? planType : "monthly") as string;
+      const resolvedAmount = PLAN_PRICES[resolvedPlan];
       // Block duplicate pending requests
       const existing = await db.select().from(clinicPayments)
         .where(and(eq(clinicPayments.clinicId, req.session.clinicId!), eq(clinicPayments.status, "pending")));
       if (existing.length > 0) return res.status(400).json({ message: "You already have a pending payment request" });
       const [payment] = await db.insert(clinicPayments).values({
         clinicId: req.session.clinicId!,
-        amount: Math.round(Number(amount) * 100),
+        amount: resolvedAmount,
         utr: String(utr).trim(),
-        planType: planType || "monthly",
+        planType: resolvedPlan,
         status: "pending",
         paidAt: new Date(),
       }).returning();
@@ -568,6 +580,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const { status, notes } = req.body;
       const id = Number(req.params.id);
+      const [current] = await db.select().from(clinicPayments).where(eq(clinicPayments.id, id));
+      if (!current) return res.status(404).json({ message: "Payment not found" });
+      if (current.status !== "pending") return res.status(400).json({ message: "Only pending payments can be approved or rejected" });
       const [payment] = await db.update(clinicPayments)
         .set({ status, notes })
         .where(eq(clinicPayments.id, id))

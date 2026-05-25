@@ -199,7 +199,36 @@ export default function SuperAdmin() {
           {/* Payment History */}
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
             <h2 className="font-semibold text-gray-900 mb-4">Recent Payments</h2>
-            <div className="overflow-auto max-h-64">
+
+            {/* Mobile cards */}
+            <div className="md:hidden space-y-3 max-h-64 overflow-auto">
+              {payments.length === 0 && (
+                <p className="text-center text-gray-400 py-8 text-sm">No payments yet</p>
+              )}
+              {payments.map((p: any) => (
+                <div key={p.id} className="border border-gray-100 rounded-xl p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-medium text-sm text-gray-900">{p.clinicName}</p>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0 ${paymentBadge(p.status)}`}>
+                      {p.status}
+                    </span>
+                  </div>
+                  <div className="text-xs text-gray-500 space-y-0.5">
+                    <p>{fmtAmount(p.amount)} · <span className="capitalize">{p.planType || "—"}</span></p>
+                    <p className="font-mono">UTR: {p.utr || "—"}</p>
+                  </div>
+                  {p.status === "pending" && (
+                    <div className="flex gap-1 pt-1">
+                      <Button size="sm" className="h-7 flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded" onClick={() => paymentAction.mutate({ id: p.id, status: "approved" })}>Approve</Button>
+                      <Button size="sm" variant="outline" className="h-7 flex-1 text-red-600 border-red-200 hover:bg-red-50 text-xs rounded" onClick={() => paymentAction.mutate({ id: p.id, status: "rejected" })}>Reject</Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-auto max-h-64">
               <Table>
                 <TableHeader>
                   <TableRow className="text-xs">
@@ -229,21 +258,8 @@ export default function SuperAdmin() {
                       <TableCell>
                         {p.status === "pending" && (
                           <div className="flex gap-1">
-                            <Button
-                              size="sm"
-                              className="h-7 px-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded"
-                              onClick={() => paymentAction.mutate({ id: p.id, status: "approved" })}
-                            >
-                              Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 px-2 text-red-600 border-red-200 hover:bg-red-50 text-xs rounded"
-                              onClick={() => paymentAction.mutate({ id: p.id, status: "rejected" })}
-                            >
-                              Reject
-                            </Button>
+                            <Button size="sm" className="h-7 px-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded" onClick={() => paymentAction.mutate({ id: p.id, status: "approved" })}>Approve</Button>
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-red-600 border-red-200 hover:bg-red-50 text-xs rounded" onClick={() => paymentAction.mutate({ id: p.id, status: "rejected" })}>Reject</Button>
                           </div>
                         )}
                       </TableCell>
@@ -262,7 +278,40 @@ export default function SuperAdmin() {
             <h2 className="font-semibold text-gray-900">All Clinics</h2>
             <span className="ml-auto text-sm text-gray-400">{clinics.length} clinics</span>
           </div>
-          <div className="overflow-auto">
+
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-3">
+            {clinics.length === 0 && (
+              <p className="text-center text-gray-400 py-10 text-sm">No clinics yet</p>
+            )}
+            {clinics.map((c: any) => (
+              <div key={c.id} className="border border-gray-100 rounded-xl p-4 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-gray-900 truncate">{c.name}</p>
+                    <p className="text-xs text-gray-500 truncate">{c.email}</p>
+                    {c.phone && <p className="text-xs text-gray-500">{c.phone}</p>}
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize flex-shrink-0 ${planBadge(c.planStatus)}`}>
+                    {c.planStatus}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs text-gray-500">
+                  {c.trialEndsAt && <p>Trial: {fmtDate(c.trialEndsAt)}</p>}
+                  {c.subscriptionEndsAt && <p>Sub: {fmtDate(c.subscriptionEndsAt)}</p>}
+                  <p>Joined: {fmtDate(c.createdAt)}</p>
+                </div>
+                <div className="flex items-center gap-1 flex-wrap pt-1 border-t border-gray-100">
+                  <Button size="sm" className="h-6 px-2 text-[10px] bg-emerald-600 hover:bg-emerald-700 text-white rounded" onClick={() => clinicAction.mutate({ id: c.id, action: "activate" })}>Activate</Button>
+                  <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] text-amber-600 border-amber-200 hover:bg-amber-50 rounded" onClick={() => clinicAction.mutate({ id: c.id, action: "extend-trial" })}>+Trial</Button>
+                  <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] text-red-600 border-red-200 hover:bg-red-50 rounded" onClick={() => { if (confirm(`Delete ${c.name}?`)) deleteClinic.mutate(c.id); }}>Delete</Button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow className="text-xs">

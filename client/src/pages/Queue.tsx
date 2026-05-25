@@ -59,6 +59,7 @@ const PAYMENT_METHODS = [
 
 function PrescriptionDialog({ appointment }: { appointment: any }) {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [meds, setMeds] = useState<any[]>([]);
   const [prescriptionNotes, setPrescriptionNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -97,6 +98,7 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to save");
+      queryClient.invalidateQueries({ queryKey: ["/api/prescriptions"] });
       toast({
         title: "Prescription Saved",
         description: "Digital prescription has been generated.",
@@ -339,7 +341,7 @@ export default function Queue() {
   const [receiptData, setReceiptData] = useState<{ patient: string; doctor: string; amount: string; date: string; paymentMethod: string } | null>(null);
   const [noShowTarget, setNoShowTarget] = useState<any>(null);
 
-  const { data: doctors } = useDoctors();
+  const { data: doctors, isLoading: isDoctorsLoading } = useDoctors();
   const updateAppointment = useUpdateAppointment();
 
   const weekDates = useMemo(() => {
@@ -569,7 +571,7 @@ export default function Queue() {
     setNoShowTarget(null);
   };
 
-  if (isLoading) return <Layout><Loading /></Layout>;
+  if (isLoading || isDoctorsLoading) return <Layout><Loading /></Layout>;
 
   if (!doctors?.length) {
     return (
@@ -702,7 +704,7 @@ export default function Queue() {
                         {apt.patient?.phone && (
                           <div className="flex items-center gap-1 shrink-0">
                             <a
-                              href={`https://wa.me/${apt.patient.phone.replace(/[^0-9]/g, '')}`}
+                              href={(() => { const d = apt.patient.phone.replace(/[^0-9]/g, ""); return `https://wa.me/${d.length === 10 ? "91" + d : d}`; })()}
                               target="_blank"
                               rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
