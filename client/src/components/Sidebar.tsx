@@ -52,7 +52,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     qc.clear();
-    navigate("/login");
+    window.location.href = "/login";
   }
 
   const menuItems = ALL_MENU_ITEMS.filter(item =>

@@ -27,11 +27,7 @@ function Router() {
   const { isAuthenticated, isSuperAdmin, isLoading } = useAuth();
   const [location] = useLocation();
 
-  if (isLoading) {
-    return <div className="min-h-screen flex items-center justify-center"><Loading /></div>;
-  }
-
-  // Public routes — always accessible
+  // Always-public queue routes — no auth needed, show instantly
   const isPublicQueueRoute = location.startsWith("/queue/") || location.startsWith("/patient-queue/");
   if (isPublicQueueRoute) {
     return (
@@ -42,10 +38,12 @@ function Router() {
     );
   }
 
-  // Not authenticated → show public pages or redirect
-  if (!isAuthenticated) {
-    const isAuthPage = location === "/" || location === "/login" || location === "/signup";
-    if (!isAuthPage) return <Redirect to="/login" />;
+  // Public pages (/, /login, /signup) — show immediately while auth loads.
+  // Once auth resolves, redirect logged-in users to their dashboard.
+  const isPublicPage = location === "/" || location === "/login" || location === "/signup";
+  if (isPublicPage) {
+    if (!isLoading && isSuperAdmin) return <Redirect to="/super-admin" />;
+    if (!isLoading && isAuthenticated) return <Redirect to="/dashboard" />;
     return (
       <Switch>
         <Route path="/" component={Landing} />
@@ -56,11 +54,17 @@ function Router() {
     );
   }
 
+  // Protected routes — wait for auth check before deciding
+  if (isLoading) {
+    return <div className="min-h-screen flex items-center justify-center"><Loading /></div>;
+  }
+
+  if (!isAuthenticated && !isSuperAdmin) {
+    return <Redirect to="/login" />;
+  }
+
   // Super admin
   if (isSuperAdmin) {
-    if (location === "/" || location === "/login" || location === "/signup") {
-      return <Redirect to="/super-admin" />;
-    }
     return (
       <Switch>
         <Route path="/super-admin" component={SuperAdmin} />
@@ -70,10 +74,6 @@ function Router() {
   }
 
   // Authenticated clinic user
-  if (location === "/" || location === "/login" || location === "/signup") {
-    return <Redirect to="/dashboard" />;
-  }
-
   return (
     <RoleProvider>
       <Switch>

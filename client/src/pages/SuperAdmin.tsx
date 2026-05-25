@@ -56,7 +56,7 @@ export default function SuperAdmin() {
     mutationFn: () => apiRequest("POST", "/api/auth/logout").then(r => r.json()),
     onSuccess: () => {
       qc.clear();
-      navigate("/login");
+      window.location.href = "/login";
     },
   });
 
