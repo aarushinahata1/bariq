@@ -204,6 +204,7 @@ export default function SuperAdmin() {
                 <TableHeader>
                   <TableRow className="text-xs">
                     <TableHead>Clinic</TableHead>
+                    <TableHead>Plan</TableHead>
                     <TableHead>Amount</TableHead>
                     <TableHead>UTR</TableHead>
                     <TableHead>Status</TableHead>
@@ -217,6 +218,7 @@ export default function SuperAdmin() {
                   {payments.map((p: any) => (
                     <TableRow key={p.id}>
                       <TableCell className="font-medium text-sm">{p.clinicName}</TableCell>
+                      <TableCell className="text-xs capitalize text-gray-600">{p.planType || "—"}</TableCell>
                       <TableCell className="text-sm">{fmtAmount(p.amount)}</TableCell>
                       <TableCell className="text-xs text-gray-500 font-mono">{p.utr || "—"}</TableCell>
                       <TableCell>

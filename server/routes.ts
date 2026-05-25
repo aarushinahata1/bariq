@@ -445,12 +445,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/payments", requireAuth, async (req, res) => {
     try {
-      const { amount, utr } = req.body;
+      const { amount, utr, planType } = req.body;
       if (!amount || !utr) return res.status(400).json({ message: "Amount and UTR are required" });
+      // Block duplicate pending requests
+      const existing = await db.select().from(clinicPayments)
+        .where(and(eq(clinicPayments.clinicId, req.session.clinicId!), eq(clinicPayments.status, "pending")));
+      if (existing.length > 0) return res.status(400).json({ message: "You already have a pending payment request" });
       const [payment] = await db.insert(clinicPayments).values({
         clinicId: req.session.clinicId!,
         amount: Math.round(Number(amount) * 100),
         utr: String(utr).trim(),
+        planType: planType || "monthly",
         status: "pending",
         paidAt: new Date(),
       }).returning();
@@ -571,15 +576,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       // Activate clinic when payment approved
       if (status === "approved") {
-        const existing = await db.select().from(clinics).where(eq(clinics.id, payment.clinicId));
-        const clinic = existing[0];
-        if (clinic) {
-          const subEnds = new Date();
-          subEnds.setMonth(subEnds.getMonth() + 1);
-          await db.update(clinics)
-            .set({ planStatus: "active", subscriptionEndsAt: subEnds })
-            .where(eq(clinics.id, payment.clinicId));
-        }
+        const subEnds = new Date();
+        if (payment.planType === "quarterly") subEnds.setMonth(subEnds.getMonth() + 3);
+        else if (payment.planType === "annual") subEnds.setFullYear(subEnds.getFullYear() + 1);
+        else subEnds.setMonth(subEnds.getMonth() + 1);
+        await db.update(clinics)
+          .set({ planStatus: "active", subscriptionEndsAt: subEnds })
+          .where(eq(clinics.id, payment.clinicId));
       }
       res.json(payment);
     } catch (err) {

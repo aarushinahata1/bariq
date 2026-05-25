@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight } from "lucide-react";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/hooks/use-auth";
+import { apiRequest } from "@/lib/queryClient";
 
-type Tab = "whatsapp" | "sms";
+type Tab = "billing" | "whatsapp" | "sms";
 
 const WHATSAPP_PROVIDERS = [
   { value: "meta", label: "Meta (WhatsApp Business API)" },
@@ -82,9 +84,10 @@ function StatusBadge({ enabled }: { enabled: boolean }) {
 }
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<Tab>("whatsapp");
+  const [activeTab, setActiveTab] = useState<Tab>("billing");
   const { toast } = useToast();
   const qc = useQueryClient();
+  const { clinic } = useAuth();
 
   const { data: settings, isLoading } = useQuery<Record<string, any>>({
     queryKey: ["/api/settings"],
@@ -122,7 +125,13 @@ export default function Settings() {
     },
   });
 
+  const { data: payments = [] } = useQuery<any[]>({
+    queryKey: ["/api/payments"],
+    queryFn: () => apiRequest("GET", "/api/payments").then(r => r.json()),
+  });
+
   const tabs: { id: Tab; label: string; icon: typeof MessageCircle; color: string }[] = [
+    { id: "billing", label: "Plan & Billing", icon: CreditCard, color: "text-teal-700" },
     { id: "whatsapp", label: "WhatsApp API", icon: MessageCircle, color: "text-emerald-600" },
     { id: "sms", label: "SMS API", icon: MessageSquare, color: "text-teal-700" },
   ];
@@ -161,6 +170,140 @@ export default function Settings() {
             );
           })}
         </div>
+
+        {/* Plan & Billing Panel */}
+        {activeTab === "billing" && (
+          <div className="space-y-5">
+            {/* Current plan */}
+            <Card className="p-6">
+              <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-teal-600" />
+                Current Plan
+              </h2>
+              {clinic ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                    <span className="text-sm text-slate-500">Clinic</span>
+                    <span className="text-sm font-semibold text-slate-900">{clinic.name}</span>
+                  </div>
+                  <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                    <span className="text-sm text-slate-500">Status</span>
+                    <span className={cn(
+                      "px-3 py-1 rounded-full text-xs font-bold",
+                      clinic.planStatus === "active" ? "bg-emerald-100 text-emerald-700" :
+                      clinic.planStatus === "trial" ? "bg-amber-100 text-amber-700" :
+                      "bg-red-100 text-red-700"
+                    )}>
+                      {clinic.planStatus === "trial" ? "Free Trial" : clinic.planStatus.charAt(0).toUpperCase() + clinic.planStatus.slice(1)}
+                    </span>
+                  </div>
+                  {clinic.planStatus === "trial" && clinic.trialEndsAt && (
+                    <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                      <span className="text-sm text-slate-500">Trial Ends</span>
+                      <span className={cn(
+                        "text-sm font-semibold",
+                        new Date(clinic.trialEndsAt) < new Date() ? "text-red-600" : "text-slate-900"
+                      )}>
+                        {new Date(clinic.trialEndsAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                        {new Date(clinic.trialEndsAt) > new Date() && (
+                          <span className="text-gray-400 font-normal ml-2">
+                            ({Math.max(0, Math.ceil((new Date(clinic.trialEndsAt).getTime() - Date.now()) / 86400000))} days left)
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  {clinic.planStatus === "active" && clinic.subscriptionEndsAt && (
+                    <div className="flex items-center justify-between py-3 border-b border-slate-100">
+                      <span className="text-sm text-slate-500">Subscription Valid Until</span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        {new Date(clinic.subscriptionEndsAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between py-3">
+                    <span className="text-sm text-slate-500">Member Since</span>
+                    <span className="text-sm text-slate-900">
+                      {clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—"}
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Loading plan info…</p>
+              )}
+            </Card>
+
+            {/* Pricing */}
+            {clinic?.planStatus !== "active" && (
+              <Card className="p-6">
+                <h2 className="font-semibold text-slate-900 mb-1">Upgrade to BariQ</h2>
+                <p className="text-sm text-slate-500 mb-5">Pay via UPI to <span className="font-mono font-semibold text-teal-700">akshatnahata05@okibl</span>, then submit your UTR below.</p>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  {[
+                    { label: "Monthly", price: "₹4,999/mo" },
+                    { label: "Quarterly", price: "₹12,999/qtr", note: "Save ₹1,998" },
+                    { label: "Annual", price: "₹49,999/yr", note: "Save ₹9,989" },
+                  ].map(p => (
+                    <div key={p.label} className="border border-slate-200 rounded-xl p-4 text-center">
+                      <p className="text-xs font-semibold text-slate-600">{p.label}</p>
+                      <p className="text-sm font-bold text-slate-900 mt-1">{p.price}</p>
+                      {p.note && <p className="text-[10px] text-teal-600 mt-0.5">{p.note}</p>}
+                    </div>
+                  ))}
+                </div>
+                <a href="/settings" onClick={() => window.location.href = "/"} className="hidden" />
+                <p className="text-xs text-slate-400 text-center">
+                  Go to the payment page to submit your UTR — or{" "}
+                  <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">WhatsApp us</a>
+                </p>
+              </Card>
+            )}
+
+            {/* Payment history */}
+            <Card className="p-6">
+              <h2 className="font-semibold text-slate-900 mb-4">Payment History</h2>
+              {payments.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-6">No payment requests yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {payments.map((p: any) => (
+                    <div key={p.id} className="flex items-center gap-4 p-4 rounded-xl border border-slate-100 bg-slate-50">
+                      <div className={cn(
+                        "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0",
+                        p.status === "approved" ? "bg-emerald-100" : p.status === "rejected" ? "bg-red-100" : "bg-amber-100"
+                      )}>
+                        {p.status === "approved" ? <CheckCircle className="w-4 h-4 text-emerald-600" /> :
+                         p.status === "rejected" ? <XCircle className="w-4 h-4 text-red-500" /> :
+                         <Clock className="w-4 h-4 text-amber-500" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-900">
+                          ₹{(p.amount / 100).toLocaleString("en-IN")}
+                          {p.planType && <span className="ml-2 text-xs font-normal text-slate-500 capitalize">· {p.planType}</span>}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-0.5 font-mono">UTR: {p.utr || "—"}</p>
+                        {p.notes && <p className="text-xs text-red-500 mt-0.5">{p.notes}</p>}
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <span className={cn(
+                          "px-2 py-0.5 rounded-full text-[10px] font-bold",
+                          p.status === "approved" ? "bg-emerald-100 text-emerald-700" :
+                          p.status === "rejected" ? "bg-red-100 text-red-600" :
+                          "bg-amber-100 text-amber-700"
+                        )}>
+                          {p.status.charAt(0).toUpperCase() + p.status.slice(1)}
+                        </span>
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          {new Date(p.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
 
         {/* WhatsApp Panel */}
         {activeTab === "whatsapp" && (

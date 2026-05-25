@@ -12,6 +12,7 @@ import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
 import Signup from "@/pages/Signup";
 import SuperAdmin from "@/pages/SuperAdmin";
+import PaymentWall from "@/pages/PaymentWall";
 import Dashboard from "@/pages/Dashboard";
 import Patients from "@/pages/Patients";
 import CRM from "@/pages/CRM";
@@ -24,7 +25,7 @@ import PatientHistory from "@/pages/PatientHistory";
 import Settings from "@/pages/Settings";
 
 function Router() {
-  const { isAuthenticated, isSuperAdmin, isLoading } = useAuth();
+  const { isAuthenticated, isSuperAdmin, isLoading, clinic } = useAuth();
   const [location] = useLocation();
 
   // Always-public queue routes — no auth needed, show instantly
@@ -61,6 +62,16 @@ function Router() {
 
   if (!isAuthenticated && !isSuperAdmin) {
     return <Redirect to="/login" />;
+  }
+
+  // Block access when trial/plan has expired — show payment wall
+  if (clinic) {
+    const now = new Date();
+    const trialExpired = clinic.planStatus === "trial" && clinic.trialEndsAt && new Date(clinic.trialEndsAt) < now;
+    const planExpired = clinic.planStatus === "expired" || clinic.planStatus === "cancelled";
+    if (trialExpired || planExpired) {
+      return <PaymentWall />;
+    }
   }
 
   // Super admin

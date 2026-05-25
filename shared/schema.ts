@@ -23,6 +23,7 @@ export const clinicPayments = pgTable("clinic_payments", {
   clinicId: integer("clinic_id").references(() => clinics.id).notNull(),
   amount: integer("amount").notNull(),
   utr: text("utr"),
+  planType: text("plan_type"),
   status: text("status", { enum: ["pending", "approved", "rejected"] }).default("pending").notNull(),
   notes: text("notes"),
   paidAt: timestamp("paid_at"),
