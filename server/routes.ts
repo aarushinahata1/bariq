@@ -124,6 +124,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "Cannot book appointments in the past" });
       }
 
+      // Verify patient and doctor both belong to this clinic
+      const patient = await storage(req).getPatient(data.patientId);
+      if (!patient) return res.status(403).json({ message: "Patient not found in this clinic" });
+      const doctor = await storage(req).getUser(data.doctorId);
+      if (!doctor || doctor.role !== "doctor") return res.status(403).json({ message: "Doctor not found in this clinic" });
+
       const apptDateOnly = new Date(data.date); apptDateOnly.setHours(0, 0, 0, 0);
 
       let queueNumber: number | null = null;
@@ -243,8 +249,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const [appt] = await tx.select().from(appointments).where(eq(appointments.queueToken, token));
         if (!appt) return null;
 
-        const [patient] = await tx.select().from(patients).where(eq(patients.id, appt.patientId));
-        const [doctor] = await tx.select().from(users).where(eq(users.id, appt.doctorId));
+        // Always scope patient and doctor to the appointment's own clinic
+        const [patient] = await tx.select().from(patients)
+          .where(and(eq(patients.id, appt.patientId), eq(patients.clinicId, appt.clinicId!)));
+        const [doctor] = await tx.select().from(users)
+          .where(and(eq(users.id, appt.doctorId), eq(users.clinicId, appt.clinicId!)));
         if (!patient || !doctor) return null;
 
         // Link expires when appointment date is in the past and not yet completed
@@ -261,8 +270,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           };
         }
 
+        // Scope to the appointment's clinic so position counts stay per-clinic
         const allDoctorAppts = await tx.select().from(appointments)
-          .where(and(eq(appointments.doctorId, appt.doctorId), gte(appointments.date, today), lte(appointments.date, endOfDay)))
+          .where(and(
+            eq(appointments.doctorId, appt.doctorId),
+            eq(appointments.clinicId, appt.clinicId!),
+            gte(appointments.date, today),
+            lte(appointments.date, endOfDay)
+          ))
           .orderBy(appointments.queuePosition);
 
         const aheadCount = allDoctorAppts.filter(
@@ -301,12 +316,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const [doctorRow] = await db.select().from(users)
         .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
-        .where(eq(users.id, doctorId));
+        .where(and(eq(users.id, doctorId), eq(users.role, "doctor")));
       if (!doctorRow) return res.status(404).json({ message: "Doctor not found" });
 
+      const clinicId = doctorRow.users.clinicId!;
       const todaysAppts = await db.select().from(appointments)
-        .leftJoin(patients, eq(patients.id, appointments.patientId))
-        .where(and(eq(appointments.doctorId, doctorId), gte(appointments.date, today), lte(appointments.date, endOfDay)))
+        .leftJoin(patients, and(eq(patients.id, appointments.patientId), eq(patients.clinicId, clinicId)))
+        .where(and(
+          eq(appointments.doctorId, doctorId),
+          eq(appointments.clinicId, clinicId),
+          gte(appointments.date, today),
+          lte(appointments.date, endOfDay)
+        ))
         .orderBy(appointments.queuePosition);
 
       res.json({
@@ -370,6 +391,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/bills", requireAuth, async (req, res) => {
     try {
       const data = insertBillSchema.parse(req.body);
+      // Verify the appointment belongs to this clinic before billing
+      const appt = await storage(req).getAppointment(data.appointmentId);
+      if (!appt) return res.status(403).json({ message: "Appointment not found in this clinic" });
       res.status(201).json(await storage(req).createBill(data));
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
@@ -417,6 +441,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/prescriptions", requireAuth, async (req, res) => {
     try {
       const data = insertPrescriptionSchema.parse(req.body);
+      // Verify the appointment belongs to this clinic
+      const appt = await storage(req).getAppointment(data.appointmentId);
+      if (!appt) return res.status(403).json({ message: "Appointment not found in this clinic" });
       res.status(201).json(await storage(req).createPrescription(data));
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
