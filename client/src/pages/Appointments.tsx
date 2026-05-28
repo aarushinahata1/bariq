@@ -3,7 +3,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { useAppointments, useCreateAppointment, useUpdateAppointment } from "@/hooks/use-appointments";
 import { useDoctors } from "@/hooks/use-doctors";
 import { usePatients } from "@/hooks/use-patients";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -74,20 +74,31 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
     return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
   }, [form.watch("date"), doctors, appointment.doctorId]);
 
+  useEffect(() => {
+    if (rescheduleSlots.length > 0 && !form.getValues("slot")) {
+      form.setValue("slot", rescheduleSlots[0]);
+    } else if (rescheduleSlots.length > 0 && !rescheduleSlots.includes(form.getValues("slot"))) {
+      form.setValue("slot", rescheduleSlots[0]);
+    }
+  }, [rescheduleSlots]);
+
   const onSubmit = (data: AppointmentFormValues) => {
     const [start] = data.slot.split('-');
     const appointmentDate = new Date(data.date);
     const [hours, minutes] = start.split(':');
     appointmentDate.setHours(parseInt(hours), parseInt(minutes));
 
-    updateAppointment.mutate({ 
-      id: appointment.id, 
-      updates: { date: appointmentDate.toISOString() } 
+    updateAppointment.mutate({
+      id: appointment.id,
+      updates: { date: appointmentDate.toISOString() }
     }, {
       onSuccess: () => {
         toast({ title: "Success", description: "Appointment rescheduled successfully." });
         setOpen(false);
-      }
+      },
+      onError: (err) => {
+        toast({ title: "Error", description: err.message || "Failed to reschedule", variant: "destructive" });
+      },
     });
   };
 
@@ -149,6 +160,7 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
                       )}
                     </SelectContent>
                   </Select>
+                  <FormMessage />
                 </FormItem>
               )}
             />
