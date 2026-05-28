@@ -4,9 +4,45 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function StatusCard({ data }: { data: any }) {
+  const isExpired = data.expired === true;
+  const isCancelled = data.status === "cancelled" || data.status === "no_show";
   const isCompleted = data.status === "completed";
   const isWithDoctor = data.status === "in_progress" || data.position === 0;
-  const isNext = data.position === 1 && !isWithDoctor;
+  const isNext = data.position === 1 && !isWithDoctor && !isCompleted;
+  const aheadCount: number = data.aheadCount ?? (data.position > 1 ? data.position - 1 : 0);
+
+  if (isExpired || isCancelled) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex flex-col items-center justify-center px-6">
+        <div className="w-full max-w-sm">
+          <div className="flex items-center justify-center mb-10">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-blue-500 flex items-center justify-center font-black text-white text-base">B</div>
+              <span className="font-black text-white text-xl tracking-tight">BariQ</span>
+            </div>
+          </div>
+          <div className="bg-white/10 backdrop-blur-sm rounded-3xl p-10 text-center border border-white/10">
+            <div className="text-5xl mb-4">{isCancelled ? "❌" : "🕐"}</div>
+            <h1 className="text-2xl font-bold text-white mb-2">
+              {isCancelled ? "Appointment Cancelled" : "Queue Session Ended"}
+            </h1>
+            {data.patientName && (
+              <p className="text-white/60 text-sm mb-1">{data.patientName}</p>
+            )}
+            {data.doctorName && (
+              <p className="text-blue-300/60 text-sm mb-4">Dr. {data.doctorName}</p>
+            )}
+            <p className="text-white/40 text-sm">
+              {isCancelled
+                ? "This appointment was cancelled or marked as no-show."
+                : "This queue link has expired. Please visit the clinic for assistance."}
+            </p>
+          </div>
+          <p className="text-white/20 text-xs text-center mt-8">Powered by BariQ</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex flex-col">
@@ -50,9 +86,11 @@ function StatusCard({ data }: { data: any }) {
             </div>
           ) : (
             <div className="bg-white/10 rounded-3xl p-8 text-center mb-6 backdrop-blur-sm border border-white/10">
-              <p className="text-white/50 text-xs uppercase tracking-[0.2em] font-bold mb-3">Your Position</p>
-              <div className="text-8xl font-black text-white leading-none mb-2">{data.position}</div>
-              <p className="text-blue-300 text-sm font-medium">ahead in queue</p>
+              <p className="text-white/50 text-xs uppercase tracking-[0.2em] font-bold mb-3">Your Queue Position</p>
+              <div className="text-8xl font-black text-white leading-none mb-2">#{data.position}</div>
+              <p className="text-blue-300 text-sm font-medium">
+                {aheadCount === 1 ? "1 person ahead of you" : `${aheadCount} people ahead of you`}
+              </p>
             </div>
           )}
 

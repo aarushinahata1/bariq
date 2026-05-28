@@ -5,10 +5,11 @@ import { useDoctors } from "@/hooks/use-doctors";
 import { usePatients } from "@/hooks/use-patients";
 import { useState, useMemo, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar as CalendarIcon, Plus, User, RefreshCw, ListOrdered, Search, Printer, Phone } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, User, RefreshCw, ListOrdered, Search, Printer, Phone, X } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format, isToday, isFuture, isPast, isSameDay, parseISO } from "date-fns";
 import { useForm } from "react-hook-form";
@@ -64,15 +65,16 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
     }
   });
 
+  const watchedRescheduleDate = form.watch("date");
+
   const rescheduleSlots = useMemo(() => {
-    const selectedDate = form.watch("date");
-    if (!selectedDate || !doctors) return [];
+    if (!watchedRescheduleDate || !doctors) return [];
     const doctor = doctors.find(d => d.id === appointment.doctorId);
     if (!doctor?.doctorProfile?.availability) return [];
-    const date = new Date(selectedDate);
-    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][date.getDay()];
+    const [y, mo, d] = watchedRescheduleDate.split("-").map(Number);
+    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(y, mo - 1, d).getDay()];
     return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
-  }, [form.watch("date"), doctors, appointment.doctorId]);
+  }, [watchedRescheduleDate, doctors, appointment.doctorId]);
 
   useEffect(() => {
     if (rescheduleSlots.length > 0 && !form.getValues("slot")) {
@@ -84,9 +86,9 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
 
   const onSubmit = (data: AppointmentFormValues) => {
     const [start] = data.slot.split('-');
-    const appointmentDate = new Date(data.date);
     const [hours, minutes] = start.split(':');
-    appointmentDate.setHours(parseInt(hours), parseInt(minutes));
+    const [y, mo, d] = data.date.split('-').map(Number);
+    const appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
 
     updateAppointment.mutate({
       id: appointment.id,
@@ -176,9 +178,12 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
 
 export default function Appointments() {
   const { can } = useRole();
+  const { toast } = useToast();
   const { data: appointments, isLoading } = useAppointments();
+  const updateAppointment = useUpdateAppointment();
   const { data: doctors } = useDoctors();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<any>(null);
   const [filter, setFilter] = useState("all");
   const [selectedDoctor, setSelectedDoctor] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
@@ -244,7 +249,7 @@ export default function Appointments() {
                 <SelectContent>
                   <SelectItem value="all">All Doctors</SelectItem>
                   {doctors?.map(d => (
-                    <SelectItem key={d.id} value={d.id}>Dr. {d.name}</SelectItem>
+                    <SelectItem key={d.id} value={d.id}>Dr. {d.name}{d.doctorProfile?.specialization ? ` · ${d.doctorProfile.specialization}` : ""}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -343,6 +348,21 @@ export default function Appointments() {
                     </span>
                   </div>
                 )}
+                {can("appointments:reschedule") && !["completed", "cancelled", "no_show"].includes(apt.status) && (
+                  <div className="flex items-center gap-2 pt-1">
+                    <RescheduleDialog appointment={apt} />
+                    {apt.status === "booked" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="rounded-lg h-7 text-xs text-red-500 border-red-100 hover:bg-red-50"
+                        onClick={() => setCancelTarget(apt)}
+                      >
+                        <X className="w-3 h-3 mr-1" /> Cancel
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             ))
           )}
@@ -384,7 +404,7 @@ export default function Appointments() {
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
                     {doctors?.map(d => (
-                      <SelectItem key={d.id} value={d.id}>Dr. {d.name}</SelectItem>
+                      <SelectItem key={d.id} value={d.id}>Dr. {d.name}{d.doctorProfile?.specialization ? ` · ${d.doctorProfile.specialization}` : ""}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -510,9 +530,10 @@ export default function Appointments() {
                           {apt.bill.status === 'paid' && (
                             <button
                               onClick={() => {
+                                const esc = (s: string) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
                                 const w = window.open('', '_blank');
                                 if (!w) return;
-                                w.document.write(`<html><head><title>Receipt - ${apt.patient.name}</title></head><body style="font-family:sans-serif;padding:40px;max-width:400px;margin:0 auto"><h1 style="color:#2563eb;font-size:18px">BariQ RECEIPT</h1><hr><p><strong>Patient:</strong> ${apt.patient.name}</p><p><strong>Doctor:</strong> Dr. ${apt.doctor.name}</p><p><strong>Date:</strong> ${format(new Date(apt.bill.billingDate), "PPpp")}</p><p><strong>Amount:</strong> ₹${(apt.bill.amount / 100).toFixed(0)}</p><p><strong>Status:</strong> Paid</p><hr><p style="text-align:center;font-size:12px;color:#64748b">Thank you for your visit!</p><script>window.onload=()=>{window.print();window.close()}</script></body></html>`);
+                                w.document.write(`<html><head><title>Receipt - ${esc(apt.patient.name)}</title></head><body style="font-family:sans-serif;padding:40px;max-width:400px;margin:0 auto"><h1 style="color:#2563eb;font-size:18px">BariQ RECEIPT</h1><hr><p><strong>Patient:</strong> ${esc(apt.patient.name)}</p><p><strong>Doctor:</strong> Dr. ${esc(apt.doctor.name)}</p><p><strong>Date:</strong> ${esc(format(new Date(apt.bill.billingDate), "PPpp"))}</p><p><strong>Amount:</strong> ₹${esc(String((apt.bill.amount / 100).toFixed(0)))}</p><p><strong>Status:</strong> Paid</p><hr><p style="text-align:center;font-size:12px;color:#64748b">Thank you for your visit!</p><script>window.onload=()=>{window.print();window.close()}<\/script></body></html>`);
                                 w.document.close();
                               }}
                               className="text-teal-700 hover:text-teal-800"
@@ -526,9 +547,28 @@ export default function Appointments() {
                       )}
                     </div>
                     {can("appointments:reschedule") && (
-                      <div>
+                      <div className="flex items-center gap-1">
                         {!["completed", "cancelled", "no_show"].includes(apt.status) && (
-                          <RescheduleDialog appointment={apt} />
+                          <>
+                            <RescheduleDialog appointment={apt} />
+                            {apt.status === "booked" && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-8 w-8 rounded-lg text-slate-400 hover:text-red-600"
+                                      onClick={() => setCancelTarget(apt)}
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent><p>Cancel appointment</p></TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
@@ -539,6 +579,38 @@ export default function Appointments() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={cancelTarget !== null} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Appointment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will cancel <strong>{cancelTarget?.patient?.name}</strong>'s appointment with Dr. {cancelTarget?.doctor?.name}. This cannot be easily undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Keep It</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-xl bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (!cancelTarget) return;
+                updateAppointment.mutate(
+                  { id: cancelTarget.id, updates: { status: "cancelled" } },
+                  {
+                    onSuccess: () => {
+                      toast({ title: "Appointment cancelled" });
+                      setCancelTarget(null);
+                    },
+                    onError: () => toast({ title: "Error", description: "Failed to cancel", variant: "destructive" }),
+                  }
+                );
+              }}
+            >
+              Yes, Cancel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }
@@ -552,6 +624,12 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [isQuickCheck, setIsQuickCheck] = useState(false);
 
+  const phoneValidation = z.string().min(1, "Phone is required").refine(v => {
+    const digits = v.replace(/\D/g, "");
+    return (digits.length === 10 && /^[6-9]/.test(digits)) ||
+           (digits.length === 12 && digits.startsWith("91") && /^[6-9]/.test(digits.slice(2)));
+  }, "Enter a valid 10-digit mobile number");
+
   const formSchema = useMemo(() => {
     const base = appointmentFormSchema.extend({
       patientName: z.string().optional(),
@@ -561,6 +639,8 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
     if (isNewPatient) {
       return base.extend({
         patientId: z.any().optional(),
+        patientName: z.string().min(1, "Name is required"),
+        patientPhone: phoneValidation,
       });
     }
     return base;
@@ -580,25 +660,27 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
     }
   });
 
+  const watchedDoctorId = form.watch("doctorId");
+  const watchedDate = form.watch("date");
+  const watchedStatus = form.watch("status");
+
   // Generate available time slots based on selected doctor and date
   const availableSlots = useMemo(() => {
-    const selectedDoctorId = form.watch("doctorId");
-    const selectedDate = form.watch("date");
-
-    if (!selectedDoctorId || !selectedDate || !doctors) {
-      return [];
-    }
-
-    const doctor = doctors.find(d => d.id === selectedDoctorId);
-    if (!doctor?.doctorProfile?.availability) {
-      return [];
-    }
-
-    const date = new Date(selectedDate);
-    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][date.getDay()];
-
+    if (!watchedDoctorId || !watchedDate || !doctors) return [];
+    const doctor = doctors.find(d => d.id === watchedDoctorId);
+    if (!doctor?.doctorProfile?.availability) return [];
+    const [y, mo, d] = watchedDate.split("-").map(Number);
+    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(y, mo - 1, d).getDay()];
     return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
-  }, [form.watch("doctorId"), form.watch("date"), doctors]);
+  }, [watchedDoctorId, watchedDate, doctors]);
+
+  useEffect(() => {
+    if (availableSlots.length > 0 && !form.getValues("slot")) {
+      form.setValue("slot", availableSlots[0]);
+    } else if (availableSlots.length > 0 && !availableSlots.includes(form.getValues("slot"))) {
+      form.setValue("slot", availableSlots[0]);
+    }
+  }, [availableSlots]);
 
   const onSubmit = async (data: any) => {
     try {
@@ -630,7 +712,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         return;
       }
 
-      let appointmentDate = new Date(data.date);
+      let appointmentDate: Date;
       let finalStatus = data.status;
       let finalReason = data.reason;
 
@@ -640,7 +722,8 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
       } else {
         const [start] = data.slot.split('-');
         const [hours, minutes] = start.split(':');
-        appointmentDate.setHours(parseInt(hours), parseInt(minutes));
+        const [y, mo, d] = data.date.split('-').map(Number);
+        appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
       }
 
       const appointmentData = {
@@ -803,7 +886,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                       </FormControl>
                       <SelectContent>
                         {doctors?.map(d => (
-                          <SelectItem key={d.id} value={d.id}>Dr. {d.name}</SelectItem>
+                          <SelectItem key={d.id} value={d.id}>Dr. {d.name}{d.doctorProfile?.specialization ? ` · ${d.doctorProfile.specialization}` : ""}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -813,7 +896,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
               />
             </div>
             
-            {form.watch("status") !== "checked_in" && (
+            {watchedStatus !== "checked_in" && (
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -843,7 +926,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                         <SelectContent>
                           {availableSlots.length === 0 ? (
                             <div className="px-2 py-4 text-center text-sm text-slate-500">
-                              {form.watch("doctorId") && form.watch("date")
+                              {watchedDoctorId && watchedDate
                                 ? "No availability for this day"
                                 : "Select doctor and date first"}
                             </div>
@@ -878,9 +961,9 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
             <Button 
               type="submit" 
               disabled={createAppointment.isPending} 
-              className={`w-full rounded-xl h-12 font-semibold mt-4 ${form.watch("status") === 'checked_in' ? 'bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20' : ''}`}
+              className={`w-full rounded-xl h-12 font-semibold mt-4 ${watchedStatus === 'checked_in' ? 'bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20' : ''}`}
             >
-              {createAppointment.isPending ? "Booking..." : (form.watch("status") === 'checked_in' ? "Create Emergency Entry" : "Confirm Booking")}
+              {createAppointment.isPending ? "Booking..." : (watchedStatus === 'checked_in' ? "Create Emergency Entry" : "Confirm Booking")}
             </Button>
           </form>
         </Form>

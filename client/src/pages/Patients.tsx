@@ -1,7 +1,7 @@
 ﻿import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { usePatients, useCreatePatient } from "@/hooks/use-patients";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -54,10 +54,16 @@ const LAST_STATUS_LABELS: Record<string, string> = {
 export default function Patients() {
   const { can } = useRole();
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [, setLocation] = useLocation();
-  const { data: patients, isLoading } = usePatients({ search });
+  const { data: patients, isLoading } = usePatients({ search: debouncedSearch });
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const filteredPatients = useMemo(() => {
     if (!patients) return [];
@@ -74,7 +80,7 @@ export default function Patients() {
     };
   }, [patients]);
 
-  if (isLoading) return <Layout><Loading /></Layout>;
+  if (isLoading && !patients) return <Layout><Loading /></Layout>;
 
   return (
     <Layout>
@@ -242,6 +248,7 @@ export default function Patients() {
 function CreatePatientDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const { toast } = useToast();
   const createPatient = useCreatePatient();
+  const { data: allPatients } = usePatients();
 
   const form = useForm<InsertPatient>({
     resolver: zodResolver(insertPatientSchema),
@@ -249,6 +256,16 @@ function CreatePatientDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   });
 
   const onSubmit = (data: InsertPatient) => {
+    const normalized = data.phone.replace(/\D/g, "");
+    const duplicate = allPatients?.find(p => p.phone.replace(/\D/g, "") === normalized);
+    if (duplicate) {
+      toast({
+        title: "Duplicate phone number",
+        description: `${duplicate.name} is already registered with this number.`,
+        variant: "destructive",
+      });
+      return;
+    }
     createPatient.mutate(data as any, {
       onSuccess: () => {
         toast({ title: "Patient added", description: "Record created successfully." });

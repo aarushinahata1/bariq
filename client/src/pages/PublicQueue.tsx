@@ -1,12 +1,20 @@
 import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
+import { useState, useEffect } from "react";
 import { Loader2, Clock, Users, Wifi } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function PublicQueue() {
   const [, params] = useRoute("/queue/:doctorId");
   const doctorId = params?.doctorId;
+
+  // Live clock — ticks every second
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const { data, isLoading } = useQuery<{ doctor: any; queue: any[] }>({
     queryKey: ["public-queue", doctorId],
@@ -43,8 +51,19 @@ export default function PublicQueue() {
     );
   }
 
+  // Resolve doctor display name — users table has both `name` and `firstName`/`lastName`
+  const doctorName =
+    doctor.name ||
+    [doctor.firstName, doctor.lastName].filter(Boolean).join(" ") ||
+    "Doctor";
+
   const currentPatient = queue.find((a: any) => a.status === "in_progress");
-  const waitingList = queue.filter((a: any) => a.status === "checked_in");
+
+  // Include both booked (appointment exists) and checked_in (arrived + paid) patients
+  const waitingList = queue
+    .filter((a: any) => a.status === "checked_in" || a.status === "booked")
+    .sort((a: any, b: any) => (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity));
+
   const avgConsultTime = doctor.doctorProfile?.avgConsultationTime || 15;
   const totalWaitMins = waitingList.length * avgConsultTime;
 
@@ -63,7 +82,7 @@ export default function PublicQueue() {
           <Wifi className="w-4 h-4 text-green-500" />
           <span className="hidden sm:inline">Live</span>
           <span className="text-slate-600">•</span>
-          <span>{format(new Date(), "hh:mm a")}</span>
+          <span className="tabular-nums">{format(now, "hh:mm:ss a")}</span>
         </div>
       </div>
 
@@ -71,7 +90,7 @@ export default function PublicQueue() {
         {/* Doctor info */}
         <div className="text-center mb-12">
           <div className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-slate-800 text-5xl mb-5 shadow-2xl">👨‍⚕️</div>
-          <h1 className="text-4xl font-black tracking-tight mb-1">Dr. {doctor.name}</h1>
+          <h1 className="text-4xl font-black tracking-tight mb-1">Dr. {doctorName}</h1>
           <p className="text-blue-400 font-semibold text-lg">
             {doctor.doctorProfile?.specialization || "General Physician"}
           </p>
@@ -132,40 +151,59 @@ export default function PublicQueue() {
           <div className="w-full max-w-3xl">
             <p className="text-slate-400 text-xs uppercase tracking-widest font-bold mb-4 px-1">Up Next</p>
             <div className="space-y-3">
-              {waitingList.slice(0, 5).map((apt: any, idx: number) => (
-                <div
-                  key={apt.id}
-                  className={cn(
-                    "flex items-center justify-between p-5 rounded-2xl border transition-colors",
-                    idx === 0
-                      ? "bg-green-900/30 border-green-700/50"
-                      : "bg-slate-800 border-slate-700/50"
-                  )}
-                >
-                  <div className="flex items-center gap-4">
-                    <div className={cn(
-                      "w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg",
-                      idx === 0 ? "bg-green-600 text-white" : "bg-slate-700 text-slate-300"
+              {waitingList.slice(0, 5).map((apt: any, idx: number) => {
+                const isCheckedIn = apt.status === "checked_in";
+                const isFirst = idx === 0;
+                return (
+                  <div
+                    key={apt.id}
+                    className={cn(
+                      "flex items-center justify-between p-5 rounded-2xl border transition-colors",
+                      isFirst && isCheckedIn
+                        ? "bg-green-900/30 border-green-700/50"
+                        : isFirst
+                        ? "bg-yellow-900/20 border-yellow-700/40"
+                        : "bg-slate-800 border-slate-700/50"
+                    )}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className={cn(
+                        "w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg",
+                        isFirst && isCheckedIn ? "bg-green-600 text-white" :
+                        isFirst ? "bg-yellow-600 text-white" :
+                        "bg-slate-700 text-slate-300"
+                      )}>
+                        {apt.queuePosition ?? idx + 1}
+                      </div>
+                      <div>
+                        <p className={cn(
+                          "font-bold text-lg",
+                          isFirst && isCheckedIn ? "text-green-300" :
+                          isFirst ? "text-yellow-300" :
+                          "text-slate-200"
+                        )}>
+                          Token #{apt.queuePosition ?? idx + 1}
+                        </p>
+                        <p className="text-slate-500 text-sm">
+                          Est. wait: ~{(idx + 1) * avgConsultTime} min
+                        </p>
+                      </div>
+                    </div>
+                    <span className={cn(
+                      "px-3 py-1.5 rounded-full text-xs font-bold uppercase",
+                      isFirst && isCheckedIn ? "bg-green-600/30 text-green-400" :
+                      isFirst ? "bg-yellow-600/30 text-yellow-400" :
+                      isCheckedIn ? "bg-blue-900/30 text-blue-400" :
+                      "bg-slate-700 text-slate-400"
                     )}>
-                      {apt.queuePosition ?? idx + 1}
-                    </div>
-                    <div>
-                      <p className={cn("font-bold text-lg", idx === 0 ? "text-green-300" : "text-slate-200")}>
-                        Token #{apt.queuePosition ?? idx + 1}
-                      </p>
-                      <p className="text-slate-500 text-sm">
-                        Est. wait: ~{(idx + 1) * avgConsultTime} min
-                      </p>
-                    </div>
+                      {isFirst && isCheckedIn ? "You're next!" :
+                       isFirst ? "Up soon" :
+                       isCheckedIn ? "Paid" :
+                       "Waiting"}
+                    </span>
                   </div>
-                  <span className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-bold uppercase",
-                    idx === 0 ? "bg-green-600/30 text-green-400" : "bg-slate-700 text-slate-400"
-                  )}>
-                    {idx === 0 ? "You're next!" : "Waiting"}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
               {waitingList.length > 5 && (
                 <p className="text-center text-slate-500 text-sm pt-2">+{waitingList.length - 5} more in queue</p>
               )}

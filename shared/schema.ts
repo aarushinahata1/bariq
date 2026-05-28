@@ -223,7 +223,15 @@ export const insertClinicSchema = z.object({
 export const insertPrescriptionSchema = createInsertSchema(prescriptions).omit({ id: true, createdAt: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertDoctorProfileSchema = createInsertSchema(doctorProfiles).omit({ id: true });
-export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true });
+export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true }).extend({
+  name: z.string().min(1, "Name is required"),
+  phone: z.string().min(1, "Phone is required").refine(v => {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length === 10) return /^[6-9]/.test(digits);
+    if (digits.length === 12) return digits.startsWith("91") && /^[6-9]/.test(digits.slice(2));
+    return false;
+  }, "Enter a valid 10-digit mobile number"),
+});
 export const insertAppointmentSchema = createInsertSchema(appointments).omit({ id: true, createdAt: true, queueNumber: true, queuePosition: true, queueToken: true }).extend({
   doctorId: z.string().min(1, "Doctor is required"),
   patientId: z.coerce.number().min(1, "Patient is required"),

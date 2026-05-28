@@ -136,6 +136,8 @@ export const api = {
           completedToday: z.number(),
           avgWaitTime: z.number(),
           totalRevenue: z.number(),
+          totalPending: z.number(),
+          totalCollected: z.number(),
           weeklyData: z.array(z.object({
             date: z.string(),
             patients: z.number(),

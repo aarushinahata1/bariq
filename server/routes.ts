@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { getStorage } from "./storage";
 import { api } from "@shared/routes";
-import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles } from "@shared/schema";
+import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql, count, sum } from "drizzle-orm";
 import { z } from "zod";
@@ -34,7 +34,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/patients/:id", requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      res.json(await storage(req).updatePatient(id, req.body));
+      // Strip clinicId so callers cannot reassign a patient to another clinic
+      const { clinicId: _cid, ...safeUpdates } = req.body;
+      res.json(await storage(req).updatePatient(id, safeUpdates));
     } catch (err) {
       res.status(400).json({ message: "Failed to update patient" });
     }
@@ -88,6 +90,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.put(api.doctors.updateProfile.path, requireAuth, async (req, res) => {
     try {
       const userId = req.params.id;
+      // Confirm the doctor belongs to this clinic before updating
+      const doctor = await storage(req).getUser(userId);
+      if (!doctor) return res.status(404).json({ message: "Doctor not found" });
       const { name, ...profileUpdates } = req.body;
       if (name) await storage(req).updateUser(userId, { name });
       res.json(await storage(req).updateDoctorProfile(userId, profileUpdates));
@@ -119,16 +124,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: "Cannot book appointments in the past" });
       }
 
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const todaysAppts = await storage(req).getAppointments({ date: today, doctorId: data.doctorId });
-      const maxQueue = todaysAppts.reduce((m, a) => Math.max(m, a.queueNumber || 0), 0);
-      const maxPos = todaysAppts.reduce((m, a) => Math.max(m, a.queuePosition || 0), 0);
+      const apptDateOnly = new Date(data.date); apptDateOnly.setHours(0, 0, 0, 0);
+
+      let queueNumber: number | null = null;
+      let queuePosition: number | null = null;
+      let queueToken: string | null = null;
+
+      if (!data.isQuickCheck) {
+        const todaysAppts = await storage(req).getAppointments({ date: apptDateOnly, doctorId: data.doctorId });
+        const maxQueue = todaysAppts.reduce((m, a) => Math.max(m, a.queueNumber || 0), 0);
+        const maxPos = todaysAppts.reduce((m, a) => Math.max(m, a.queuePosition || 0), 0);
+        queueNumber = maxQueue + 1;
+        queuePosition = maxPos + 1;
+        queueToken = nanoid(8);
+      }
 
       const appt = await storage(req).createAppointment({
         ...data,
-        queueNumber: maxQueue + 1,
-        queuePosition: maxPos + 1,
-        queueToken: nanoid(8),
+        queueNumber,
+        queuePosition,
+        queueToken,
       } as any);
       res.status(201).json(appt);
     } catch (err) {
@@ -141,7 +156,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch(api.appointments.update.path, requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const updates = req.body;
+      // Strip fields that must never be changed via this endpoint
+      const { clinicId: _cid, patientId: _pid, ...updates } = req.body;
       const appt = await storage(req).getAppointment(id);
       if (!appt) return res.status(404).json({ message: "Appointment not found" });
 
@@ -177,14 +193,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/queue/reorder", requireAuth, async (req, res) => {
     try {
       const { orderedAppointmentIds } = req.body;
-      if (!Array.isArray(orderedAppointmentIds)) {
-        return res.status(400).json({ message: "orderedAppointmentIds array is required" });
+      if (
+        !Array.isArray(orderedAppointmentIds) ||
+        orderedAppointmentIds.length === 0 ||
+        !orderedAppointmentIds.every((id: unknown) => Number.isInteger(id))
+      ) {
+        return res.status(400).json({ message: "orderedAppointmentIds must be a non-empty array of integers" });
       }
       await db.transaction(async (tx) => {
+        // Fetch current positions for this set — we re-use the same position
+        // values (just re-assigned to the new ordering) so other slots' patients
+        // are never displaced.
+        const existing = await tx
+          .select({ id: appointments.id, queuePosition: appointments.queuePosition })
+          .from(appointments)
+          .where(and(
+            sql`${appointments.id} IN (${sql.join(orderedAppointmentIds.map((id: number) => sql`${id}`), sql`, `)})`,
+            eq(appointments.clinicId, req.session.clinicId!)
+          ));
+
+        const sortedPositions = existing
+          .map(a => a.queuePosition ?? 0)
+          .sort((a, b) => a - b);
+
         for (let i = 0; i < orderedAppointmentIds.length; i++) {
           await tx.update(appointments)
-            .set({ queuePosition: i + 1 })
-            .where(and(eq(appointments.id, orderedAppointmentIds[i]), eq(appointments.clinicId, req.session.clinicId!)));
+            .set({ queuePosition: sortedPositions[i] ?? i + 1 })
+            .where(and(
+              eq(appointments.id, orderedAppointmentIds[i]),
+              eq(appointments.clinicId, req.session.clinicId!)
+            ));
         }
       });
       res.json({ success: true });
@@ -204,24 +242,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const result = await db.transaction(async (tx) => {
         const [appt] = await tx.select().from(appointments).where(eq(appointments.queueToken, token));
         if (!appt) return null;
+
         const [patient] = await tx.select().from(patients).where(eq(patients.id, appt.patientId));
         const [doctor] = await tx.select().from(users).where(eq(users.id, appt.doctorId));
         if (!patient || !doctor) return null;
 
+        // Link expires when appointment date is in the past and not yet completed
+        const apptDate = new Date(appt.date); apptDate.setHours(0, 0, 0, 0);
+        if (apptDate < today && appt.status !== "completed") {
+          return {
+            expired: true,
+            status: appt.status,
+            patientName: patient.name,
+            doctorName: doctor.name || doctor.firstName || "Doctor",
+            position: -1,
+            aheadCount: -1,
+            queuePosition: appt.queuePosition,
+          };
+        }
+
         const allDoctorAppts = await tx.select().from(appointments)
           .where(and(eq(appointments.doctorId, appt.doctorId), gte(appointments.date, today), lte(appointments.date, endOfDay)))
-          .orderBy(appointments.date);
+          .orderBy(appointments.queuePosition);
 
-        const aheadInQueue = allDoctorAppts.filter(
+        const aheadCount = allDoctorAppts.filter(
           (a: any) => a.queuePosition !== null &&
             a.queuePosition! < (appt.queuePosition || 0) &&
             a.status !== "completed" && a.status !== "cancelled" && a.status !== "no_show"
         ).length;
 
+        const isDone = appt.status === "completed" || appt.status === "cancelled" || appt.status === "no_show";
+
         return {
+          expired: false,
           patientName: patient.name,
           doctorName: doctor.name || doctor.firstName || "Doctor",
-          position: appt.status === "completed" ? 0 : aheadInQueue + 1,
+          position: isDone ? 0 : aheadCount + 1,
+          aheadCount: isDone ? 0 : aheadCount,
           status: appt.status,
           queuePosition: appt.queuePosition,
         };
@@ -312,8 +369,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/bills", requireAuth, async (req, res) => {
     try {
-      res.status(201).json(await storage(req).createBill(req.body));
+      const data = insertBillSchema.parse(req.body);
+      res.status(201).json(await storage(req).createBill(data));
     } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: "Failed to create bill" });
     }
   });
@@ -357,8 +416,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/prescriptions", requireAuth, async (req, res) => {
     try {
-      res.status(201).json(await storage(req).createPrescription(req.body));
+      const data = insertPrescriptionSchema.parse(req.body);
+      res.status(201).json(await storage(req).createPrescription(data));
     } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: "Failed to create prescription" });
     }
   });
@@ -379,30 +440,207 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/crm/send-bulk", requireAuth, async (req, res) => {
     try {
       const { patientIds, message, channel } = req.body;
-      const sentCount = await db.transaction(async (tx) => {
-        let count = 0;
-        for (const id of patientIds) {
-          const [patient] = await tx.select().from(patients)
-            .where(and(eq(patients.id, id), eq(patients.clinicId, req.session.clinicId!)));
-          if (patient) {
-            const msg = message.replace(/{name}/g, patient.name);
-            console.log(`[CRM] ${channel} → ${patient.name} (${patient.phone}): ${msg}`);
-            await tx.insert(notifications).values({
-              clinicId: req.session.clinicId!,
-              patientId: patient.id,
-              type: `${channel}_marketing`,
-              message: msg,
-            });
-            count++;
+
+      if (!Array.isArray(patientIds) || patientIds.length === 0) {
+        return res.status(400).json({ message: "Select at least one patient" });
+      }
+      if (!message?.trim()) {
+        return res.status(400).json({ message: "Message cannot be empty" });
+      }
+      if (!["whatsapp", "sms"].includes(channel)) {
+        return res.status(400).json({ message: "Invalid channel" });
+      }
+
+      // Read real credentials from clinic settings
+      const settings = (await storage(req).getSetting(channel)) as Record<string, any> | null;
+      if (!settings?.enabled) {
+        const label = channel === "whatsapp" ? "WhatsApp" : "SMS";
+        return res.status(400).json({
+          message: `${label} is not configured. Go to Settings → ${label} API, enter your credentials and toggle it on.`,
+        });
+      }
+
+      let sentCount = 0;
+      const failures: string[] = [];
+
+      for (const id of patientIds) {
+        const [patient] = await db.select().from(patients)
+          .where(and(eq(patients.id, Number(id)), eq(patients.clinicId, req.session.clinicId!)));
+        if (!patient) continue;
+
+        const msg = message.replace(/{name}/g, patient.name);
+        const digits = patient.phone.replace(/\D/g, "");
+        const intlPhone = digits.length === 10 ? `91${digits}` : digits;
+
+        try {
+          if (channel === "whatsapp") {
+            await sendWhatsAppMessage(settings, intlPhone, msg);
+          } else {
+            await sendSmsMessage(settings, intlPhone, msg);
           }
+          await db.insert(notifications).values({
+            clinicId: req.session.clinicId!,
+            patientId: patient.id,
+            type: `${channel}_marketing`,
+            message: msg,
+          });
+          sentCount++;
+        } catch (sendErr: any) {
+          failures.push(`${patient.name}: ${sendErr.message || "send failed"}`);
         }
-        return count;
-      });
-      res.json({ success: true, count: sentCount });
+      }
+
+      if (sentCount === 0 && failures.length > 0) {
+        return res.status(502).json({ message: failures[0] });
+      }
+
+      res.json({ success: true, count: sentCount, failures });
     } catch (err) {
+      console.error("[CRM send-bulk]", err);
       res.status(500).json({ message: "Failed to send bulk messages" });
     }
   });
+
+  async function sendWhatsAppMessage(settings: Record<string, any>, phone: string, message: string) {
+    const { provider, accessToken, phoneNumberId } = settings;
+
+    if (!accessToken || !phoneNumberId) {
+      throw new Error("WhatsApp Access Token and Phone Number ID are required in Settings");
+    }
+
+    if (!provider || provider === "meta") {
+      const r = await fetch(`https://graph.facebook.com/v18.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          to: phone,
+          type: "text",
+          text: { body: message, preview_url: false },
+        }),
+      });
+      if (!r.ok) {
+        const err: any = await r.json().catch(() => ({}));
+        throw new Error(err?.error?.message || `WhatsApp API error ${r.status}`);
+      }
+      return;
+    }
+
+    if (provider === "twilio") {
+      const { accountSid } = settings;
+      if (!accountSid) throw new Error("Twilio Account SID is required");
+      const r = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Basic " + Buffer.from(`${accountSid}:${accessToken}`).toString("base64"),
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            From: `whatsapp:+${settings.fromNumber || phoneNumberId}`,
+            To: `whatsapp:+${phone}`,
+            Body: message,
+          }).toString(),
+        }
+      );
+      if (!r.ok) {
+        const err: any = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Twilio error ${r.status}`);
+      }
+      return;
+    }
+
+    throw new Error(`WhatsApp provider "${provider}" is not supported yet`);
+  }
+
+  async function sendSmsMessage(settings: Record<string, any>, phone: string, message: string) {
+    const { provider, apiKey, senderId } = settings;
+
+    if (!apiKey) throw new Error("SMS API Key is required in Settings");
+
+    if (!provider || provider === "msg91") {
+      const r = await fetch("https://api.msg91.com/api/v2/sendsms", {
+        method: "POST",
+        headers: {
+          authkey: apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          sender: senderId || "BRIQ",
+          route: "4",
+          country: "91",
+          sms: [{ message, to: [phone] }],
+        }),
+      });
+      if (!r.ok) throw new Error(`MSG91 error ${r.status}`);
+      return;
+    }
+
+    if (provider === "fast2sms") {
+      const r = await fetch("https://www.fast2sms.com/dev/bulkV2", {
+        method: "POST",
+        headers: {
+          authorization: apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          route: "q",
+          message,
+          language: "english",
+          flash: 0,
+          numbers: phone.replace(/^91/, ""),
+        }),
+      });
+      if (!r.ok) throw new Error(`Fast2SMS error ${r.status}`);
+      return;
+    }
+
+    if (provider === "textlocal") {
+      const r = await fetch("https://api.textlocal.in/send/", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          apikey: apiKey,
+          numbers: phone,
+          message,
+          sender: senderId || "TXTLCL",
+        }).toString(),
+      });
+      if (!r.ok) throw new Error(`Textlocal error ${r.status}`);
+      return;
+    }
+
+    if (provider === "twilio") {
+      const { accountSid, fromNumber } = settings;
+      if (!accountSid) throw new Error("Twilio Account SID is required");
+      const r = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: "Basic " + Buffer.from(`${accountSid}:${apiKey}`).toString("base64"),
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            From: fromNumber || "",
+            To: `+${phone}`,
+            Body: message,
+          }).toString(),
+        }
+      );
+      if (!r.ok) {
+        const err: any = await r.json().catch(() => ({}));
+        throw new Error(err?.message || `Twilio SMS error ${r.status}`);
+      }
+      return;
+    }
+
+    throw new Error(`SMS provider "${provider}" is not supported yet`);
+  }
 
   // ── SETTINGS ─────────────────────────────────────────────────────────────
 

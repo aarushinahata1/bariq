@@ -43,23 +43,43 @@ export default function CRM() {
   const sendMessageMutation = useMutation({
     mutationFn: async (data: { patientIds: number[], message: string, channel: string }) => {
       const res = await apiRequest("POST", "/api/crm/send-bulk", data);
-      return res.json();
+      return res.json() as Promise<{ success: boolean; count: number; failures: string[] }>;
     },
-    onSuccess: () => {
-      toast({
-        title: "Messages Sent",
-        description: `Successfully sent ${selectedPatients.length} ${channel} messages.`,
-      });
-      setSelectedPatients([]);
-      setMessage("");
+    onSuccess: (data) => {
+      if (data.failures?.length > 0 && data.count === 0) {
+        toast({
+          title: "All sends failed",
+          description: data.failures[0],
+          variant: "destructive",
+        });
+      } else if (data.failures?.length > 0) {
+        toast({
+          title: `Sent ${data.count} / ${selectedPatients.length}`,
+          description: `${data.failures.length} failed: ${data.failures[0]}`,
+          variant: "destructive",
+        });
+        setSelectedPatients([]);
+        setMessage("");
+      } else {
+        toast({
+          title: "Messages Sent",
+          description: `Successfully sent ${data.count} ${channel} message${data.count !== 1 ? "s" : ""}.`,
+        });
+        setSelectedPatients([]);
+        setMessage("");
+      }
     },
-    onError: () => {
-      toast({
-        title: "Error",
-        description: "Failed to send messages. Please try again.",
-        variant: "destructive",
-      });
-    }
+    onError: (error: Error) => {
+      let description = "Failed to send messages. Please try again.";
+      try {
+        const match = error.message.match(/^\d+: (.+)$/s);
+        if (match) {
+          const body = JSON.parse(match[1]);
+          if (body.message) description = body.message;
+        }
+      } catch {}
+      toast({ title: "Error", description, variant: "destructive" });
+    },
   });
 
   const togglePatient = (id: number) => {

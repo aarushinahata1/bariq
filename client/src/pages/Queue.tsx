@@ -1,4 +1,4 @@
-﻿import { Layout } from "@/components/Layout";
+import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useAppointments, useUpdateAppointment } from "@/hooks/use-appointments";
 import { useQueryClient } from "@tanstack/react-query";
@@ -6,7 +6,7 @@ import { useDoctors } from "@/hooks/use-doctors";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { format, parseISO, startOfWeek, addDays, startOfDay } from "date-fns";
 import { Button } from "@/components/ui/button";
-import { GripVertical, Users, Banknote, Pill, Plus, Trash2, Phone, Copy, Check, ExternalLink, AlertTriangle, FileText } from "lucide-react";
+import { GripVertical, Users, Banknote, Pill, Plus, Trash2, Phone, Copy, Check, ExternalLink, AlertTriangle, Share2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -57,9 +57,19 @@ const PAYMENT_METHODS = [
   { value: "insurance", label: "Insurance" },
 ];
 
+function doctorDisplayName(doctor: any): string {
+  return (
+    doctor?.name ||
+    [doctor?.firstName, doctor?.lastName].filter(Boolean).join(" ") ||
+    "Doctor"
+  );
+}
+
+// Controlled dialog — closes automatically after prescription is saved
 function PrescriptionDialog({ appointment }: { appointment: any }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
   const [meds, setMeds] = useState<any[]>([]);
   const [prescriptionNotes, setPrescriptionNotes] = useState("");
   const [isSaving, setIsSaving] = useState(false);
@@ -105,6 +115,7 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
       });
       setMeds([]);
       setPrescriptionNotes("");
+      setOpen(false);
     } catch {
       toast({
         title: "Error",
@@ -117,7 +128,7 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
   };
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           size="sm"
@@ -263,7 +274,7 @@ function ConsultationNotesDialog({ appointment, onComplete }: { appointment: any
         <div className="space-y-4 py-4">
           <div className="bg-green-50 p-4 rounded-xl">
             <p className="font-semibold text-green-900">{appointment.patient.name}</p>
-            <p className="text-sm text-green-700">Dr. {appointment.doctor?.name}</p>
+            <p className="text-sm text-green-700">Dr. {doctorDisplayName(appointment.doctor)}</p>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-slate-700">
@@ -298,32 +309,102 @@ function ConsultationNotesDialog({ appointment, onComplete }: { appointment: any
   );
 }
 
-function QueueLinkButton({ token, position }: { token: string, position: number }) {
+// livePosition = current index-based position in the displayed queue (not the stale DB value)
+function SendQueueLinkDialog({ appointment, livePosition }: { appointment: any; livePosition: number }) {
   const { toast } = useToast();
+  const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const url = `${window.location.origin}/patient-queue/${token}`;
 
-  const handleCopy = async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const token = appointment.queueToken;
+  const url = `${window.location.origin}/patient-queue/${token}`;
+  const patientName = appointment.patient?.name || "Patient";
+  const patientPhone = appointment.patient?.phone || "";
+  const docName = doctorDisplayName(appointment.doctor);
+
+  const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       toast({ title: "Queue link copied!", description: "Share this link with the patient." });
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast({ title: "Copy failed", description: url, variant: "destructive" });
+      toast({ title: "Copy failed", variant: "destructive" });
     }
   };
 
+  const phoneDigits = patientPhone.replace(/[^0-9]/g, "");
+  const waPhone = phoneDigits.length === 10 ? "91" + phoneDigits : phoneDigits;
+  const waMessage = encodeURIComponent(
+    `Hi ${patientName}! Track your appointment with Dr. ${docName} live:\n${url}\n\nYou are currently #${livePosition} in the queue.`
+  );
+  const waUrl = waPhone
+    ? `https://wa.me/${waPhone}?text=${waMessage}`
+    : `https://wa.me/?text=${waMessage}`;
+
   return (
-    <button
-      onClick={handleCopy}
-      className="flex items-center gap-1 text-xs text-teal-600 hover:text-teal-700 transition-colors"
-      title="Copy patient queue link"
-    >
-      {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-      <span className="hidden sm:inline">#{position}</span>
-    </button>
+    <>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium text-teal-600 bg-teal-50 hover:bg-teal-100 border border-teal-100 transition-colors"
+        title="Send queue link to patient"
+      >
+        <Share2 className="w-3 h-3" />
+        <span className="hidden sm:inline">Send Link</span>
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="rounded-2xl sm:max-w-md" onClick={(e) => e.stopPropagation()}>
+          <DialogHeader>
+            <DialogTitle>Send Queue Link</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="bg-teal-50 p-4 rounded-xl">
+              <p className="font-semibold text-teal-900">{patientName}</p>
+              <p className="text-sm text-teal-600">Queue position #{livePosition} · Dr. {docName}</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Patient Queue Link</label>
+              <div className="flex gap-2">
+                <div className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-600 font-mono truncate select-all">
+                  {url}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-xl shrink-0 h-auto"
+                  onClick={handleCopy}
+                >
+                  {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Share via</label>
+              <a
+                href={waUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 p-3.5 rounded-xl border border-green-200 bg-green-50 hover:bg-green-100 transition-colors"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="w-9 h-9 bg-green-500 rounded-xl flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-green-900 text-sm">Send on WhatsApp</p>
+                  <p className="text-xs text-green-700">{patientPhone || "No phone number saved"}</p>
+                </div>
+              </a>
+            </div>
+
+            <p className="text-xs text-slate-400 text-center">
+              This link updates live every 5 seconds. It expires at end of day.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -441,7 +522,14 @@ export default function Queue() {
     });
   }, [appointments, selectedDoctor, selectedSlot, doctorSlots]);
 
+  // Refs to prevent the 30-second poll from overwriting an in-flight drag reorder
+  const reorderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPersistingRef = useRef(false);
+
   useEffect(() => {
+    // If user is in the middle of a drag (debounce pending) or we're waiting
+    // for the reorder API to respond, don't let the poll overwrite their changes.
+    if (reorderTimeoutRef.current || isPersistingRef.current) return;
     setQueueItems(filteredAndSorted);
   }, [filteredAndSorted]);
 
@@ -468,9 +556,9 @@ export default function Queue() {
     }
   }, [checkInTarget, selectedDoctorProfile]);
 
-  const reorderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const persistReorder = useCallback(async (orderedIds: number[]) => {
+    reorderTimeoutRef.current = null;
+    isPersistingRef.current = true;
     try {
       const res = await fetch("/api/queue/reorder", {
         method: "PATCH",
@@ -479,10 +567,15 @@ export default function Queue() {
         credentials: "include",
       });
       if (!res.ok) throw new Error("Failed to reorder");
+      // Refresh from server — isPersistingRef is cleared in finally so the
+      // useEffect above will pick up the fresh data once it arrives.
       queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
     } catch {
       toast({ title: "Error", description: "Failed to reorder queue", variant: "destructive" });
+      // Roll back to last known good state
       setQueueItems(filteredAndSorted);
+    } finally {
+      isPersistingRef.current = false;
     }
   }, [filteredAndSorted, queryClient, toast]);
 
@@ -496,11 +589,12 @@ export default function Queue() {
 
   const handleCheckIn = async () => {
     if (!checkInTarget) return;
-    const amountCents = Math.round(parseFloat(checkInFee || "0") * 100);
-    if (amountCents < 0) {
+    const parsedFee = parseFloat(checkInFee || "0");
+    if (isNaN(parsedFee) || parsedFee < 0) {
       toast({ title: "Invalid amount", description: "Please enter a valid fee", variant: "destructive" });
       return;
     }
+    const amountCents = Math.round(parsedFee * 100);
     setIsCheckingIn(true);
     try {
       const existingRes = await fetch(`/api/bills?appointmentId=${checkInTarget.id}`, { credentials: "include" });
@@ -508,7 +602,7 @@ export default function Queue() {
       const hasBill = Array.isArray(existingBills) && existingBills.length > 0;
 
       if (!hasBill && amountCents > 0) {
-        await fetch("/api/bills", {
+        const billRes = await fetch("/api/bills", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -520,6 +614,10 @@ export default function Queue() {
           }),
           credentials: "include",
         });
+        if (!billRes.ok) {
+          const err = await billRes.json().catch(() => ({}));
+          throw new Error(err?.message || "Failed to record payment");
+        }
       }
       updateAppointment.mutate(
         { id: checkInTarget.id, updates: { status: "checked_in" } },
@@ -528,7 +626,7 @@ export default function Queue() {
             const amountStr = (amountCents / 100).toFixed(0);
             setReceiptData({
               patient: checkInTarget.patient.name,
-              doctor: checkInTarget.doctor.name,
+              doctor: doctorDisplayName(checkInTarget.doctor),
               amount: amountStr,
               date: format(new Date(), "PPpp"),
               paymentMethod: PAYMENT_METHODS.find(m => m.value === checkInPaymentMethod)?.label || "Cash",
@@ -571,7 +669,7 @@ export default function Queue() {
     setNoShowTarget(null);
   };
 
-  if (isLoading || isDoctorsLoading) return <Layout><Loading /></Layout>;
+  if (isDoctorsLoading || (isLoading && !appointments)) return <Layout><Loading /></Layout>;
 
   if (!doctors?.length) {
     return (
@@ -606,7 +704,7 @@ export default function Queue() {
             <SelectContent>
               {doctors.map((d) => (
                 <SelectItem key={d.id} value={String(d.id)}>
-                  Dr. {d.name}
+                  Dr. {doctorDisplayName(d)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -665,7 +763,7 @@ export default function Queue() {
         ) : (
           <AnimatePresence mode="popLayout">
             <Reorder.Group axis="y" values={queueItems} onReorder={handleReorder} className="space-y-3">
-              {queueItems.map((apt) => (
+              {queueItems.map((apt, idx) => (
                 <Reorder.Item
                   key={apt.id}
                   value={apt}
@@ -686,17 +784,18 @@ export default function Queue() {
                     <div className="flex items-center gap-2 text-slate-300 cursor-grab shrink-0">
                       <GripVertical className="w-5 h-5" />
                     </div>
+                    {/* Position badge uses live array index — stays correct during/after drag */}
                     <div className={cn(
                       "w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shrink-0",
                       apt.status === "in_progress" ? "bg-teal-100 text-teal-700" : "bg-slate-100 text-slate-700"
                     )}>
-                      {apt.queuePosition ?? "—"}
+                      {idx + 1}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-slate-900 truncate">{apt.patient?.name ?? "Unknown"}</p>
-                        {apt.queueToken && apt.queuePosition && (
-                          <QueueLinkButton token={apt.queueToken} position={apt.queuePosition} />
+                        {apt.queueToken && (
+                          <SendQueueLinkDialog appointment={apt} livePosition={idx + 1} />
                         )}
                       </div>
                       <div className="flex items-center gap-2">
@@ -724,9 +823,10 @@ export default function Queue() {
                           </div>
                         )}
                       </div>
-                      {apt.reason && (
-                        <p className="text-xs text-slate-400 truncate mt-0.5 italic">{apt.reason}</p>
-                      )}
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        {format(apt.date instanceof Date ? apt.date : parseISO(apt.date), "h:mm a")}
+                        {apt.reason && <span className="italic"> · {apt.reason}</span>}
+                      </p>
                     </div>
                     <div className="shrink-0 hidden sm:block">
                       <span className={cn(
@@ -741,7 +841,7 @@ export default function Queue() {
                       </span>
                     </div>
                     <div className="hidden sm:flex items-center gap-2 shrink-0">
-                      {apt.status === "booked" && can("queue:check-in") && (
+                      {(apt.status === "booked" || (apt.status === "checked_in" && !apt.bill)) && can("queue:check-in") && (
                         <Button
                           size="sm"
                           className="rounded-xl h-9 bg-teal-600 hover:bg-teal-700 text-white"
@@ -793,7 +893,7 @@ export default function Queue() {
                       {apt.status === "in_progress" && "With Doctor"}
                     </span>
                     <div className="flex-1" />
-                    {apt.status === "booked" && can("queue:check-in") && (
+                    {(apt.status === "booked" || (apt.status === "checked_in" && !apt.bill)) && can("queue:check-in") && (
                       <Button size="sm" className="rounded-xl h-8 text-xs bg-teal-600 text-white" onClick={() => setCheckInTarget(apt)}>
                         Collect
                       </Button>
@@ -855,7 +955,7 @@ export default function Queue() {
               <div className="space-y-4 py-2">
                 <div className="bg-teal-50 p-4 rounded-xl space-y-1">
                   <p className="font-semibold text-blue-900">{checkInTarget.patient.name}</p>
-                  <p className="text-sm text-teal-700">Dr. {checkInTarget.doctor.name}</p>
+                  <p className="text-sm text-teal-700">Dr. {doctorDisplayName(checkInTarget.doctor)}</p>
                   <p className="text-xs text-teal-700">
                     {format(
                       checkInTarget.date instanceof Date ? checkInTarget.date : parseISO(checkInTarget.date),
@@ -933,9 +1033,10 @@ export default function Queue() {
                   <Button
                     className="flex-1 rounded-xl h-11 bg-teal-600 hover:bg-teal-700"
                     onClick={() => {
+                      const esc = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
                       const w = window.open("", "_blank");
                       if (w) {
-                        w.document.write(`<html><head><title>Receipt - ${receiptData.patient}</title><style>body{font-family:sans-serif;padding:40px;max-width:400px;margin:0 auto}</style></head><body><h1 style="color:#2563eb;font-size:20px;font-weight:900;letter-spacing:-0.5px">BariQ</h1><p style="font-size:11px;color:#94a3b8;margin-top:-8px">RECEIPT</p><hr style="border:1px solid #f1f5f9"><p><strong>Patient:</strong> ${receiptData.patient}</p><p><strong>Doctor:</strong> Dr. ${receiptData.doctor}</p><p><strong>Date:</strong> ${receiptData.date}</p><p><strong>Amount Paid:</strong> ₹${receiptData.amount}</p><p><strong>Payment:</strong> ${receiptData.paymentMethod}</p><hr style="border:1px solid #f1f5f9"><p style="text-align:center;font-size:12px;color:#94a3b8">Thank you for visiting!</p><script>window.onload=()=>{window.print();}</script></body></html>`);
+                        w.document.write(`<html><head><title>Receipt - ${esc(receiptData.patient)}</title><style>body{font-family:sans-serif;padding:40px;max-width:400px;margin:0 auto}</style></head><body><h1 style="color:#2563eb;font-size:20px;font-weight:900;letter-spacing:-0.5px">BariQ</h1><p style="font-size:11px;color:#94a3b8;margin-top:-8px">RECEIPT</p><hr style="border:1px solid #f1f5f9"><p><strong>Patient:</strong> ${esc(receiptData.patient)}</p><p><strong>Doctor:</strong> Dr. ${esc(receiptData.doctor)}</p><p><strong>Date:</strong> ${esc(receiptData.date)}</p><p><strong>Amount Paid:</strong> ₹${esc(receiptData.amount)}</p><p><strong>Payment:</strong> ${esc(receiptData.paymentMethod)}</p><hr style="border:1px solid #f1f5f9"><p style="text-align:center;font-size:12px;color:#94a3b8">Thank you for visiting!</p><script>window.onload=()=>{window.print();}<\/script></body></html>`);
                         w.document.close();
                       }
                     }}

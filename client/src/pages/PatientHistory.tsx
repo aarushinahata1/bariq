@@ -70,9 +70,18 @@ function FollowUpDialog({ patient, onClose }: { patient: any; onClose: () => voi
     if (!doctorId || !date || !doctors) return [];
     const doctor = doctors.find(d => d.id === doctorId);
     if (!doctor?.doctorProfile?.availability) return [];
-    const dayOfWeek = DAY_NAMES[new Date(date).getDay()];
+    const [y, mo, d] = date.split("-").map(Number);
+    const dayOfWeek = DAY_NAMES[new Date(y, mo - 1, d).getDay()];
     return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
   }, [doctorId, date, doctors]);
+
+  useEffect(() => {
+    if (availableSlots.length > 0 && !availableSlots.includes(slot)) {
+      setSlot(availableSlots[0]);
+    } else if (availableSlots.length === 0) {
+      setSlot("");
+    }
+  }, [availableSlots]);
 
   const handleSubmit = () => {
     if (!doctorId || !date || !slot) {
@@ -81,8 +90,8 @@ function FollowUpDialog({ patient, onClose }: { patient: any; onClose: () => voi
     }
     const [start] = slot.split("-");
     const [hours, minutes] = start.split(":");
-    const appointmentDate = new Date(date);
-    appointmentDate.setHours(parseInt(hours), parseInt(minutes));
+    const [y, mo, d] = date.split("-").map(Number);
+    const appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
 
     createAppointment.mutate({
       patientId: patient.id,
@@ -233,8 +242,15 @@ export default function PatientHistory() {
   const totalSpent = bills?.filter(b => b.status === "paid").reduce((acc, b) => acc + b.amount, 0) || 0;
 
   const handleSave = async () => {
-    if (!editName.trim() || !editPhone.trim()) {
-      toast({ title: "Name and phone are required", variant: "destructive" });
+    if (!editName.trim()) {
+      toast({ title: "Name is required", variant: "destructive" });
+      return;
+    }
+    const phoneDigits = editPhone.replace(/\D/g, "");
+    const validPhone = (phoneDigits.length === 10 && /^[6-9]/.test(phoneDigits)) ||
+      (phoneDigits.length === 12 && phoneDigits.startsWith("91") && /^[6-9]/.test(phoneDigits.slice(2)));
+    if (!validPhone) {
+      toast({ title: "Invalid phone number", description: "Enter a valid 10-digit mobile number", variant: "destructive" });
       return;
     }
     try {

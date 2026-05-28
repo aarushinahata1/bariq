@@ -308,14 +308,14 @@ export class DatabaseStorage {
     const doctors = await this.getDoctors();
     const activeQueues = doctors.map(doc => {
       const docAppts = todaysAppts.filter(a => a.doctorId === doc.id);
-      const docWaiting = docAppts.filter(a => a.status === "checked_in").length;
+      const docWaiting = docAppts.filter(a => ["booked", "checked_in", "in_progress"].includes(a.status)).length;
       return {
         doctorId: doc.id,
         doctorName: doc.name,
         waitingCount: docWaiting,
         currentWaitTime: docWaiting * (doc.doctorProfile?.avgConsultationTime || 15),
       };
-    });
+    }).filter(q => q.waitingCount > 0);
 
     const allPatients = await this.getPatients();
     const sourceDistribution = allPatients.reduce((acc: any, p) => {

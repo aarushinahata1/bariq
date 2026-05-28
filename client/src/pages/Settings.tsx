@@ -108,7 +108,6 @@ export default function Settings() {
   const submitPayment = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", "/api/payments", { utr: utr.trim(), planType: selectedPlan });
-      if (!r.ok) throw new Error((await r.json()).message);
       return r.json();
     },
     onSuccess: () => {
@@ -118,7 +117,15 @@ export default function Settings() {
       setUtr("");
     },
     onError: (err: Error) => {
-      toast({ title: "Submission failed", description: err.message, variant: "destructive" });
+      let description = err.message;
+      try {
+        const match = err.message.match(/^\d+: (.+)$/s);
+        if (match) {
+          const body = JSON.parse(match[1]);
+          if (body.message) description = body.message;
+        }
+      } catch {}
+      toast({ title: "Submission failed", description, variant: "destructive" });
     },
   });
 
@@ -131,7 +138,8 @@ export default function Settings() {
   const { data: settings, isLoading } = useQuery<Record<string, any>>({
     queryKey: ["/api/settings"],
     queryFn: async () => {
-      const r = await fetch("/api/settings");
+      const r = await fetch("/api/settings", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to fetch settings");
       return r.json();
     },
   });
@@ -151,6 +159,7 @@ export default function Settings() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
+        credentials: "include",
       });
       if (!r.ok) throw new Error((await r.json()).message);
       return r.json();
@@ -190,9 +199,12 @@ export default function Settings() {
           {tabs.map(tab => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
-            const enabled = activeTab === tab.id
-              ? (tab.id === "whatsapp" ? wa.enabled : sms.enabled)
-              : (tab.id === "whatsapp" ? settings?.whatsapp?.enabled : settings?.sms?.enabled);
+            // Messaging tabs show their own enabled/disabled badge; billing tab has no such concept
+            const messagingEnabled = tab.id === "whatsapp"
+              ? (active ? wa.enabled : !!settings?.whatsapp?.enabled)
+              : tab.id === "sms"
+              ? (active ? sms.enabled : !!settings?.sms?.enabled)
+              : null;
             return (
               <button
                 key={tab.id}
@@ -206,7 +218,7 @@ export default function Settings() {
               >
                 <Icon className={cn("w-4 h-4", active ? tab.color : "text-slate-400")} />
                 {tab.label}
-                {!isLoading && <StatusBadge enabled={!!enabled} />}
+                {!isLoading && messagingEnabled !== null && <StatusBadge enabled={messagingEnabled} />}
               </button>
             );
           })}

@@ -19,8 +19,9 @@ const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"
 
 // Create doctor needs password, role=doctor
 const createDoctorSchema = insertUserSchema.extend({
+  name: z.string().min(1, "Full name is required"),
   specialization: z.string().optional(),
-  avgConsultationTime: z.coerce.number().default(15),
+  avgConsultationTime: z.coerce.number().min(1).default(15),
   availability: z.record(z.object({
     slots: z.array(z.object({
       start: z.string(),
@@ -127,6 +128,10 @@ export default function Doctors() {
   const [expandedAvailability, setExpandedAvailability] = useState<string | null>(null);
   const [editingAvailabilityFor, setEditingAvailabilityFor] = useState<string | null>(null);
 
+  const updateProfile = useUpdateDoctorProfile();
+  const { toast } = useToast();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [notifyId, setNotifyId] = useState<string | null>(null);
   const [inlineEditId, setInlineEditId] = useState<string | null>(null);
   const [inlineName, setInlineName] = useState("");
   const [inlineSpecialization, setInlineSpecialization] = useState("");
@@ -148,12 +153,17 @@ export default function Doctors() {
       toast({ title: "Name is required", variant: "destructive" });
       return;
     }
+    const parsedFee = parseFloat(inlineFee || "0");
+    if (isNaN(parsedFee) || parsedFee < 0) {
+      toast({ title: "Invalid fee", description: "Enter a valid consultation fee (₹)", variant: "destructive" });
+      return;
+    }
     updateProfile.mutate({
       id: userId,
       updates: {
         name: inlineName.trim(),
         specialization: inlineSpecialization.trim() || undefined,
-        consultationFee: Math.round(parseFloat(inlineFee || "0") * 100),
+        consultationFee: Math.round(parsedFee * 100),
       } as any,
     }, {
       onSuccess: () => {
@@ -183,17 +193,12 @@ export default function Doctors() {
       }
     });
   };
-  const updateProfile = useUpdateDoctorProfile();
-  const { toast } = useToast();
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [notifyId, setNotifyId] = useState<string | null>(null);
-
   const handleEmergencyToggle = (userId: string, isAvailable: boolean) => {
     updateProfile.mutate({ id: userId, updates: { isAvailable } }, {
       onSuccess: () => {
-        toast({ 
-          title: isAvailable ? "Clinic Resumed" : "Emergency Delay Active",
-          description: isAvailable ? "Doctor is now accepting patients." : "Patients will be notified of the delay."
+        toast({
+          title: isAvailable ? "Clinic Resumed" : "Doctor Unavailable",
+          description: isAvailable ? "Doctor is now accepting patients." : "Doctor marked as unavailable. Use 'Notify Delay' to alert waiting patients.",
         });
       }
     });
@@ -432,7 +437,8 @@ function CreateDoctorDialog({ open, onOpenChange }: { open: boolean, onOpenChang
       doctorProfile: {
         specialization: data.specialization,
         avgConsultationTime: data.avgConsultationTime,
-        isAvailable: true
+        isAvailable: true,
+        availability: data.availability,
       }
     }, {
       onSuccess: () => {
