@@ -20,8 +20,8 @@ export default function Signup() {
   const signup = useMutation({
     mutationFn: (body: typeof form) =>
       apiRequest("POST", "/api/auth/signup", body).then(r => r.json()),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/auth/me"] });
+    onSuccess: (data) => {
+      qc.setQueryData(["/api/auth/me"], data);
       navigate("/dashboard");
     },
     onError: (err: any) => {

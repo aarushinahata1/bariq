@@ -52,6 +52,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     qc.clear();
+    localStorage.removeItem("medqueue-role");
     window.location.href = "/login";
   }
 

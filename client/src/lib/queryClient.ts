@@ -2,8 +2,8 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    if (res.status === 402) {
-      // Plan expired on server — force auth re-fetch so PaymentWall renders immediately
+    if (res.status === 401 || res.status === 402) {
+      // Session expired (401) or plan expired (402) — force auth re-fetch so Router redirects correctly
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     }
     const text = (await res.text()) || res.statusText;

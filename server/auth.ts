@@ -146,7 +146,13 @@ export function setupAuth(app: Express) {
         }
         req.session.clinicId = clinic!.id;
         const { passwordHash: _, ...safe } = clinic!;
-        res.status(201).json(safe);
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("Session save error:", saveErr);
+            return res.status(500).json({ message: "Signup failed" });
+          }
+          res.status(201).json(safe);
+        });
       });
     } catch (err: any) {
       console.error("Signup error:", err);
@@ -171,7 +177,10 @@ export function setupAuth(app: Express) {
           if (err) return res.status(500).json({ message: "Login failed" });
           req.session.isSuperAdmin = true;
           req.session.clinicId = undefined;
-          res.json({ isSuperAdmin: true });
+          req.session.save((saveErr) => {
+            if (saveErr) return res.status(500).json({ message: "Login failed" });
+            res.json({ isSuperAdmin: true });
+          });
         });
       }
 
@@ -193,7 +202,13 @@ export function setupAuth(app: Express) {
         req.session.clinicId = clinic.id;
         req.session.isSuperAdmin = false;
         const { passwordHash: _, ...safe } = clinic;
-        res.json(safe);
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("Session save error:", saveErr);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          res.json(safe);
+        });
       });
     } catch (err) {
       console.error("Login error:", err);

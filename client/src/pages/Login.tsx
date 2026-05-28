@@ -19,7 +19,7 @@ export default function Login() {
     mutationFn: (body: typeof form) =>
       apiRequest("POST", "/api/auth/login", body).then(r => r.json()),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ["/api/auth/me"] });
+      qc.setQueryData(["/api/auth/me"], data);
       if (data.isSuperAdmin) {
         navigate("/super-admin");
       } else {
