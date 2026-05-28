@@ -227,6 +227,7 @@ export const insertPatientSchema = createInsertSchema(patients).omit({ id: true,
 export const insertAppointmentSchema = createInsertSchema(appointments).omit({ id: true, createdAt: true, queueNumber: true, queuePosition: true, queueToken: true }).extend({
   doctorId: z.string().min(1, "Doctor is required"),
   patientId: z.coerce.number().min(1, "Patient is required"),
+  date: z.coerce.date(),
 });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, sentAt: true });
 export const insertBillSchema = createInsertSchema(bills).omit({ id: true, createdAt: true, billingDate: true });
