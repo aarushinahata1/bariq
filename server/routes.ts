@@ -773,16 +773,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
         .where(and(eq(users.clinicId, clinicId), eq(users.role, "doctor")));
 
-      // Prefer doctors with today's availability configured; fall back to all
-      const withSlots = doctorRows.filter(r => {
+      const list = doctorRows.map(r => {
         const avail = (r.doctor_profiles?.availability as any)?.[dayName];
-        return avail?.enabled && avail?.slots?.length > 0;
-      });
-      const list = (withSlots.length > 0 ? withSlots : doctorRows).map(r => {
-        const avail = (r.doctor_profiles?.availability as any)?.[dayName];
-        const rawSlots: { start: string; end: string }[] = avail?.slots || [];
-        // Only include slots that haven't fully ended yet
-        const futureSlots = rawSlots.filter(slot => {
+        // Only include slots when today is an enabled working day
+        const rawSlots: { start: string; end: string }[] =
+          avail?.enabled && Array.isArray(avail?.slots) ? avail.slots : [];
+        // Drop slots whose end time has already passed
+        const activeSlots = rawSlots.filter(slot => {
           const [endH, endM] = slot.end.split(":").map(Number);
           return nowMins < endH * 60 + endM;
         });
@@ -790,7 +787,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           id: r.users.id,
           name: r.users.name || [r.users.firstName, r.users.lastName].filter(Boolean).join(" ") || "Doctor",
           specialization: r.doctor_profiles?.specialization || "General Physician",
-          slots: futureSlots,
+          slots: activeSlots,
         };
       });
 
