@@ -189,8 +189,8 @@ export class DatabaseStorage {
     const rows = await db
       .select()
       .from(appointments)
-      .leftJoin(patients, and(eq(patients.id, appointments.patientId), eq(patients.clinicId, this.clinicId)))
-      .leftJoin(users, and(eq(users.id, appointments.doctorId), eq(users.clinicId, this.clinicId)))
+      .leftJoin(patients, eq(patients.id, appointments.patientId))
+      .leftJoin(users, eq(users.id, appointments.doctorId))
       .leftJoin(bills, and(eq(bills.appointmentId, appointments.id), eq(bills.clinicId, this.clinicId)))
       .where(and(...conditions))
       .orderBy(desc(appointments.date));

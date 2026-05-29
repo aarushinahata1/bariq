@@ -1,7 +1,7 @@
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink } from "lucide-react";
+import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 function BariQLogo() {
@@ -15,10 +15,22 @@ function BariQLogo() {
   );
 }
 
+type DoctorSlot = { start: string; end: string };
+
 type KioskInfo = {
   clinic: { name: string; tagline: string | null; address: string | null };
-  doctors: { id: string; name: string; specialization: string }[];
+  doctors: { id: string; name: string; specialization: string; slots: DoctorSlot[] }[];
 };
+
+function formatSlot(slot: DoctorSlot): string {
+  const fmt = (t: string) => {
+    const [h, m] = t.split(":").map(Number);
+    const period = h < 12 ? "AM" : "PM";
+    const hh = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${hh}:${String(m).padStart(2, "0")} ${period}`;
+  };
+  return `${fmt(slot.start)} – ${fmt(slot.end)}`;
+}
 
 type RegistrationResult = {
   alreadyRegistered: boolean;
@@ -34,6 +46,7 @@ export default function Register() {
 
   const [step, setStep] = useState<"form" | "success">("form");
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
+  const [selectedSlot, setSelectedSlot] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
@@ -59,12 +72,23 @@ export default function Register() {
     }
   }, [info]);
 
+  // Reset/auto-select slot when doctor changes
+  useEffect(() => {
+    if (!selectedDoctorId) { setSelectedSlot(""); return; }
+    const doc = doctors.find(d => d.id === selectedDoctorId);
+    if (doc?.slots?.length === 1) {
+      setSelectedSlot(doc.slots[0].start);
+    } else {
+      setSelectedSlot("");
+    }
+  }, [selectedDoctorId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const registerMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/kiosk/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), phone: phone.trim(), doctorId: selectedDoctorId, reason: reason.trim() || null }),
+        body: JSON.stringify({ name: name.trim(), phone: phone.trim(), doctorId: selectedDoctorId, reason: reason.trim() || null, slotStart: selectedSlot || undefined }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -205,7 +229,7 @@ export default function Register() {
 
             {/* Register another */}
             <button
-              onClick={() => { setStep("form"); setName(""); setPhone(""); setReason(""); setResult(null); setSelectedDoctorId(doctors.length === 1 ? doctors[0].id : ""); }}
+              onClick={() => { setStep("form"); setName(""); setPhone(""); setReason(""); setResult(null); setSelectedDoctorId(doctors.length === 1 ? doctors[0].id : ""); setSelectedSlot(doctors.length === 1 && doctors[0].slots?.length === 1 ? doctors[0].slots[0].start : ""); }}
               className="w-full py-3 text-sm text-slate-400 hover:text-slate-600 transition-colors"
             >
               Register another patient
@@ -295,6 +319,57 @@ export default function Register() {
               </div>
             )}
 
+            {/* Time slot selection */}
+            {selectedDoctorId && (() => {
+              const doc = doctors.find(d => d.id === selectedDoctorId);
+              const slots = doc?.slots ?? [];
+              if (slots.length === 0) return null;
+              if (slots.length === 1) {
+                return (
+                  <div className="flex items-center gap-3 p-4 rounded-2xl bg-teal-50 border border-teal-100">
+                    <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center shrink-0">
+                      <Clock className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-teal-600 font-semibold uppercase tracking-wider">Time Slot</p>
+                      <p className="font-bold text-teal-900">{formatSlot(slots[0])}</p>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div className="space-y-2">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Time Slot *</label>
+                  <div className="space-y-2">
+                    {slots.map(slot => (
+                      <button
+                        key={slot.start}
+                        type="button"
+                        onClick={() => setSelectedSlot(slot.start)}
+                        className={cn(
+                          "w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all",
+                          selectedSlot === slot.start
+                            ? "border-teal-500 bg-teal-50"
+                            : "border-slate-200 bg-white hover:border-teal-200"
+                        )}
+                      >
+                        <Clock className={cn("w-5 h-5 shrink-0", selectedSlot === slot.start ? "text-teal-500" : "text-slate-400")} />
+                        <p className={cn("font-bold text-sm", selectedSlot === slot.start ? "text-teal-800" : "text-slate-800")}>
+                          {formatSlot(slot)}
+                        </p>
+                        <div className={cn(
+                          "w-5 h-5 rounded-full border-2 shrink-0 ml-auto flex items-center justify-center",
+                          selectedSlot === slot.start ? "border-teal-500 bg-teal-500" : "border-slate-300"
+                        )}>
+                          {selectedSlot === slot.start && <div className="w-2 h-2 rounded-full bg-white" />}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Name */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Full Name *</label>
@@ -363,7 +438,8 @@ export default function Register() {
                 registerMutation.isPending ||
                 !name.trim() ||
                 phone.replace(/\D/g, "").length < 10 ||
-                !selectedDoctorId
+                !selectedDoctorId ||
+                ((doctors.find(d => d.id === selectedDoctorId)?.slots?.length ?? 0) > 1 && !selectedSlot)
               }
               className={cn(
                 "w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-base transition-all shadow-lg",
