@@ -3,7 +3,10 @@ import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import type { InsertAppointment } from "@shared/schema";
 
-export function useAppointments(filters?: { date?: string; doctorId?: string; status?: string; patientId?: number }) {
+export function useAppointments(
+  filters?: { date?: string; doctorId?: string; status?: string; patientId?: number },
+  options?: { refetchInterval?: number | false }
+) {
   return useQuery({
     queryKey: [api.appointments.list.path, filters],
     queryFn: async () => {
@@ -20,7 +23,7 @@ export function useAppointments(filters?: { date?: string; doctorId?: string; st
       if (!res.ok) throw new Error("Failed to fetch appointments");
       return api.appointments.list.responses[200].parse(await res.json());
     },
-    refetchInterval: 30000, // Poll every 30s for queue updates
+    refetchInterval: options?.refetchInterval ?? 30000,
   });
 }
 

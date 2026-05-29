@@ -1,7 +1,7 @@
 import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Loader2, Clock, Users, Wifi } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,18 +19,28 @@ export default function PublicQueue() {
     return () => clearInterval(timer);
   }, []);
 
-  const { data, isLoading } = useQuery<{ doctor: any; queue: any[] }>({
+  const { data, isLoading, refetch } = useQuery<{ doctor: any; queue: any[] }>({
     queryKey: ["public-queue", doctorId],
     queryFn: async () => {
       const res = await fetch(`/api/public-queue/${doctorId}`);
       if (!res.ok) throw new Error("Doctor not found");
       return res.json();
     },
-    refetchInterval: 15000,
+    refetchInterval: 5000,
     refetchIntervalInBackground: true,
     staleTime: 0,
     enabled: !!doctorId,
   });
+
+  // SSE: get pushed updates immediately when queue changes
+  const esRef = useRef<EventSource | null>(null);
+  useEffect(() => {
+    if (!doctorId) return;
+    const es = new EventSource(`/api/sse/doctor/${doctorId}`);
+    esRef.current = es;
+    es.onmessage = () => refetch();
+    return () => { es.close(); esRef.current = null; };
+  }, [doctorId, refetch]);
 
   const doctor = data?.doctor;
   const queue = data?.queue || [];

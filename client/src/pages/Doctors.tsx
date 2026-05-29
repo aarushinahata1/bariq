@@ -170,6 +170,9 @@ export default function Doctors() {
         toast({ title: "Doctor updated" });
         setInlineEditId(null);
       },
+      onError: () => {
+        toast({ title: "Error", description: "Failed to update doctor details", variant: "destructive" });
+      },
     });
   };
 
@@ -190,7 +193,10 @@ export default function Doctors() {
         setEditingConsultationTime(null);
         setEditingSpecialization(null);
         setEditingConsultationFee(null);
-      }
+      },
+      onError: () => {
+        toast({ title: "Error", description: "Failed to save schedule", variant: "destructive" });
+      },
     });
   };
   const handleEmergencyToggle = (userId: string, isAvailable: boolean) => {
@@ -200,7 +206,10 @@ export default function Doctors() {
           title: isAvailable ? "Clinic Resumed" : "Doctor Unavailable",
           description: isAvailable ? "Doctor is now accepting patients." : "Doctor marked as unavailable. Use 'Notify Delay' to alert waiting patients.",
         });
-      }
+      },
+      onError: () => {
+        toast({ title: "Error", description: "Failed to update availability", variant: "destructive" });
+      },
     });
   };
 

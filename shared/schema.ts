@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, timestamp, boolean, jsonb, index, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -107,7 +107,9 @@ export const patients = pgTable("patients", {
   funnelStage: text("funnel_stage").default("new"),
   lastContactedAt: timestamp("last_contacted_at"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  clinicIdx: index("patients_clinic_id_idx").on(t.clinicId),
+}));
 
 // ── Billing ───────────────────────────────────────────────────────────────────
 
@@ -122,7 +124,11 @@ export const bills = pgTable("bills", {
   paymentMethod: text("payment_method"),
   notes: text("notes"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  clinicIdx: index("bills_clinic_id_idx").on(t.clinicId),
+  apptIdx: uniqueIndex("bills_appointment_id_unique").on(t.appointmentId),
+  billingDateIdx: index("bills_billing_date_idx").on(t.clinicId, t.billingDate),
+}));
 
 // ── Appointments ──────────────────────────────────────────────────────────────
 
@@ -143,7 +149,12 @@ export const appointments = pgTable("appointments", {
   consultationStartTime: timestamp("consultation_start_time"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  clinicDateIdx: index("appointments_clinic_date_idx").on(t.clinicId, t.date),
+  clinicDoctorIdx: index("appointments_clinic_doctor_idx").on(t.clinicId, t.doctorId),
+  tokenIdx: index("appointments_queue_token_idx").on(t.queueToken),
+  patientIdx: index("appointments_patient_id_idx").on(t.clinicId, t.patientId),
+}));
 
 // ── Notifications ─────────────────────────────────────────────────────────────
 

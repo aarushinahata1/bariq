@@ -269,30 +269,62 @@ export class DatabaseStorage {
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
   async getDashboardStats(): Promise<any> {
-    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const endOfToday = new Date(now); endOfToday.setHours(23, 59, 59, 999);
+    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - 6); weekStart.setHours(0, 0, 0, 0);
 
-    const todaysAppts = await this.getAppointments({ date: today });
+    // 5 parallel queries instead of 18 sequential ones
+    const [todaysAppts, weekAppts, weekPaidBills, allBills, doctors, sourceCounts] = await Promise.all([
+      this.getAppointments({ date: today }),
+      db.select({
+        id: appointments.id,
+        date: appointments.date,
+        status: appointments.status,
+        doctorId: appointments.doctorId,
+        checkInTime: appointments.checkInTime,
+        consultationStartTime: appointments.consultationStartTime,
+      }).from(appointments)
+        .where(and(eq(appointments.clinicId, this.clinicId), gte(appointments.date, weekStart), lte(appointments.date, endOfToday))),
+      db.select({ amount: bills.amount, billingDate: bills.billingDate })
+        .from(bills)
+        .where(and(eq(bills.clinicId, this.clinicId), gte(bills.billingDate, weekStart), lte(bills.billingDate, endOfToday), eq(bills.status, "paid"))),
+      db.select({ amount: bills.amount, status: bills.status })
+        .from(bills)
+        .where(eq(bills.clinicId, this.clinicId)),
+      this.getDoctors(),
+      db.select({ source: patients.source, cnt: sql<number>`count(*)::int` })
+        .from(patients)
+        .where(eq(patients.clinicId, this.clinicId))
+        .groupBy(patients.source),
+    ]);
+
     const completed = todaysAppts.filter(a => a.status === "completed").length;
 
+    // Build weekly chart data from in-memory aggregation
     const weeklyData = [];
     let totalRevenue = 0;
-
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(d); dayEnd.setHours(23, 59, 59, 999);
+      const d = new Date(now); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
+      const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+      const dayTs = d.getTime();
+      const dEndTs = dEnd.getTime();
 
-      const dayAppts = await db.select().from(appointments)
-        .where(and(eq(appointments.clinicId, this.clinicId), gte(appointments.date, d), lte(appointments.date, dayEnd)));
-
-      const dayBills = await db.select().from(bills)
-        .where(and(eq(bills.clinicId, this.clinicId), gte(bills.billingDate, d), lte(bills.billingDate, dayEnd), eq(bills.status, "paid")));
+      const dayAppts = weekAppts.filter(a => {
+        const t = new Date(a.date).getTime();
+        return t >= dayTs && t <= dEndTs;
+      });
+      const dayBills = weekPaidBills.filter(b => {
+        const t = new Date(b.billingDate).getTime();
+        return t >= dayTs && t <= dEndTs;
+      });
 
       const dayRevenue = dayBills.reduce((acc, b) => acc + b.amount, 0) / 100;
       totalRevenue += dayRevenue;
 
       const waitTimes = dayAppts
         .filter(a => a.checkInTime && a.consultationStartTime)
-        .map(a => (a.consultationStartTime!.getTime() - a.checkInTime!.getTime()) / 60000);
+        .map(a => (new Date(a.consultationStartTime!).getTime() - new Date(a.checkInTime!).getTime()) / 60000);
 
       const avgWait = waitTimes.length > 0
         ? Math.round(waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length)
@@ -301,11 +333,9 @@ export class DatabaseStorage {
       weeklyData.push({ date: format(d, "MMM dd"), patients: dayAppts.length, avgWait, revenue: dayRevenue });
     }
 
-    const allBills = await db.select().from(bills).where(eq(bills.clinicId, this.clinicId));
     const totalPending = allBills.filter(b => b.status === "pending").reduce((acc, b) => acc + b.amount, 0);
     const totalCollected = allBills.filter(b => b.status === "paid").reduce((acc, b) => acc + b.amount, 0);
 
-    const doctors = await this.getDoctors();
     const activeQueues = doctors.map(doc => {
       const docAppts = todaysAppts.filter(a => a.doctorId === doc.id);
       const docWaiting = docAppts.filter(a => ["booked", "checked_in", "in_progress"].includes(a.status)).length;
@@ -317,11 +347,7 @@ export class DatabaseStorage {
       };
     }).filter(q => q.waitingCount > 0);
 
-    const allPatients = await this.getPatients();
-    const sourceDistribution = allPatients.reduce((acc: any, p) => {
-      acc[p.source || "other"] = (acc[p.source || "other"] || 0) + 1;
-      return acc;
-    }, {});
+    const sourceDistribution = sourceCounts.map(r => ({ name: r.source || "other", value: r.cnt }));
 
     return {
       dailyPatients: todaysAppts.length,
@@ -332,7 +358,7 @@ export class DatabaseStorage {
       totalCollected: totalCollected / 100,
       weeklyData,
       activeQueues,
-      sourceDistribution: Object.entries(sourceDistribution).map(([name, value]) => ({ name, value })),
+      sourceDistribution,
     };
   }
 }

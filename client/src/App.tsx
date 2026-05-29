@@ -1,4 +1,5 @@
 import { Switch, Route, Redirect, useLocation } from "wouter";
+import { lazy, Suspense } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,34 +8,36 @@ import { Loading } from "@/components/ui/loading";
 import { RoleProvider } from "@/hooks/use-role";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 
-import NotFound from "@/pages/not-found";
-import Landing from "@/pages/Landing";
-import Login from "@/pages/Login";
-import Signup from "@/pages/Signup";
-import SuperAdmin from "@/pages/SuperAdmin";
-import PaymentWall from "@/pages/PaymentWall";
-import Dashboard from "@/pages/Dashboard";
-import Patients from "@/pages/Patients";
-import CRM from "@/pages/CRM";
-import Appointments from "@/pages/Appointments";
-import Doctors from "@/pages/Doctors";
-import Queue from "@/pages/Queue";
-import PublicQueue from "@/pages/PublicQueue";
-import PatientQueue from "@/pages/PatientQueue";
-import PatientHistory from "@/pages/PatientHistory";
-import Settings from "@/pages/Settings";
+const NotFound = lazy(() => import("@/pages/not-found"));
+const Landing = lazy(() => import("@/pages/Landing"));
+const Login = lazy(() => import("@/pages/Login"));
+const Signup = lazy(() => import("@/pages/Signup"));
+const SuperAdmin = lazy(() => import("@/pages/SuperAdmin"));
+const PaymentWall = lazy(() => import("@/pages/PaymentWall"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Patients = lazy(() => import("@/pages/Patients"));
+const CRM = lazy(() => import("@/pages/CRM"));
+const Appointments = lazy(() => import("@/pages/Appointments"));
+const Doctors = lazy(() => import("@/pages/Doctors"));
+const Queue = lazy(() => import("@/pages/Queue"));
+const PublicQueue = lazy(() => import("@/pages/PublicQueue"));
+const PatientQueue = lazy(() => import("@/pages/PatientQueue"));
+const PatientHistory = lazy(() => import("@/pages/PatientHistory"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const Register = lazy(() => import("@/pages/Register"));
 
 function Router() {
   const { isAuthenticated, isSuperAdmin, isLoading, clinic } = useAuth();
   const [location] = useLocation();
 
-  // Always-public queue routes — no auth needed, show instantly
-  const isPublicQueueRoute = location.startsWith("/queue/") || location.startsWith("/patient-queue/");
+  // Always-public routes — no auth needed, show instantly
+  const isPublicQueueRoute = location.startsWith("/queue/") || location.startsWith("/patient-queue/") || location.startsWith("/register/");
   if (isPublicQueueRoute) {
     return (
       <Switch>
         <Route path="/queue/:doctorId" component={PublicQueue} />
         <Route path="/patient-queue/:token" component={PatientQueue} />
+        <Route path="/register/:token" component={Register} />
       </Switch>
     );
   }
@@ -111,7 +114,9 @@ function App() {
       <AuthProvider>
         <TooltipProvider>
           <Toaster />
-          <Router />
+          <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loading /></div>}>
+            <Router />
+          </Suspense>
         </TooltipProvider>
       </AuthProvider>
     </QueryClientProvider>

@@ -14,6 +14,19 @@ function storage(req: Request) {
   return getStorage(req.session.clinicId!);
 }
 
+// ── SSE real-time queue push ───────────────────────────────────────────────────
+// doctorId → set of active SSE response objects for that doctor's queue
+const sseClients = new Map<string, Set<Response>>();
+
+function broadcastQueueUpdate(doctorId: string) {
+  const clients = sseClients.get(doctorId);
+  if (!clients?.size) return;
+  const payload = `data: ${JSON.stringify({ type: "update", ts: Date.now() })}\n\n`;
+  clients.forEach(res => {
+    try { res.write(payload); } catch { /* client already disconnected */ }
+  });
+}
+
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   setupAuth(app);
 
@@ -131,26 +144,35 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!doctor || doctor.role !== "doctor") return res.status(403).json({ message: "Doctor not found in this clinic" });
 
       const apptDateOnly = new Date(data.date); apptDateOnly.setHours(0, 0, 0, 0);
+      const apptEndOfDay = new Date(apptDateOnly); apptEndOfDay.setHours(23, 59, 59, 999);
 
-      let queueNumber: number | null = null;
-      let queuePosition: number | null = null;
-      let queueToken: string | null = null;
-
-      if (!data.isQuickCheck) {
-        const todaysAppts = await storage(req).getAppointments({ date: apptDateOnly, doctorId: data.doctorId });
-        const maxQueue = todaysAppts.reduce((m, a) => Math.max(m, a.queueNumber || 0), 0);
-        const maxPos = todaysAppts.reduce((m, a) => Math.max(m, a.queuePosition || 0), 0);
-        queueNumber = maxQueue + 1;
-        queuePosition = maxPos + 1;
-        queueToken = nanoid(8);
+      let appt: any;
+      if (data.isQuickCheck) {
+        appt = await storage(req).createAppointment({ ...data, queueNumber: null, queuePosition: null, queueToken: null } as any);
+      } else {
+        // Advisory lock on (clinicId, doctorId) serializes concurrent queue-position assignments
+        // for the same doctor so two simultaneous requests never get identical positions.
+        appt = await db.transaction(async (tx) => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(${req.session.clinicId!}::int, hashtext(${data.doctorId})::int)`);
+          const [maxRow] = await tx.select({
+            maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
+            maxPos: sql<number>`COALESCE(MAX(${appointments.queuePosition}), 0)::int`,
+          }).from(appointments).where(and(
+            eq(appointments.clinicId, req.session.clinicId!),
+            eq(appointments.doctorId, data.doctorId),
+            gte(appointments.date, apptDateOnly),
+            lte(appointments.date, apptEndOfDay),
+          ));
+          const [row] = await tx.insert(appointments).values({
+            ...data,
+            clinicId: req.session.clinicId!,
+            queueNumber: (maxRow?.maxNum ?? 0) + 1,
+            queuePosition: (maxRow?.maxPos ?? 0) + 1,
+            queueToken: nanoid(8),
+          }).returning();
+          return row!;
+        });
       }
-
-      const appt = await storage(req).createAppointment({
-        ...data,
-        queueNumber,
-        queuePosition,
-        queueToken,
-      } as any);
       res.status(201).json(appt);
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
@@ -162,24 +184,37 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch(api.appointments.update.path, requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      // Strip fields that must never be changed via this endpoint
       const { clinicId: _cid, patientId: _pid, ...updates } = req.body;
-      const appt = await storage(req).getAppointment(id);
-      if (!appt) return res.status(404).json({ message: "Appointment not found" });
+      const clinicId = req.session.clinicId!;
 
-      if (updates.status === "checked_in" && !appt.checkInTime) {
-        updates.checkInTime = new Date();
+      // Build set-clause with COALESCE for timestamps so concurrent updates are idempotent:
+      // the first writer wins and subsequent writers cannot overwrite an already-set timestamp.
+      const setClause: any = { ...updates };
+      if (updates.status === "checked_in") {
+        setClause.checkInTime = sql`COALESCE(${appointments.checkInTime}, NOW())`;
       }
-      if (updates.status === "in_progress" && !appt.consultationStartTime) {
-        updates.consultationStartTime = new Date();
+      if (updates.status === "in_progress") {
+        setClause.consultationStartTime = sql`COALESCE(${appointments.consultationStartTime}, NOW())`;
       }
       if (updates.status === "completed") {
-        updates.completedAt = new Date();
+        setClause.completedAt = sql`NOW()`;
+      }
+
+      const [updated] = await db.update(appointments)
+        .set(setClause)
+        .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)))
+        .returning();
+
+      if (!updated) return res.status(404).json({ message: "Appointment not found" });
+
+      if (updates.status === "completed") {
         await db.update(patients)
           .set({ status: "active", funnelStage: "consulted", lastContactedAt: new Date() })
-          .where(and(eq(patients.id, appt.patientId), eq(patients.clinicId, req.session.clinicId!)));
+          .where(and(eq(patients.id, updated.patientId), eq(patients.clinicId, clinicId)));
       }
-      res.json(await storage(req).updateAppointment(id, updates));
+
+      if (updated.doctorId) broadcastQueueUpdate(updated.doctorId);
+      res.json(updated);
     } catch (err) {
       res.status(400).json({ message: "Failed to update appointment" });
     }
@@ -206,17 +241,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       ) {
         return res.status(400).json({ message: "orderedAppointmentIds must be a non-empty array of integers" });
       }
+
+      let doctorId: string | null = null;
+
       await db.transaction(async (tx) => {
         // Fetch current positions for this set — we re-use the same position
         // values (just re-assigned to the new ordering) so other slots' patients
         // are never displaced.
         const existing = await tx
-          .select({ id: appointments.id, queuePosition: appointments.queuePosition })
+          .select({ id: appointments.id, queuePosition: appointments.queuePosition, doctorId: appointments.doctorId })
           .from(appointments)
           .where(and(
             sql`${appointments.id} IN (${sql.join(orderedAppointmentIds.map((id: number) => sql`${id}`), sql`, `)})`,
             eq(appointments.clinicId, req.session.clinicId!)
           ));
+
+        if (existing.length > 0) doctorId = existing[0].doctorId;
 
         const sortedPositions = existing
           .map(a => a.queuePosition ?? 0)
@@ -231,6 +271,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             ));
         }
       });
+
+      // Push real-time update to all SSE clients watching this doctor's queue
+      if (doctorId) broadcastQueueUpdate(doctorId);
+
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: "Failed to reorder queue" });
@@ -280,10 +324,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           ))
           .orderBy(appointments.queuePosition);
 
+        // Only count patients still actively waiting (booked or paid/checked_in).
+        // Excluding in_progress means: once the doctor starts seeing the patient
+        // ahead of you, your position immediately reflects that you are next.
         const aheadCount = allDoctorAppts.filter(
           (a: any) => a.queuePosition !== null &&
             a.queuePosition! < (appt.queuePosition || 0) &&
-            a.status !== "completed" && a.status !== "cancelled" && a.status !== "no_show"
+            (a.status === "booked" || a.status === "checked_in")
         ).length;
 
         const isDone = appt.status === "completed" || appt.status === "cancelled" || appt.status === "no_show";
@@ -292,6 +339,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           expired: false,
           patientName: patient.name,
           doctorName: doctor.name || doctor.firstName || "Doctor",
+          doctorId: appt.doctorId,
           position: isDone ? 0 : aheadCount + 1,
           aheadCount: isDone ? 0 : aheadCount,
           status: appt.status,
@@ -340,6 +388,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err) {
       res.status(500).json({ message: "Failed to get public queue" });
     }
+  });
+
+  // ── SSE ENDPOINT (real-time queue updates, no auth required) ─────────────
+
+  app.get("/api/sse/doctor/:doctorId", (req, res) => {
+    const { doctorId } = req.params;
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // disable nginx buffering
+    res.flushHeaders();
+
+    // Initial connection confirmation
+    res.write("data: connected\n\n");
+
+    if (!sseClients.has(doctorId)) sseClients.set(doctorId, new Set());
+    sseClients.get(doctorId)!.add(res);
+
+    // Keepalive ping every 25 seconds to prevent proxy/browser timeouts
+    const ping = setInterval(() => {
+      try { res.write(": ping\n\n"); } catch { clearInterval(ping); }
+    }, 25000);
+
+    req.on("close", () => {
+      clearInterval(ping);
+      sseClients.get(doctorId)?.delete(res);
+    });
   });
 
   // ── NOTIFY DELAY ──────────────────────────────────────────────────────────
@@ -391,11 +467,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/bills", requireAuth, async (req, res) => {
     try {
       const data = insertBillSchema.parse(req.body);
-      // Verify the appointment belongs to this clinic before billing
       const appt = await storage(req).getAppointment(data.appointmentId);
       if (!appt) return res.status(403).json({ message: "Appointment not found in this clinic" });
       res.status(201).json(await storage(req).createBill(data));
-    } catch (err) {
+    } catch (err: any) {
+      // PostgreSQL unique_violation — bills have a unique index on appointmentId
+      if (err?.code === "23505") return res.status(409).json({ message: "A bill already exists for this appointment" });
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: "Failed to create bill" });
     }
@@ -669,13 +746,211 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     throw new Error(`SMS provider "${provider}" is not supported yet`);
   }
 
+  // ── PATIENT SELF-REGISTRATION (kiosk / QR walk-in) ───────────────────────
+
+  // GET  /api/kiosk/:token  — clinic info + available doctors for the form (no auth)
+  app.get("/api/kiosk/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+
+      // Find the clinic that owns this registration token
+      const tokenRows = await db.select().from(clinicSettings)
+        .where(eq(clinicSettings.key, "registrationToken"));
+      const tokenRow = tokenRows.find((r: any) => r.value === token);
+      if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
+
+      const clinicId = tokenRow.clinicId;
+
+      const [profileRow] = await db.select().from(clinicSettings)
+        .where(and(eq(clinicSettings.clinicId, clinicId), eq(clinicSettings.key, "clinicProfile")));
+      const profile = (profileRow?.value as any) || {};
+
+      const today = new Date();
+      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][today.getDay()];
+
+      const doctorRows = await db.select().from(users)
+        .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
+        .where(and(eq(users.clinicId, clinicId), eq(users.role, "doctor")));
+
+      // Prefer doctors with today's availability configured; fall back to all
+      const withSlots = doctorRows.filter(r => {
+        const avail = (r.doctor_profiles?.availability as any)?.[dayName];
+        return avail?.enabled && avail?.slots?.length > 0;
+      });
+      const list = (withSlots.length > 0 ? withSlots : doctorRows).map(r => ({
+        id: r.users.id,
+        name: r.users.name || [r.users.firstName, r.users.lastName].filter(Boolean).join(" ") || "Doctor",
+        specialization: r.doctor_profiles?.specialization || "General Physician",
+      }));
+
+      res.json({
+        clinic: { name: profile.clinicName || "Clinic", tagline: profile.tagline || null, address: profile.address || null },
+        doctors: list,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to load registration info" });
+    }
+  });
+
+  // POST /api/kiosk/:token  — register patient + create appointment (no auth)
+  app.post("/api/kiosk/:token", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const { name, phone, doctorId, reason } = req.body;
+
+      if (!name?.trim() || !phone || !doctorId) {
+        return res.status(400).json({ message: "Name, phone number, and doctor selection are required" });
+      }
+      const normalizedPhone = String(phone).replace(/\D/g, "");
+      if (normalizedPhone.length < 10) {
+        return res.status(400).json({ message: "Please enter a valid 10-digit phone number" });
+      }
+      const last10 = normalizedPhone.slice(-10);
+
+      // Resolve clinic from token (read-only — safe outside transaction)
+      const tokenRows = await db.select().from(clinicSettings)
+        .where(eq(clinicSettings.key, "registrationToken"));
+      const tokenRow = tokenRows.find((r: any) => r.value === token);
+      if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
+      const clinicId = tokenRow.clinicId;
+
+      // Verify doctor belongs to this clinic (read-only — safe outside transaction)
+      const [doctor] = await db.select().from(users)
+        .where(and(eq(users.id, doctorId), eq(users.clinicId, clinicId), eq(users.role, "doctor")));
+      if (!doctor) return res.status(404).json({ message: "Doctor not found" });
+      const doctorName = doctor.name || [doctor.firstName, doctor.lastName].filter(Boolean).join(" ") || "Doctor";
+
+      // Compute appointment date from availability (read-only — safe outside transaction)
+      const [dpRow] = await db.select().from(doctorProfiles).where(eq(doctorProfiles.userId, doctorId));
+      const today = new Date();
+      const todayStart = new Date(today); todayStart.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][today.getDay()];
+      const availability = (dpRow?.availability as any)?.[dayName];
+      let appointmentDate = new Date();
+      if (availability?.slots?.length > 0) {
+        const nowMins = today.getHours() * 60 + today.getMinutes();
+        for (const slot of (availability.slots as { start: string; end: string }[])) {
+          const [endH, endM] = slot.end.split(":").map(Number);
+          if (nowMins < endH * 60 + endM) {
+            const [startH, startM] = slot.start.split(":").map(Number);
+            if (nowMins < startH * 60 + startM) {
+              const d = new Date(today); d.setHours(startH, startM, 0, 0);
+              appointmentDate = d;
+            }
+            break;
+          }
+        }
+      }
+
+      // All mutating DB ops run inside a single transaction with two advisory locks:
+      //   Lock 1 (clinicId, hash(phone)) — prevents concurrent duplicate patient creation
+      //   Lock 2 (clinicId, hash(doctorId)) — prevents concurrent duplicate queue positions
+      // Locks are acquired in a fixed order (phone first, then doctor) to avoid deadlocks.
+      const result = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${clinicId}::int, hashtext(${last10})::int)`);
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${clinicId}::int, hashtext(${doctorId})::int)`);
+
+        // Find or create patient
+        const [existingPatient] = await tx.select().from(patients)
+          .where(and(
+            eq(patients.clinicId, clinicId),
+            sql`RIGHT(REGEXP_REPLACE(${patients.phone}, '[^0-9]', '', 'g'), 10) = ${last10}`
+          ));
+        let patient = existingPatient;
+        if (!patient) {
+          const [created] = await tx.insert(patients)
+            .values({ clinicId, name: name.trim(), phone: last10, source: "walk_in", status: "lead", funnelStage: "new" })
+            .returning();
+          patient = created!;
+        }
+
+        // Check for an already-active appointment today
+        const [existingAppt] = await tx.select().from(appointments)
+          .where(and(
+            eq(appointments.clinicId, clinicId),
+            eq(appointments.patientId, patient.id),
+            eq(appointments.doctorId, doctorId),
+            gte(appointments.date, todayStart),
+            lte(appointments.date, endOfDay)
+          ))
+          .orderBy(desc(appointments.createdAt));
+
+        if (existingAppt && !["completed", "cancelled", "no_show"].includes(existingAppt.status)) {
+          return { alreadyRegistered: true as const, patient, appt: existingAppt };
+        }
+
+        // Compute queue position atomically inside the locked transaction
+        const [maxRow] = await tx.select({
+          maxPos: sql<number>`COALESCE(MAX(${appointments.queuePosition}), 0)::int`,
+          maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
+        }).from(appointments).where(and(
+          eq(appointments.clinicId, clinicId),
+          eq(appointments.doctorId, doctorId),
+          gte(appointments.date, todayStart),
+          lte(appointments.date, endOfDay),
+        ));
+
+        const queueToken = nanoid(8);
+        const [newAppt] = await tx.insert(appointments).values({
+          clinicId, patientId: patient.id, doctorId,
+          date: appointmentDate, status: "booked",
+          reason: reason?.trim() || null,
+          queueNumber: (maxRow?.maxNum ?? 0) + 1,
+          queuePosition: (maxRow?.maxPos ?? 0) + 1,
+          queueToken,
+        }).returning();
+
+        return { alreadyRegistered: false as const, patient, appt: newAppt! };
+      });
+
+      if (result.alreadyRegistered) {
+        return res.json({
+          alreadyRegistered: true,
+          patientName: result.patient.name,
+          doctorName,
+          queuePosition: result.appt.queuePosition,
+          queueToken: result.appt.queueToken,
+          queueUrl: `${req.protocol}://${req.get("host")}/patient-queue/${result.appt.queueToken}`,
+        });
+      }
+
+      broadcastQueueUpdate(doctorId);
+
+      res.status(201).json({
+        alreadyRegistered: false,
+        patientName: result.patient.name,
+        doctorName,
+        queuePosition: result.appt.queuePosition,
+        queueToken: result.appt.queueToken,
+        queueUrl: `${req.protocol}://${req.get("host")}/patient-queue/${result.appt.queueToken}`,
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to register. Please try again." });
+    }
+  });
+
   // ── SETTINGS ─────────────────────────────────────────────────────────────
 
   app.get("/api/settings", requireAuth, async (req, res) => {
     try {
-      const settings = await storage(req).getAllSettings();
+      let settings = await storage(req).getAllSettings();
+      // Auto-generate a stable public registration token on first access.
+      // ON CONFLICT DO NOTHING ensures that if two concurrent requests both see no token,
+      // only one insert wins; we then re-read the winner so both callers return the same token.
+      if (!settings.registrationToken) {
+        const regToken = nanoid(12);
+        await db.insert(clinicSettings)
+          .values({ clinicId: req.session.clinicId!, key: "registrationToken", value: regToken, updatedAt: new Date() })
+          .onConflictDoNothing();
+        const savedToken = await storage(req).getSetting("registrationToken");
+        settings = { ...settings, registrationToken: savedToken ?? regToken };
+      }
       const masked = Object.fromEntries(
         Object.entries(settings).map(([k, v]) => {
+          if (k === "registrationToken") return [k, v]; // always expose — it's intentionally public
           if (v && typeof v === "object") {
             const safe: Record<string, any> = {};
             for (const [field, val] of Object.entries(v as Record<string, any>)) {
@@ -697,7 +972,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/settings/:key", requireAuth, async (req, res) => {
     try {
       const { key } = req.params;
-      if (!["whatsapp", "sms"].includes(key)) return res.status(400).json({ message: "Unknown settings key" });
+      if (!["whatsapp", "sms", "clinicProfile"].includes(key)) return res.status(400).json({ message: "Unknown settings key" });
       const existing = (await storage(req).getSetting(key)) || {};
       const merged: Record<string, any> = { ...existing };
       for (const [field, val] of Object.entries(req.body)) {
@@ -726,20 +1001,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!utr) return res.status(400).json({ message: "UTR is required" });
       const resolvedPlan = (PLAN_PRICES[planType] ? planType : "monthly") as string;
       const resolvedAmount = PLAN_PRICES[resolvedPlan];
-      // Block duplicate pending requests
-      const existing = await db.select().from(clinicPayments)
-        .where(and(eq(clinicPayments.clinicId, req.session.clinicId!), eq(clinicPayments.status, "pending")));
-      if (existing.length > 0) return res.status(400).json({ message: "You already have a pending payment request" });
-      const [payment] = await db.insert(clinicPayments).values({
-        clinicId: req.session.clinicId!,
-        amount: resolvedAmount,
-        utr: String(utr).trim(),
-        planType: resolvedPlan,
-        status: "pending",
-        paidAt: new Date(),
-      }).returning();
+
+      // SELECT FOR UPDATE inside a transaction — serializes concurrent submissions so only
+      // one pending payment is created even if the user double-clicks or opens two tabs.
+      const payment = await db.transaction(async (tx) => {
+        const existing = await tx.select().from(clinicPayments)
+          .where(and(eq(clinicPayments.clinicId, req.session.clinicId!), eq(clinicPayments.status, "pending")))
+          .for("update");
+        if (existing.length > 0) throw Object.assign(new Error("DUPLICATE_PENDING"), { isDuplicate: true });
+        const [p] = await tx.insert(clinicPayments).values({
+          clinicId: req.session.clinicId!,
+          amount: resolvedAmount,
+          utr: String(utr).trim(),
+          planType: resolvedPlan,
+          status: "pending",
+          paidAt: new Date(),
+        }).returning();
+        return p!;
+      });
+
       res.status(201).json(payment);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.isDuplicate) return res.status(400).json({ message: "You already have a pending payment request" });
       res.status(500).json({ message: "Failed to submit payment" });
     }
   });

@@ -1,5 +1,6 @@
 import { useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { Loader2, CheckCircle, Stethoscope, Bell, Clock, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,9 +25,9 @@ function StatusCard({ data }: { data: any }) {
   const isExpired = data.expired === true;
   const isCancelled = data.status === "cancelled" || data.status === "no_show";
   const isCompleted = data.status === "completed";
-  const isWithDoctor = data.status === "in_progress" || data.position === 0;
+  const isWithDoctor = data.status === "in_progress";
   const isNext = data.position === 1 && !isWithDoctor && !isCompleted;
-  const aheadCount: number = data.aheadCount ?? (data.position > 1 ? data.position - 1 : 0);
+  const aheadCount: number = data.aheadCount ?? Math.max(0, data.position - 1);
   const patientName: string = data.patientName || "Patient";
   const doctorName: string = data.doctorName || "Doctor";
 
@@ -168,7 +169,7 @@ function StatusCard({ data }: { data: any }) {
 export default function PatientQueue() {
   const { token } = useParams();
 
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["queue", token],
     queryFn: async () => {
       const res = await fetch(`/api/queue/${token}`);
@@ -183,6 +184,17 @@ export default function PatientQueue() {
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
+
+  // SSE: get pushed updates immediately when queue changes instead of waiting for the 5s poll
+  const doctorId = data?.doctorId;
+  const esRef = useRef<EventSource | null>(null);
+  useEffect(() => {
+    if (!doctorId) return;
+    const es = new EventSource(`/api/sse/doctor/${doctorId}`);
+    esRef.current = es;
+    es.onmessage = () => refetch();
+    return () => { es.close(); esRef.current = null; };
+  }, [doctorId, refetch]);
 
   if (isLoading) {
     return (

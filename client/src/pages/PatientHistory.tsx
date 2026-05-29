@@ -174,7 +174,7 @@ export default function PatientHistory() {
   const { id } = useParams();
   const [, setLocation] = useLocation();
   const { data: patientData, isLoading: isLoadingPatient } = usePatient(Number(id));
-  const { data: patientAppointments, isLoading: isLoadingAppts } = useAppointments({ patientId: Number(id) });
+  const { data: patientAppointments } = useAppointments({ patientId: Number(id) }, { refetchInterval: false });
   const updatePatient = useUpdatePatient();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -271,7 +271,7 @@ export default function PatientHistory() {
     }
   };
 
-  if (isLoadingPatient || isLoadingAppts) return <Layout><Loading /></Layout>;
+  if (isLoadingPatient) return <Layout><Loading /></Layout>;
   if (!patient) return <Layout><div className="p-8 text-slate-500">Patient not found.</div></Layout>;
 
   return (

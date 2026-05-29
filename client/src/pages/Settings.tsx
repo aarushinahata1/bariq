@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from "react";
+﻿import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Layout } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
@@ -8,10 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2 } from "lucide-react";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
+import QRCode from "react-qr-code";
 
 type Tab = "clinic" | "billing" | "whatsapp" | "sms";
 
@@ -92,6 +93,202 @@ function StatusBadge({ enabled }: { enabled: boolean }) {
         ? <><CheckCircle2 className="w-3.5 h-3.5" /> Active</>
         : <><AlertCircle className="w-3.5 h-3.5" /> Inactive</>}
     </span>
+  );
+}
+
+function esc(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function buildQRPrintHtml(svgString: string, clinicName: string, tagline?: string | null, address?: string | null): string {
+  const steps = [
+    { num: "1", title: "Scan QR Code", desc: "Open your phone camera and point it at this QR code" },
+    { num: "2", title: "Enter Your Details", desc: "Fill in your name and 10-digit mobile number" },
+    { num: "3", title: "Choose Your Doctor", desc: "Select the doctor you want to consult today" },
+    { num: "4", title: "Track Live", desc: "See your real-time queue position on your phone" },
+  ];
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Patient Registration – ${esc(clinicName)}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+@page{size:A4;margin:0}
+.page{width:210mm;min-height:297mm;display:flex;flex-direction:column;background:#fff}
+.header{background:linear-gradient(135deg,#0f766e 0%,#0d9488 55%,#0891b2 100%);color:white;padding:36px 44px 32px;text-align:center}
+.clinic-name{font-size:30px;font-weight:900;letter-spacing:-0.5px;margin-bottom:8px}
+.tagline{font-size:14px;opacity:.85;margin-bottom:8px}
+.address{font-size:12px;opacity:.7;line-height:1.6}
+.body{flex:1;display:flex;flex-direction:column;align-items:center;padding:32px 44px;gap:28px}
+.scan-label{font-size:12px;font-weight:700;color:#0f766e;text-transform:uppercase;letter-spacing:2.5px;text-align:center}
+.qr-wrapper{border:3px solid #0f766e;border-radius:20px;padding:20px;background:#fff;box-shadow:0 8px 40px rgba(15,118,110,.12);display:flex;align-items:center;justify-content:center}
+.steps-section{width:100%}
+.steps-title{font-size:15px;font-weight:700;color:#1e293b;text-align:center;margin-bottom:18px}
+.steps-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.step-card{background:#f0fdfa;border:1.5px solid #99f6e4;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:8px}
+.step-num{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,#0f766e,#0d9488);color:white;font-size:15px;font-weight:900;display:flex;align-items:center;justify-content:center}
+.step-title{font-size:13px;font-weight:700;color:#0f766e}
+.step-desc{font-size:11.5px;color:#475569;line-height:1.55}
+.footer{background:#f8fafc;border-top:1.5px solid #e2e8f0;padding:14px 44px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:8px}
+.brand-dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,#0f766e,#0d9488);color:white;font-weight:900;font-size:12px;display:flex;align-items:center;justify-content:center}
+.brand-name{font-size:14px;font-weight:900;color:#1e293b}
+.footer-note{font-size:11px;color:#94a3b8}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="clinic-name">${esc(clinicName)}</div>
+    ${tagline ? `<div class="tagline">${esc(tagline)}</div>` : ""}
+    ${address ? `<div class="address">${esc(address).replace(/\n/g, "<br>")}</div>` : ""}
+  </div>
+  <div class="body">
+    <div class="scan-label">Scan to Register &amp; Join the Queue</div>
+    <div class="qr-wrapper">${svgString}</div>
+    <div class="steps-section">
+      <div class="steps-title">How it works — 4 simple steps</div>
+      <div class="steps-grid">
+        ${steps.map(s => `<div class="step-card"><div class="step-num">${s.num}</div><div class="step-title">${s.title}</div><div class="step-desc">${s.desc}</div></div>`).join("")}
+      </div>
+    </div>
+  </div>
+  <div class="footer">
+    <div class="brand"><div class="brand-dot">B</div><div class="brand-name">BariQ</div></div>
+    <div class="footer-note">Smart Queue Management for Modern Clinics</div>
+  </div>
+</div>
+<script>window.onload=()=>window.print()</script>
+</body>
+</html>`;
+}
+
+function RegistrationQR({ token, clinicName, tagline, address }: { token: string; clinicName?: string; tagline?: string; address?: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const qrRef = useRef<HTMLDivElement>(null);
+  const regUrl = `${window.location.origin}/register/${token}`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(regUrl);
+      setCopied(true);
+      toast({ title: "Link copied!", description: "Share this with patients or print it near the QR code." });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: "Copy failed", variant: "destructive" });
+    }
+  };
+
+  const handleDownload = () => {
+    const svg = qrRef.current?.querySelector("svg");
+    if (!svg) return;
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const blob = new Blob([svgData], { type: "image/svg+xml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "patient-registration-qr.svg";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrint = () => {
+    const svg = qrRef.current?.querySelector("svg");
+    if (!svg) return;
+    const clone = svg.cloneNode(true) as SVGElement;
+    clone.setAttribute("width", "280");
+    clone.setAttribute("height", "280");
+    const svgString = new XMLSerializer().serializeToString(clone);
+    const html = buildQRPrintHtml(svgString, clinicName || "Our Clinic", tagline, address);
+    const win = window.open("", "_blank");
+    if (!win) { toast({ title: "Pop-up blocked", description: "Allow pop-ups for this site to print the poster.", variant: "destructive" }); return; }
+    win.document.write(html);
+    win.document.close();
+  };
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
+        <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
+          <QrCode className="w-5 h-5 text-teal-700" />
+        </div>
+        <div>
+          <h2 className="font-semibold text-slate-900">Patient Self-Registration</h2>
+          <p className="text-xs text-slate-500">Patients scan this QR code to join the queue themselves</p>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-col sm:flex-row items-center gap-6">
+        {/* QR code */}
+        <div ref={qrRef} className="shrink-0 p-4 bg-white rounded-2xl border-2 border-slate-100 shadow-sm">
+          <QRCode
+            value={regUrl}
+            size={160}
+            fgColor="#0f766e"
+            bgColor="#ffffff"
+            level="M"
+          />
+        </div>
+
+        {/* Info + actions */}
+        <div className="flex-1 w-full space-y-4">
+          <div>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Registration Link</p>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5">
+              <p className="text-xs text-slate-500 font-mono break-all leading-relaxed">{regUrl}</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Button
+              onClick={handlePrint}
+              className="flex-1 rounded-xl h-10 bg-teal-600 hover:bg-teal-700"
+            >
+              <Printer className="w-4 h-4 mr-2" /> Print Poster
+            </Button>
+            <Button
+              onClick={handleCopy}
+              variant="outline"
+              className="flex-1 rounded-xl h-10"
+            >
+              {copied
+                ? <><CheckCircle className="w-4 h-4 mr-2" /> Copied!</>
+                : <><Copy className="w-4 h-4 mr-2" /> Copy Link</>}
+            </Button>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleDownload}
+              className="flex-1 rounded-xl h-9 text-sm"
+            >
+              <QrCode className="w-4 h-4 mr-2" /> Download QR
+            </Button>
+            <a
+              href={regUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center w-9 h-9 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 transition-colors shrink-0"
+              title="Preview registration page"
+            >
+              <ExternalLink className="w-4 h-4 text-slate-500" />
+            </a>
+          </div>
+
+          <div className="bg-teal-50 border border-teal-100 rounded-xl p-3.5 space-y-1.5">
+            <p className="text-xs font-semibold text-teal-800">How to use</p>
+            <ul className="text-xs text-teal-700 space-y-1">
+              <li>• Print and place the QR code at your reception desk or waiting area</li>
+              <li>• Patients scan it with their phone camera to self-register</li>
+              <li>• New registrations appear in your queue instantly</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -351,6 +548,16 @@ export default function Settings() {
                 </Button>
               </div>
             </Card>
+
+            {/* Patient Self-Registration QR Code */}
+            {settings?.registrationToken && (
+              <RegistrationQR
+                token={settings.registrationToken}
+                clinicName={clinicProfile.clinicName || clinic?.name || ""}
+                tagline={clinicProfile.tagline}
+                address={clinicProfile.address}
+              />
+            )}
           </div>
         )}
 
