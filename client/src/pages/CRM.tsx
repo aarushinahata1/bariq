@@ -1,6 +1,6 @@
 ﻿import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { Patient } from "@shared/schema";
@@ -96,10 +96,16 @@ export default function CRM() {
     }
   };
 
-  const filteredPatients = (patients || []).filter(p => {
-    if (funnelFilter === "all") return true;
-    return (p as any).funnelStage === funnelFilter;
-  });
+  const filteredPatients = useMemo(() => {
+    const seenPhones = new Set<string>();
+    return (patients || []).filter(p => {
+      if (funnelFilter !== "all" && (p as any).funnelStage !== funnelFilter) return false;
+      const normalized = p.phone.replace(/\D/g, "");
+      if (seenPhones.has(normalized)) return false;
+      seenPhones.add(normalized);
+      return true;
+    });
+  }, [patients, funnelFilter]);
 
   if (isLoading) return <Layout><Loading /></Layout>;
 

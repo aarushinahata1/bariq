@@ -5,14 +5,15 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw } from "lucide-react";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
 
-type Tab = "billing" | "whatsapp" | "sms";
+type Tab = "clinic" | "billing" | "whatsapp" | "sms";
 
 const WHATSAPP_PROVIDERS = [
   { value: "meta", label: "Meta (WhatsApp Business API)" },
@@ -43,6 +44,17 @@ interface SmsSettings {
   apiKey: string;
   senderId: string;
   enabled: boolean;
+}
+
+interface ClinicProfileSettings {
+  clinicName: string;
+  tagline: string;
+  address: string;
+  phone: string;
+  email: string;
+  doctorName: string;
+  qualifications: string;
+  registrationNo: string;
 }
 
 function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
@@ -84,7 +96,7 @@ function StatusBadge({ enabled }: { enabled: boolean }) {
 }
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState<Tab>("billing");
+  const [activeTab, setActiveTab] = useState<Tab>("clinic");
   const { toast } = useToast();
   const qc = useQueryClient();
   const { clinic } = useAuth();
@@ -146,11 +158,17 @@ export default function Settings() {
 
   const [wa, setWa] = useState<WhatsAppSettings>({ provider: "meta", accessToken: "", phoneNumberId: "", wabaId: "", enabled: false });
   const [sms, setSms] = useState<SmsSettings>({ provider: "msg91", apiKey: "", senderId: "", enabled: false });
+  const [clinicProfile, setClinicProfile] = useState<ClinicProfileSettings>({
+    clinicName: "", tagline: "", address: "", phone: "", email: "",
+    doctorName: "", qualifications: "", registrationNo: "",
+  });
 
   useEffect(() => {
     if (!settings) return;
     if (settings.whatsapp) setWa(s => ({ ...s, ...settings.whatsapp }));
     if (settings.sms) setSms(s => ({ ...s, ...settings.sms }));
+    if (settings.clinicProfile) setClinicProfile(s => ({ ...s, ...settings.clinicProfile }));
+    else if (clinic?.name && !clinicProfile.clinicName) setClinicProfile(s => ({ ...s, clinicName: clinic.name }));
   }, [settings]);
 
   const saveMutation = useMutation({
@@ -166,7 +184,8 @@ export default function Settings() {
     },
     onSuccess: (_, { key }) => {
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
-      toast({ title: `${key === "whatsapp" ? "WhatsApp" : "SMS"} settings saved` });
+      const labels: Record<string, string> = { whatsapp: "WhatsApp", sms: "SMS", clinicProfile: "Clinic profile" };
+      toast({ title: `${labels[key] || "Settings"} saved` });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to save", description: err.message, variant: "destructive" });
@@ -181,6 +200,7 @@ export default function Settings() {
   const hasPending = payments.some((p: any) => p.status === "pending");
 
   const tabs: { id: Tab; label: string; icon: typeof MessageCircle; color: string }[] = [
+    { id: "clinic", label: "Clinic Profile", icon: Building2, color: "text-teal-700" },
     { id: "billing", label: "Plan & Billing", icon: CreditCard, color: "text-teal-700" },
     { id: "whatsapp", label: "WhatsApp API", icon: MessageCircle, color: "text-emerald-600" },
     { id: "sms", label: "SMS API", icon: MessageSquare, color: "text-teal-700" },
@@ -223,6 +243,116 @@ export default function Settings() {
             );
           })}
         </div>
+
+        {/* Clinic Profile Panel */}
+        {activeTab === "clinic" && (
+          <div className="space-y-5">
+            <Card className="p-6 space-y-5">
+              <div className="flex items-center gap-3 pb-1">
+                <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
+                  <Building2 className="w-5 h-5 text-teal-700" />
+                </div>
+                <div>
+                  <h2 className="font-semibold text-slate-900">Clinic Profile</h2>
+                  <p className="text-xs text-slate-500">Shown on printed receipts and prescriptions</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
+                  <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Clinic / Hospital Name *</Label>
+                  <Input
+                    value={clinicProfile.clinicName}
+                    onChange={e => setClinicProfile(s => ({ ...s, clinicName: e.target.value }))}
+                    placeholder="e.g. City Multi-Specialty Clinic"
+                    className="rounded-xl h-11"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Tagline <span className="text-slate-400 font-normal">(optional)</span></Label>
+                  <Input
+                    value={clinicProfile.tagline}
+                    onChange={e => setClinicProfile(s => ({ ...s, tagline: e.target.value }))}
+                    placeholder="e.g. Compassionate care for every patient"
+                    className="rounded-xl h-11"
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Address</Label>
+                  <Textarea
+                    value={clinicProfile.address}
+                    onChange={e => setClinicProfile(s => ({ ...s, address: e.target.value }))}
+                    placeholder="123, Main Street, City, State - 400001"
+                    className="rounded-xl resize-none h-20"
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Phone</Label>
+                  <Input
+                    value={clinicProfile.phone}
+                    onChange={e => setClinicProfile(s => ({ ...s, phone: e.target.value }))}
+                    placeholder="+91 98765 43210"
+                    className="rounded-xl h-11"
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Email</Label>
+                  <Input
+                    type="email"
+                    value={clinicProfile.email}
+                    onChange={e => setClinicProfile(s => ({ ...s, email: e.target.value }))}
+                    placeholder="clinic@example.com"
+                    className="rounded-xl h-11"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100">
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">Doctor Details — for Prescriptions</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Doctor Name</Label>
+                    <Input
+                      value={clinicProfile.doctorName}
+                      onChange={e => setClinicProfile(s => ({ ...s, doctorName: e.target.value }))}
+                      placeholder="Dr. Firstname Lastname"
+                      className="rounded-xl h-11"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Qualifications</Label>
+                    <Input
+                      value={clinicProfile.qualifications}
+                      onChange={e => setClinicProfile(s => ({ ...s, qualifications: e.target.value }))}
+                      placeholder="MBBS, MD (Medicine)"
+                      className="rounded-xl h-11"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Medical Registration No.</Label>
+                    <Input
+                      value={clinicProfile.registrationNo}
+                      onChange={e => setClinicProfile(s => ({ ...s, registrationNo: e.target.value }))}
+                      placeholder="e.g. MCI-123456"
+                      className="rounded-xl h-11"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => saveMutation.mutate({ key: "clinicProfile", data: clinicProfile })}
+                  disabled={saveMutation.isPending || !clinicProfile.clinicName.trim()}
+                  className="bg-teal-600 hover:bg-teal-700 text-white gap-2 rounded-xl h-11 px-6"
+                >
+                  <Save className="w-4 h-4" />
+                  {saveMutation.isPending ? "Saving…" : "Save Clinic Profile"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
 
         {/* Plan & Billing Panel */}
         {activeTab === "billing" && (
