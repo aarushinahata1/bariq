@@ -1,6 +1,8 @@
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-const { Client, LocalAuth } = require("whatsapp-web.js");
+// whatsapp-web.js is CJS; default import works in both ESM (dev) and CJS bundle (prod)
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import pkg from "whatsapp-web.js";
+const { Client, LocalAuth } = pkg as any;
 
 export type WAStatus = "disconnected" | "connecting" | "qr" | "ready";
 
