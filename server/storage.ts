@@ -7,7 +7,7 @@ import {
   type Notification, type Prescription, type InsertPrescription,
   type Bill, type InsertBill, type ClinicSetting, type Clinic, type ClinicPayment,
 } from "@shared/schema";
-import { eq, and, desc, sql, gte, lte, like, or } from "drizzle-orm";
+import { eq, and, desc, sql, gte, lte, like, or, inArray } from "drizzle-orm";
 import { format } from "date-fns";
 
 export class DatabaseStorage {
@@ -99,6 +99,22 @@ export class DatabaseStorage {
     return row!;
   }
 
+  async deleteDoctor(userId: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Cancel all active/upcoming appointments for this doctor
+      await tx.update(appointments)
+        .set({ status: "cancelled" })
+        .where(and(
+          eq(appointments.clinicId, this.clinicId),
+          eq(appointments.doctorId, userId),
+          sql`${appointments.status} IN ('booked', 'checked_in')`
+        ));
+      await tx.delete(doctorProfiles).where(eq(doctorProfiles.userId, userId));
+      await tx.delete(users)
+        .where(and(eq(users.id, userId), eq(users.clinicId, this.clinicId)));
+    });
+  }
+
   // ── Patients ──────────────────────────────────────────────────────────────
 
   async getPatients(search?: string, filters?: { status?: string; source?: string }): Promise<(Patient & { lastAppointmentStatus?: string | null })[]> {
@@ -167,6 +183,24 @@ export class DatabaseStorage {
       .returning();
     if (!updated) throw new Error("Patient not found");
     return updated;
+  }
+
+  async deletePatient(id: number): Promise<void> {
+    await db.transaction(async (tx) => {
+      const apptRows = await tx.select({ id: appointments.id }).from(appointments)
+        .where(and(eq(appointments.clinicId, this.clinicId), eq(appointments.patientId, id)));
+      const apptIds = apptRows.map(a => a.id);
+      if (apptIds.length > 0) {
+        await tx.delete(prescriptions).where(inArray(prescriptions.appointmentId, apptIds));
+        await tx.delete(bills).where(inArray(bills.appointmentId, apptIds));
+      }
+      await tx.delete(notifications)
+        .where(and(eq(notifications.clinicId, this.clinicId), eq(notifications.patientId, id)));
+      await tx.delete(appointments)
+        .where(and(eq(appointments.clinicId, this.clinicId), eq(appointments.patientId, id)));
+      await tx.delete(patients)
+        .where(and(eq(patients.id, id), eq(patients.clinicId, this.clinicId)));
+    });
   }
 
   // ── Appointments ──────────────────────────────────────────────────────────

@@ -1,11 +1,12 @@
 ﻿import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { useDoctors, useCreateDoctor, useNotifyDelay, useUpdateDoctorProfile } from "@/hooks/use-doctors";
+import { useDoctors, useCreateDoctor, useNotifyDelay, useUpdateDoctorProfile, useDeleteDoctor } from "@/hooks/use-doctors";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Plus, BellRing, Clock, Settings2, X, Pencil, Check, ChevronDown, ChevronUp, Calendar } from "lucide-react";
+import { Plus, BellRing, Clock, Settings2, X, Pencil, Check, ChevronDown, ChevronUp, Calendar, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
@@ -129,9 +130,11 @@ export default function Doctors() {
   const [editingAvailabilityFor, setEditingAvailabilityFor] = useState<string | null>(null);
 
   const updateProfile = useUpdateDoctorProfile();
+  const deleteDoctor = useDeleteDoctor();
   const { toast } = useToast();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [notifyId, setNotifyId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [inlineEditId, setInlineEditId] = useState<string | null>(null);
   const [inlineName, setInlineName] = useState("");
   const [inlineSpecialization, setInlineSpecialization] = useState("");
@@ -407,11 +410,18 @@ export default function Doctors() {
               </div>
 
               <div className="flex gap-3 pt-3 border-t border-slate-100">
-                <Button 
+                <Button
                   onClick={() => setNotifyId(doc.id)}
                   className="flex-1 rounded-xl bg-orange-50 text-orange-600 border border-orange-200 hover:bg-orange-100 hover:border-orange-300"
                 >
                   <BellRing className="w-4 h-4 mr-2" /> Notify Delay
+                </Button>
+                <Button
+                  variant="outline"
+                  className="rounded-xl border-red-100 text-red-500 hover:bg-red-50 hover:border-red-200"
+                  onClick={() => setDeleteTarget({ id: doc.id, name: doc.name || "Doctor" })}
+                >
+                  <Trash2 className="w-4 h-4" />
                 </Button>
               </div>
             </div>
@@ -420,6 +430,32 @@ export default function Doctors() {
       </div>
 
       <NotifyDelayDialog doctorId={notifyId} open={!!notifyId} onOpenChange={(open) => !open && setNotifyId(null)} />
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove Doctor?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove <strong>Dr. {deleteTarget?.name}</strong> from the system. Their upcoming booked appointments will be cancelled. Past appointment records are preserved. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-xl bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteDoctor.mutate(deleteTarget.id, {
+                  onSuccess: () => { toast({ title: "Doctor removed" }); setDeleteTarget(null); },
+                  onError: () => toast({ title: "Error", description: "Failed to remove doctor", variant: "destructive" }),
+                });
+              }}
+            >
+              Remove Doctor
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

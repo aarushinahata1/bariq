@@ -4,8 +4,10 @@ export type Role = "admin" | "doctor" | "receptionist";
 export type Action =
   | "patients:create"
   | "patients:edit"
+  | "patients:delete"
   | "appointments:create"
   | "appointments:reschedule"
+  | "appointments:delete"
   | "appointments:generate-bill"
   | "queue:notes"
   | "queue:prescription"
@@ -51,8 +53,10 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
     actions: [
       "patients:create",
       "patients:edit",
+      "patients:delete",
       "appointments:create",
       "appointments:reschedule",
+      "appointments:delete",
       "appointments:generate-bill",
       "queue:notes",
       "queue:prescription",

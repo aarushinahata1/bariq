@@ -54,6 +54,20 @@ export function usePatient(id: number) {
   });
 }
 
+export function useDeletePatient() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/patients/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to delete patient");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+    },
+  });
+}
+
 export function useCreatePatient() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { getStorage } from "./storage";
+import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
 import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema } from "@shared/schema";
 import { db } from "./db";
@@ -52,6 +53,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.json(await storage(req).updatePatient(id, safeUpdates));
     } catch (err) {
       res.status(400).json({ message: "Failed to update patient" });
+    }
+  });
+
+  app.delete("/api/patients/:id", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (isNaN(id)) return res.status(400).json({ message: "Invalid patient ID" });
+      await storage(req).deletePatient(id);
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to delete patient" });
     }
   });
 
@@ -114,6 +127,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  app.delete("/api/doctors/:id", requireAuth, async (req, res) => {
+    try {
+      const userId = req.params.id;
+      const doctor = await storage(req).getUser(userId);
+      if (!doctor) return res.status(404).json({ message: "Doctor not found" });
+      await storage(req).deleteDoctor(userId);
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to delete doctor" });
+    }
+  });
+
   // ── APPOINTMENTS ──────────────────────────────────────────────────────────
 
   app.get(api.appointments.list.path, requireAuth, async (req, res) => {
@@ -143,6 +169,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const doctor = await storage(req).getUser(data.doctorId);
       if (!doctor || doctor.role !== "doctor") return res.status(403).json({ message: "Doctor not found in this clinic" });
 
+      const [doctorProfile] = await db.select().from(doctorProfiles).where(eq(doctorProfiles.userId, data.doctorId));
+      if (doctorProfile?.isAvailable === false) {
+        const name = doctor.name || "This doctor";
+        return res.status(400).json({ message: `Dr. ${name} is currently unavailable and not accepting appointments.` });
+      }
+
       const apptDateOnly = new Date(data.date); apptDateOnly.setHours(0, 0, 0, 0);
       const apptEndOfDay = new Date(apptDateOnly); apptEndOfDay.setHours(23, 59, 59, 999);
 
@@ -154,6 +186,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         // for the same doctor so two simultaneous requests never get identical positions.
         appt = await db.transaction(async (tx) => {
           await tx.execute(sql`SELECT pg_advisory_xact_lock(${req.session.clinicId!}::int, hashtext(${data.doctorId})::int)`);
+
+          // Prevent duplicate bookings: check for an existing active appointment
+          // for the same patient+doctor on the same calendar day. This catches
+          // two tabs submitting simultaneously — the second one loses the lock and
+          // sees the row the first one already inserted.
+          const [existingAppt] = await tx.select({ id: appointments.id })
+            .from(appointments)
+            .where(and(
+              eq(appointments.clinicId, req.session.clinicId!),
+              eq(appointments.patientId, data.patientId),
+              eq(appointments.doctorId, data.doctorId),
+              gte(appointments.date, apptDateOnly),
+              lte(appointments.date, apptEndOfDay),
+              sql`${appointments.status} NOT IN ('cancelled', 'no_show', 'completed')`
+            ));
+          if (existingAppt) throw Object.assign(new Error("Duplicate"), { code: "DUPLICATE_APPOINTMENT" });
+
           const [maxRow] = await tx.select({
             maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
             maxPos: sql<number>`COALESCE(MAX(${appointments.queuePosition}), 0)::int`,
@@ -174,7 +223,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         });
       }
       res.status(201).json(appt);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "DUPLICATE_APPOINTMENT") return res.status(409).json({ message: "This patient already has an active appointment with this doctor on this date." });
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       console.error(err);
       res.status(500).json({ message: "Failed to create appointment" });
@@ -522,7 +572,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const appt = await storage(req).getAppointment(data.appointmentId);
       if (!appt) return res.status(403).json({ message: "Appointment not found in this clinic" });
       res.status(201).json(await storage(req).createPrescription(data));
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "23505") return res.status(409).json({ message: "A prescription already exists for this appointment" });
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: "Failed to create prescription" });
     }
@@ -578,7 +629,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         try {
           if (channel === "whatsapp") {
-            await sendWhatsAppMessage(settings, intlPhone, msg);
+            await sendWhatsAppMessage(settings, intlPhone, msg, req.session.clinicId!);
           } else {
             await sendSmsMessage(settings, intlPhone, msg);
           }
@@ -605,8 +656,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  async function sendWhatsAppMessage(settings: Record<string, any>, phone: string, message: string) {
+  async function sendWhatsAppMessage(settings: Record<string, any>, phone: string, message: string, clinicId?: number) {
     const { provider, accessToken, phoneNumberId } = settings;
+
+    if (provider === "web") {
+      if (!clinicId) throw new Error("Clinic ID required for WhatsApp Web");
+      await waWeb.sendMessage(clinicId, phone, message);
+      return;
+    }
 
     if (!accessToken || !phoneNumberId) {
       throw new Error("WhatsApp Access Token and Phone Number ID are required in Settings");
@@ -749,6 +806,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // ── PATIENT SELF-REGISTRATION (kiosk / QR walk-in) ───────────────────────
 
   // GET  /api/kiosk/:token  — clinic info + available doctors for the form (no auth)
+  // Accepts optional ?date=YYYY-MM-DD to load slots for a specific date (defaults to today).
   app.get("/api/kiosk/:token", async (req, res) => {
     try {
       const { token } = req.params;
@@ -765,9 +823,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .where(and(eq(clinicSettings.clinicId, clinicId), eq(clinicSettings.key, "clinicProfile")));
       const profile = (profileRow?.value as any) || {};
 
-      const today = new Date();
-      const nowMins = today.getHours() * 60 + today.getMinutes();
-      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][today.getDay()];
+      // Determine the target date — default to today, clamp past dates to today
+      const now = new Date();
+      const todayMidnight = new Date(now); todayMidnight.setHours(0, 0, 0, 0);
+      let targetDate: Date;
+      const dateParam = req.query.date as string | undefined;
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const [y, mo, d] = dateParam.split("-").map(Number);
+        targetDate = new Date(y, mo - 1, d);
+        if (targetDate < todayMidnight) targetDate = new Date(todayMidnight);
+      } else {
+        targetDate = new Date(todayMidnight);
+      }
+
+      const isTargetToday = targetDate.toDateString() === todayMidnight.toDateString();
+      const nowMins = isTargetToday ? now.getHours() * 60 + now.getMinutes() : 0;
+      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][targetDate.getDay()];
 
       const doctorRows = await db.select().from(users)
         .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
@@ -775,14 +846,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const list = doctorRows.map(r => {
         const avail = (r.doctor_profiles?.availability as any)?.[dayName];
-        // Only include slots when today is an enabled working day
         const rawSlots: { start: string; end: string }[] =
           avail?.enabled && Array.isArray(avail?.slots) ? avail.slots : [];
-        // Drop slots whose end time has already passed
-        const activeSlots = rawSlots.filter(slot => {
-          const [endH, endM] = slot.end.split(":").map(Number);
-          return nowMins < endH * 60 + endM;
-        });
+        // For today: drop slots whose end time has already passed.
+        // For future dates: show all slots.
+        const activeSlots = isTargetToday
+          ? rawSlots.filter(slot => {
+              const [endH, endM] = slot.end.split(":").map(Number);
+              return nowMins < endH * 60 + endM;
+            })
+          : rawSlots;
         return {
           id: r.users.id,
           name: r.users.name || [r.users.firstName, r.users.lastName].filter(Boolean).join(" ") || "Doctor",
@@ -805,7 +878,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/kiosk/:token", async (req, res) => {
     try {
       const { token } = req.params;
-      const { name, phone, doctorId, reason, slotStart } = req.body;
+      const { name, phone, doctorId, reason, slotStart, date: dateParam } = req.body;
 
       if (!name?.trim() || !phone || !doctorId) {
         return res.status(400).json({ message: "Name, phone number, and doctor selection are required" });
@@ -829,29 +902,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!doctor) return res.status(404).json({ message: "Doctor not found" });
       const doctorName = doctor.name || [doctor.firstName, doctor.lastName].filter(Boolean).join(" ") || "Doctor";
 
+      // Resolve the target booking date — reject past dates
+      const now = new Date();
+      const todayMidnight = new Date(now); todayMidnight.setHours(0, 0, 0, 0);
+      let targetDate: Date;
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const [y, mo, d] = dateParam.split("-").map(Number);
+        targetDate = new Date(y, mo - 1, d);
+        if (targetDate < todayMidnight) {
+          return res.status(400).json({ message: "Cannot book appointments in the past" });
+        }
+      } else {
+        targetDate = new Date(todayMidnight);
+      }
+
       // Compute appointment date from availability (read-only — safe outside transaction)
       const [dpRow] = await db.select().from(doctorProfiles).where(eq(doctorProfiles.userId, doctorId));
-      const today = new Date();
-      const todayStart = new Date(today); todayStart.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
-      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][today.getDay()];
+      const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
+      const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
+      const isTargetToday = targetDate.toDateString() === todayMidnight.toDateString();
+      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][targetDate.getDay()];
       const availability = (dpRow?.availability as any)?.[dayName];
-      let appointmentDate = new Date();
+      let appointmentDate = new Date(targetDate);
+
       if (slotStart && /^\d{1,2}:\d{2}$/.test(slotStart)) {
-        // Patient explicitly selected a slot
+        // Patient explicitly selected a slot on the chosen date
         const [slotH, slotM] = slotStart.split(":").map(Number);
-        const d = new Date(today); d.setHours(slotH, slotM, 0, 0);
-        appointmentDate = d;
+        appointmentDate = new Date(targetDate);
+        appointmentDate.setHours(slotH, slotM, 0, 0);
       } else if (availability?.slots?.length > 0) {
-        const nowMins = today.getHours() * 60 + today.getMinutes();
+        // Auto-pick the first upcoming slot on the target date
+        const nowMins = isTargetToday ? now.getHours() * 60 + now.getMinutes() : 0;
         for (const slot of (availability.slots as { start: string; end: string }[])) {
           const [endH, endM] = slot.end.split(":").map(Number);
           if (nowMins < endH * 60 + endM) {
             const [startH, startM] = slot.start.split(":").map(Number);
-            if (nowMins < startH * 60 + startM) {
-              const d = new Date(today); d.setHours(startH, startM, 0, 0);
-              appointmentDate = d;
-            }
+            appointmentDate = new Date(targetDate);
+            appointmentDate.setHours(startH, startM, 0, 0);
             break;
           }
         }
@@ -885,8 +972,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             eq(appointments.clinicId, clinicId),
             eq(appointments.patientId, patient.id),
             eq(appointments.doctorId, doctorId),
-            gte(appointments.date, todayStart),
-            lte(appointments.date, endOfDay)
+            gte(appointments.date, targetStart),
+            lte(appointments.date, targetEnd)
           ))
           .orderBy(desc(appointments.createdAt));
 
@@ -901,8 +988,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         }).from(appointments).where(and(
           eq(appointments.clinicId, clinicId),
           eq(appointments.doctorId, doctorId),
-          gte(appointments.date, todayStart),
-          lte(appointments.date, endOfDay),
+          gte(appointments.date, targetStart),
+          lte(appointments.date, targetEnd),
         ));
 
         const queueToken = nanoid(8);
@@ -942,6 +1029,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: "Failed to register. Please try again." });
+    }
+  });
+
+  // ── WHATSAPP WEB ──────────────────────────────────────────────────────────
+
+  app.get("/api/whatsapp-web/status", requireAuth, (req, res) => {
+    res.json(waWeb.getStatus(req.session.clinicId!));
+  });
+
+  app.post("/api/whatsapp-web/connect", requireAuth, async (req, res) => {
+    try {
+      await waWeb.initClient(req.session.clinicId!);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to start WhatsApp Web client" });
+    }
+  });
+
+  app.post("/api/whatsapp-web/disconnect", requireAuth, async (req, res) => {
+    try {
+      await waWeb.disconnectClient(req.session.clinicId!);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err?.message || "Failed to disconnect" });
     }
   });
 

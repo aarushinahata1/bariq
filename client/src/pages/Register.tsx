@@ -1,8 +1,9 @@
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Clock } from "lucide-react";
+import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Clock, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { format, addDays } from "date-fns";
 
 function BariQLogo() {
   return (
@@ -32,6 +33,10 @@ function formatSlot(slot: DoctorSlot): string {
   return `${fmt(slot.start)} – ${fmt(slot.end)}`;
 }
 
+function todayStr() {
+  return format(new Date(), "yyyy-MM-dd");
+}
+
 type RegistrationResult = {
   alreadyRegistered: boolean;
   patientName: string;
@@ -41,10 +46,25 @@ type RegistrationResult = {
   queueUrl: string;
 };
 
+// Build quick-pick date options: today + next 6 days
+function buildDateOptions() {
+  const options: { value: string; label: string }[] = [];
+  const today = new Date();
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(today, i);
+    options.push({
+      value: format(d, "yyyy-MM-dd"),
+      label: i === 0 ? "Today" : i === 1 ? "Tomorrow" : format(d, "EEE, MMM d"),
+    });
+  }
+  return options;
+}
+
 export default function Register() {
   const { token } = useParams<{ token: string }>();
 
   const [step, setStep] = useState<"form" | "success">("form");
+  const [selectedDate, setSelectedDate] = useState<string>(todayStr());
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [selectedSlot, setSelectedSlot] = useState("");
   const [name, setName] = useState("");
@@ -52,10 +72,12 @@ export default function Register() {
   const [reason, setReason] = useState("");
   const [result, setResult] = useState<RegistrationResult | null>(null);
 
+  const dateOptions = buildDateOptions();
+
   const { data: info, isLoading, error } = useQuery<KioskInfo>({
-    queryKey: ["kiosk", token],
+    queryKey: ["kiosk", token, selectedDate],
     queryFn: async () => {
-      const res = await fetch(`/api/kiosk/${token}`);
+      const res = await fetch(`/api/kiosk/${token}?date=${selectedDate}`);
       if (!res.ok) throw new Error("Invalid or expired registration link");
       return res.json();
     },
@@ -65,7 +87,13 @@ export default function Register() {
 
   const doctors = info?.doctors ?? [];
 
-  // Auto-select when only one doctor — must be in useEffect, not during render
+  // Reset doctor/slot when date changes (availability differs by day)
+  useEffect(() => {
+    setSelectedDoctorId("");
+    setSelectedSlot("");
+  }, [selectedDate]);
+
+  // Auto-select when only one doctor
   useEffect(() => {
     if (info?.doctors?.length === 1) {
       setSelectedDoctorId(prev => prev || info!.doctors[0].id);
@@ -88,7 +116,14 @@ export default function Register() {
       const res = await fetch(`/api/kiosk/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim(), phone: phone.trim(), doctorId: selectedDoctorId, reason: reason.trim() || null, slotStart: selectedSlot || undefined }),
+        body: JSON.stringify({
+          name: name.trim(),
+          phone: phone.trim(),
+          doctorId: selectedDoctorId,
+          reason: reason.trim() || null,
+          slotStart: selectedSlot || undefined,
+          date: selectedDate,
+        }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -111,6 +146,7 @@ export default function Register() {
   };
 
   const selectedDoctor = doctors.find(d => d.id === selectedDoctorId);
+  const selectedDoctorSlots = selectedDoctor?.slots ?? [];
 
   const waMessage = result
     ? encodeURIComponent(`Hi! I'm ${result.patientName}. Track my queue position:\n${result.queueUrl}`)
@@ -169,7 +205,7 @@ export default function Register() {
                   <AlertCircle className="w-7 h-7 text-amber-500" />
                 </div>
                 <h1 className="text-xl font-bold text-amber-900 mb-1">Already Registered</h1>
-                <p className="text-amber-700 text-sm">You're already in the queue for Dr. {result.doctorName} today.</p>
+                <p className="text-amber-700 text-sm">You're already in the queue for Dr. {result.doctorName} on {dateOptions.find(d => d.value === selectedDate)?.label ?? selectedDate}.</p>
               </div>
             ) : (
               <div className="bg-teal-600 rounded-3xl p-8 text-center shadow-2xl shadow-teal-200 relative overflow-hidden">
@@ -185,7 +221,7 @@ export default function Register() {
               </div>
             )}
 
-            {/* Doctor + patient info */}
+            {/* Doctor + patient + date info */}
             <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100">
               <div className="flex items-center gap-3 px-4 py-3.5">
                 <User className="w-4 h-4 text-slate-400 shrink-0" />
@@ -201,15 +237,24 @@ export default function Register() {
                   <p className="text-sm font-semibold text-slate-900">Dr. {result.doctorName}</p>
                 </div>
               </div>
+              <div className="flex items-center gap-3 px-4 py-3.5">
+                <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Date</p>
+                  <p className="text-sm font-semibold text-slate-900">{dateOptions.find(d => d.value === selectedDate)?.label ?? selectedDate}</p>
+                </div>
+              </div>
             </div>
 
-            {/* Track position button */}
-            <a
-              href={result.queueUrl}
-              className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl bg-teal-600 text-white font-bold text-base shadow-lg shadow-teal-200 hover:bg-teal-700 transition-colors"
-            >
-              Track Your Position <ChevronRight className="w-5 h-5" />
-            </a>
+            {/* Track position button (only meaningful for today's bookings) */}
+            {result.queueToken && selectedDate === todayStr() && (
+              <a
+                href={result.queueUrl}
+                className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl bg-teal-600 text-white font-bold text-base shadow-lg shadow-teal-200 hover:bg-teal-700 transition-colors"
+              >
+                Track Your Position <ChevronRight className="w-5 h-5" />
+              </a>
+            )}
 
             {/* WhatsApp share */}
             {waUrl && (
@@ -229,7 +274,12 @@ export default function Register() {
 
             {/* Register another */}
             <button
-              onClick={() => { setStep("form"); setName(""); setPhone(""); setReason(""); setResult(null); setSelectedDoctorId(doctors.length === 1 ? doctors[0].id : ""); setSelectedSlot(doctors.length === 1 && doctors[0].slots?.length === 1 ? doctors[0].slots[0].start : ""); }}
+              onClick={() => {
+                setStep("form");
+                setName(""); setPhone(""); setReason(""); setResult(null);
+                setSelectedDate(todayStr());
+                setSelectedDoctorId(""); setSelectedSlot("");
+              }}
               className="w-full py-3 text-sm text-slate-400 hover:text-slate-600 transition-colors"
             >
               Register another patient
@@ -264,67 +314,113 @@ export default function Register() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
 
-            {/* Doctor selection (hidden when only one doctor) */}
+            {/* ── Date selection ─────────────────────────────────────────── */}
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" /> Select Date *
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {dateOptions.slice(0, 6).map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setSelectedDate(opt.value)}
+                    className={cn(
+                      "py-2.5 px-2 rounded-2xl border-2 text-center transition-all text-xs font-semibold",
+                      selectedDate === opt.value
+                        ? "border-teal-500 bg-teal-50 text-teal-800"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-teal-200"
+                    )}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Doctor selection ───────────────────────────────────────── */}
             {doctors.length > 1 && (
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Doctor *</label>
                 <div className="space-y-2">
-                  {doctors.map(doc => (
-                    <button
-                      key={doc.id}
-                      type="button"
-                      onClick={() => setSelectedDoctorId(doc.id)}
-                      className={cn(
-                        "w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all",
-                        selectedDoctorId === doc.id
-                          ? "border-teal-500 bg-teal-50"
-                          : "border-slate-200 bg-white hover:border-teal-200"
-                      )}
-                    >
-                      <div className={cn(
-                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-sm",
-                        selectedDoctorId === doc.id ? "bg-teal-500 text-white" : "bg-slate-100 text-slate-500"
-                      )}>
-                        {doc.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
-                      </div>
-                      <div className="min-w-0">
-                        <p className={cn("font-bold text-sm", selectedDoctorId === doc.id ? "text-teal-800" : "text-slate-800")}>
-                          Dr. {doc.name}
-                        </p>
-                        <p className="text-xs text-slate-500 truncate">{doc.specialization}</p>
-                      </div>
-                      <div className={cn(
-                        "w-5 h-5 rounded-full border-2 shrink-0 ml-auto flex items-center justify-center",
-                        selectedDoctorId === doc.id ? "border-teal-500 bg-teal-500" : "border-slate-300"
-                      )}>
-                        {selectedDoctorId === doc.id && <div className="w-2 h-2 rounded-full bg-white" />}
-                      </div>
-                    </button>
-                  ))}
+                  {doctors.map(doc => {
+                    const hasSlots = doc.slots.length > 0;
+                    return (
+                      <button
+                        key={doc.id}
+                        type="button"
+                        onClick={() => hasSlots && setSelectedDoctorId(doc.id)}
+                        disabled={!hasSlots}
+                        className={cn(
+                          "w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all",
+                          !hasSlots && "opacity-40 cursor-not-allowed border-slate-100 bg-slate-50",
+                          hasSlots && selectedDoctorId === doc.id && "border-teal-500 bg-teal-50",
+                          hasSlots && selectedDoctorId !== doc.id && "border-slate-200 bg-white hover:border-teal-200"
+                        )}
+                      >
+                        <div className={cn(
+                          "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-sm",
+                          selectedDoctorId === doc.id ? "bg-teal-500 text-white" : "bg-slate-100 text-slate-500"
+                        )}>
+                          {doc.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className={cn("font-bold text-sm", selectedDoctorId === doc.id ? "text-teal-800" : "text-slate-800")}>
+                            Dr. {doc.name}
+                          </p>
+                          <p className="text-xs text-slate-500 truncate">{doc.specialization}</p>
+                          {!hasSlots && <p className="text-[10px] text-slate-400 mt-0.5">Not available on this day</p>}
+                        </div>
+                        {hasSlots && (
+                          <div className={cn(
+                            "w-5 h-5 rounded-full border-2 shrink-0 ml-auto flex items-center justify-center",
+                            selectedDoctorId === doc.id ? "border-teal-500 bg-teal-500" : "border-slate-300"
+                          )}>
+                            {selectedDoctorId === doc.id && <div className="w-2 h-2 rounded-full bg-white" />}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
             {/* Single doctor — just show who they'll see */}
             {doctors.length === 1 && (
-              <div className="flex items-center gap-3 p-4 rounded-2xl bg-teal-50 border border-teal-100">
-                <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center shrink-0">
+              <div className={cn(
+                "flex items-center gap-3 p-4 rounded-2xl border",
+                doctors[0].slots.length > 0
+                  ? "bg-teal-50 border-teal-100"
+                  : "bg-slate-50 border-slate-200 opacity-60"
+              )}>
+                <div className={cn(
+                  "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                  doctors[0].slots.length > 0 ? "bg-teal-500" : "bg-slate-300"
+                )}>
                   <Stethoscope className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <p className="text-xs text-teal-600 font-semibold uppercase tracking-wider">Consulting</p>
-                  <p className="font-bold text-teal-900">Dr. {doctors[0].name}</p>
-                  <p className="text-xs text-teal-600">{doctors[0].specialization}</p>
+                  <p className={cn("text-xs font-semibold uppercase tracking-wider", doctors[0].slots.length > 0 ? "text-teal-600" : "text-slate-400")}>Consulting</p>
+                  <p className={cn("font-bold", doctors[0].slots.length > 0 ? "text-teal-900" : "text-slate-500")}>Dr. {doctors[0].name}</p>
+                  <p className={cn("text-xs", doctors[0].slots.length > 0 ? "text-teal-600" : "text-slate-400")}>
+                    {doctors[0].slots.length > 0 ? doctors[0].specialization : "Not available on this day"}
+                  </p>
                 </div>
               </div>
             )}
 
-            {/* Time slot selection */}
+            {/* ── Time slot selection ────────────────────────────────────── */}
             {selectedDoctorId && (() => {
-              const doc = doctors.find(d => d.id === selectedDoctorId);
-              const slots = doc?.slots ?? [];
-              if (slots.length === 0) return null;
-              if (slots.length === 1) {
+              if (selectedDoctorSlots.length === 0) {
+                return (
+                  <div className="flex items-center gap-3 p-4 rounded-2xl bg-amber-50 border border-amber-100">
+                    <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                    <p className="text-sm text-amber-700">No available slots for this day. Please select another date.</p>
+                  </div>
+                );
+              }
+              if (selectedDoctorSlots.length === 1) {
                 return (
                   <div className="flex items-center gap-3 p-4 rounded-2xl bg-teal-50 border border-teal-100">
                     <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center shrink-0">
@@ -332,7 +428,7 @@ export default function Register() {
                     </div>
                     <div>
                       <p className="text-xs text-teal-600 font-semibold uppercase tracking-wider">Time Slot</p>
-                      <p className="font-bold text-teal-900">{formatSlot(slots[0])}</p>
+                      <p className="font-bold text-teal-900">{formatSlot(selectedDoctorSlots[0])}</p>
                     </div>
                   </div>
                 );
@@ -341,7 +437,7 @@ export default function Register() {
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Time Slot *</label>
                   <div className="space-y-2">
-                    {slots.map(slot => (
+                    {selectedDoctorSlots.map(slot => (
                       <button
                         key={slot.start}
                         type="button"
@@ -439,7 +535,8 @@ export default function Register() {
                 !name.trim() ||
                 phone.replace(/\D/g, "").length < 10 ||
                 !selectedDoctorId ||
-                ((doctors.find(d => d.id === selectedDoctorId)?.slots?.length ?? 0) > 1 && !selectedSlot)
+                selectedDoctorSlots.length === 0 ||
+                (selectedDoctorSlots.length > 1 && !selectedSlot)
               }
               className={cn(
                 "w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-base transition-all shadow-lg",

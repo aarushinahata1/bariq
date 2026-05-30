@@ -1,12 +1,13 @@
 ﻿import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { usePatients, useCreatePatient } from "@/hooks/use-patients";
+import { usePatients, useCreatePatient, useDeletePatient } from "@/hooks/use-patients";
 import { useState, useMemo, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Phone, Mail, History, ChevronRight, Users, UserPlus, TrendingUp } from "lucide-react";
+import { Plus, Search, Phone, Mail, History, ChevronRight, Users, UserPlus, TrendingUp, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertPatientSchema, type InsertPatient } from "@shared/schema";
@@ -53,12 +54,15 @@ const LAST_STATUS_LABELS: Record<string, string> = {
 
 export default function Patients() {
   const { can } = useRole();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [, setLocation] = useLocation();
   const { data: patients, isLoading } = usePatients({ search: debouncedSearch });
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const deletePatient = useDeletePatient();
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -230,6 +234,16 @@ export default function Patients() {
                           <Button variant="ghost" size="sm" className="rounded-lg h-8 text-slate-400 group-hover:text-teal-700 hidden sm:flex">
                             <History className="w-4 h-4 mr-1.5" /> History
                           </Button>
+                          {can("patients:delete") && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                              onClick={(e) => { e.stopPropagation(); setDeleteTarget({ id: patient.id, name: patient.name }); }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
                           <ChevronRight className="w-4 h-4 text-slate-300 group-hover:translate-x-1 transition-transform" />
                         </div>
                       </td>
@@ -241,6 +255,32 @@ export default function Patients() {
           </div>
         )}
       </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Patient?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <strong>{deleteTarget?.name}</strong> and all their appointments, bills, and prescriptions. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-xl bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (!deleteTarget) return;
+                deletePatient.mutate(deleteTarget.id, {
+                  onSuccess: () => { toast({ title: "Patient deleted" }); setDeleteTarget(null); },
+                  onError: () => toast({ title: "Error", description: "Failed to delete patient", variant: "destructive" }),
+                });
+              }}
+            >
+              Delete Permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

@@ -1,5 +1,5 @@
 ﻿import { Layout } from "@/components/Layout";
-import { usePatient, useUpdatePatient } from "@/hooks/use-patients";
+import { usePatient, useUpdatePatient, useDeletePatient } from "@/hooks/use-patients";
 import { useAppointments, useCreateAppointment } from "@/hooks/use-appointments";
 import { useDoctors } from "@/hooks/use-doctors";
 import { useParams, useLocation } from "wouter";
@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo } from "react";
 import {
   History, Calendar, Phone, Mail, FileText, Clock,
   ArrowLeft, ChevronRight, Pencil, Check, X,
-  Pill, Receipt, CalendarPlus, Activity,
+  Pill, Receipt, CalendarPlus, Activity, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@shared/routes";
 import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 
@@ -176,9 +177,11 @@ export default function PatientHistory() {
   const { data: patientData, isLoading: isLoadingPatient } = usePatient(Number(id));
   const { data: patientAppointments } = useAppointments({ patientId: Number(id) }, { refetchInterval: false });
   const updatePatient = useUpdatePatient();
+  const deletePatient = useDeletePatient();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [showFollowUp, setShowFollowUp] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const patient = patientData;
   const appointments = [...(patientAppointments || [])].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -346,9 +349,19 @@ export default function PatientHistory() {
                     </Button>
                   </>
                 ) : (
-                  <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} className="rounded-xl text-slate-500">
-                    <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
-                  </Button>
+                  <>
+                    <Button size="sm" variant="outline" onClick={() => setIsEditing(true)} className="rounded-xl text-slate-500 flex-1">
+                      <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      className="rounded-xl text-red-500 border-red-100 hover:bg-red-50 hover:border-red-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </>
                 )}
               </div>
             </CardContent>
@@ -492,10 +505,31 @@ export default function PatientHistory() {
                                   {apptBill.status === "paid" ? "Paid" : "Pending"}
                                 </span>
                               </div>
-                              <span className={cn("font-bold", apptBill.status === "paid" ? "text-green-700" : "text-yellow-700")}>
-                                ₹{(apptBill.amount / 100).toFixed(0)}
-                                {apptBill.paymentMethod && ` · ${apptBill.paymentMethod.toUpperCase()}`}
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className={cn("font-bold", apptBill.status === "paid" ? "text-green-700" : "text-yellow-700")}>
+                                  ₹{(apptBill.amount / 100).toFixed(0)}
+                                  {apptBill.paymentMethod && ` · ${apptBill.paymentMethod.toUpperCase()}`}
+                                </span>
+                                {apptBill.status !== "paid" && (
+                                  <button
+                                    onClick={async () => {
+                                      const res = await fetch(`/api/bills/${apptBill.id}`, {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ status: "paid", paymentMethod: "cash" }),
+                                        credentials: "include",
+                                      });
+                                      if (res.ok) {
+                                        queryClient.invalidateQueries({ queryKey: ["/api/bills", { patientId: Number(id) }] });
+                                        toast({ title: "Marked as paid" });
+                                      }
+                                    }}
+                                    className="px-2 py-0.5 rounded-lg bg-yellow-200 text-yellow-800 font-semibold hover:bg-yellow-300 transition-colors whitespace-nowrap"
+                                  >
+                                    Mark Paid
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           )}
 
@@ -531,6 +565,35 @@ export default function PatientHistory() {
           <FollowUpDialog patient={patient} onClose={() => setShowFollowUp(false)} />
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation */}
+      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Patient?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <strong>{patient.name}</strong> along with all their appointments, bills, and prescriptions. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-xl bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                deletePatient.mutate(Number(id), {
+                  onSuccess: () => {
+                    toast({ title: "Patient deleted" });
+                    setLocation("/patients");
+                  },
+                  onError: () => toast({ title: "Error", description: "Failed to delete patient", variant: "destructive" }),
+                });
+              }}
+            >
+              Delete Permanently
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

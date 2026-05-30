@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer } from "lucide-react";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer, Smartphone, Wifi, WifiOff, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
@@ -17,6 +17,7 @@ import QRCode from "react-qr-code";
 type Tab = "clinic" | "billing" | "whatsapp" | "sms";
 
 const WHATSAPP_PROVIDERS = [
+  { value: "web", label: "WhatsApp Web (Free — scan QR)" },
   { value: "meta", label: "Meta (WhatsApp Business API)" },
   { value: "twilio", label: "Twilio" },
   { value: "gupshup", label: "Gupshup" },
@@ -289,6 +290,108 @@ function RegistrationQR({ token, clinicName, tagline, address }: { token: string
         </div>
       </div>
     </Card>
+  );
+}
+
+function WhatsAppWebPanel() {
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const { data: statusData, refetch } = useQuery<{ status: string; qr?: string }>({
+    queryKey: ["/api/whatsapp-web/status"],
+    queryFn: async () => {
+      const r = await fetch("/api/whatsapp-web/status", { credentials: "include" });
+      return r.json();
+    },
+    refetchInterval: (query) => {
+      const s = query.state.data?.status;
+      return s === "connecting" || s === "qr" ? 3000 : false;
+    },
+  });
+
+  const status = statusData?.status ?? "disconnected";
+  const qr = statusData?.qr;
+
+  const connect = async () => {
+    const r = await fetch("/api/whatsapp-web/connect", { method: "POST", credentials: "include" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      toast({ title: "Failed to start", description: err.message, variant: "destructive" });
+      return;
+    }
+    refetch();
+  };
+
+  const disconnect = async () => {
+    await fetch("/api/whatsapp-web/disconnect", { method: "POST", credentials: "include" });
+    refetch();
+    toast({ title: "WhatsApp Web disconnected" });
+  };
+
+  return (
+    <div className="mt-2 p-4 rounded-xl border border-slate-100 bg-slate-50 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Smartphone className="w-4 h-4 text-slate-600" />
+          <span className="text-sm font-semibold text-slate-700">WhatsApp Web Connection</span>
+        </div>
+        <span className={cn(
+          "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold",
+          status === "ready" ? "bg-emerald-100 text-emerald-700" :
+          status === "qr" || status === "connecting" ? "bg-amber-100 text-amber-700" :
+          "bg-slate-100 text-slate-500"
+        )}>
+          {status === "ready" && <><Wifi className="w-3 h-3" /> Connected</>}
+          {(status === "connecting") && <><Loader2 className="w-3 h-3 animate-spin" /> Connecting…</>}
+          {status === "qr" && <><Loader2 className="w-3 h-3 animate-spin" /> Scan QR</>}
+          {status === "disconnected" && <><WifiOff className="w-3 h-3" /> Disconnected</>}
+        </span>
+      </div>
+
+      {status === "ready" && (
+        <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+          <div>
+            <p className="text-sm font-semibold text-emerald-800">WhatsApp is connected</p>
+            <p className="text-xs text-emerald-700 mt-0.5">Messages will be sent via your linked WhatsApp account</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={disconnect} className="rounded-xl text-red-600 border-red-200 hover:bg-red-50">
+            Disconnect
+          </Button>
+        </div>
+      )}
+
+      {status === "qr" && qr && (
+        <div className="flex flex-col items-center gap-3 py-2">
+          <p className="text-sm text-slate-600 text-center">Open WhatsApp on your phone → three dots → Linked Devices → Link a Device → scan below</p>
+          <div className="p-4 bg-white rounded-2xl border-2 border-emerald-200 shadow-sm">
+            <QRCode value={qr} size={200} fgColor="#166534" bgColor="#ffffff" level="M" />
+          </div>
+          <p className="text-xs text-slate-400">QR refreshes automatically. Keep this page open while scanning.</p>
+        </div>
+      )}
+
+      {status === "connecting" && (
+        <div className="flex flex-col items-center gap-2 py-4 text-slate-500">
+          <Loader2 className="w-8 h-8 animate-spin text-teal-600" />
+          <p className="text-sm">Starting WhatsApp Web client…</p>
+        </div>
+      )}
+
+      {status === "disconnected" && (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            Connect your WhatsApp account to send messages without any API keys.
+            The phone must stay connected to the internet.
+          </p>
+          <Button onClick={connect} className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 gap-2">
+            <Smartphone className="w-4 h-4" /> Connect WhatsApp Web
+          </Button>
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-2.5 leading-relaxed">
+            <strong>Note:</strong> This uses an unofficial WhatsApp Web bridge. Use a secondary number to avoid your primary number being blocked. Suitable for low-volume clinic notifications.
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -801,6 +904,7 @@ export default function Settings() {
                 </Select>
               </div>
 
+              {wa.provider !== "web" && (
               <div>
                 <Label className="text-slate-700 mb-1.5 block">
                   {wa.provider === "meta" ? "Access Token" : "API Token / Auth Token"}
@@ -811,6 +915,7 @@ export default function Settings() {
                   placeholder="Paste your token here"
                 />
               </div>
+              )}
 
               {wa.provider === "meta" && (
                 <>
@@ -851,7 +956,10 @@ export default function Settings() {
               )}
             </div>
 
+            {wa.provider === "web" && <WhatsAppWebPanel />}
+
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-slate-100">
+              {wa.provider !== "web" ? (
               <a
                 href={
                   wa.provider === "meta" ? "https://developers.facebook.com/docs/whatsapp/cloud-api/get-started"
@@ -867,6 +975,7 @@ export default function Settings() {
                 View {WHATSAPP_PROVIDERS.find(p => p.value === wa.provider)?.label} docs
                 <ChevronRight className="w-3 h-3" />
               </a>
+              ) : <div />}
               <Button
                 onClick={() => saveMutation.mutate({ key: "whatsapp", data: wa })}
                 disabled={saveMutation.isPending}

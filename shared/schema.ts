@@ -178,7 +178,9 @@ export const prescriptions = pgTable("prescriptions", {
   medications: jsonb("medications").$type<{ name: string; dosage: string; duration: string; instructions: string }[]>().default([]),
   notes: text("notes"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  apptIdx: uniqueIndex("prescriptions_appointment_id_unique").on(t.appointmentId),
+}));
 
 // ── Relations ─────────────────────────────────────────────────────────────────
 

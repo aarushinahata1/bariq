@@ -53,6 +53,20 @@ export function useUpdateDoctorProfile() {
   });
 }
 
+export function useDeleteDoctor() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/doctors/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to delete doctor");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.doctors.list.path] });
+    },
+  });
+}
+
 export function useNotifyDelay() {
   return useMutation({
     mutationFn: async ({ id, delayMinutes, reason }: { id: string; delayMinutes: number; reason: string }) => {

@@ -1,11 +1,11 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { z } from "zod";
 import type { InsertAppointment } from "@shared/schema";
 
 export function useAppointments(
   filters?: { date?: string; doctorId?: string; status?: string; patientId?: number },
-  options?: { refetchInterval?: number | false }
+  options?: { refetchInterval?: number | false; keepPrevious?: boolean }
 ) {
   return useQuery({
     queryKey: [api.appointments.list.path, filters],
@@ -24,6 +24,7 @@ export function useAppointments(
       return api.appointments.list.responses[200].parse(await res.json());
     },
     refetchInterval: options?.refetchInterval ?? 30000,
+    placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
   });
 }
 
@@ -38,11 +39,8 @@ export function useCreateAppointment() {
         credentials: "include",
       });
       if (!res.ok) {
-        if (res.status === 400) {
-           const error = api.appointments.create.responses[400].parse(await res.json());
-           throw new Error(error.message);
-        }
-        throw new Error("Failed to create appointment");
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || "Failed to create appointment");
       }
       return api.appointments.create.responses[201].parse(await res.json());
     },

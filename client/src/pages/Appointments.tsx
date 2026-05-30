@@ -1,6 +1,6 @@
 ﻿import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { useAppointments, useCreateAppointment, useUpdateAppointment } from "@/hooks/use-appointments";
+import { useAppointments, useCreateAppointment, useUpdateAppointment, useDeleteAppointment } from "@/hooks/use-appointments";
 import { useDoctors } from "@/hooks/use-doctors";
 import { usePatients } from "@/hooks/use-patients";
 import { useState, useMemo, useEffect } from "react";
@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar as CalendarIcon, Plus, User, RefreshCw, ListOrdered, Search, Printer, Phone, X } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, User, RefreshCw, ListOrdered, Search, Printer, Phone, X, Trash2 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format, isToday, isFuture, isPast, isSameDay, parseISO } from "date-fns";
 import { useForm } from "react-hook-form";
@@ -37,15 +37,31 @@ const appointmentFormSchema = z.object({
   notes: z.string().optional(),
 });
 
-function generateTimeSlots(availability: any, dayOfWeek: string): string[] {
+function generateTimeSlots(availability: any, dayOfWeek: string, selectedDate?: string): string[] {
   if (!availability || !availability[dayOfWeek] || !availability[dayOfWeek].enabled) {
     return [];
   }
-  const daySlots = availability[dayOfWeek].slots || [];
-  return daySlots.map((slot: { start: string; end: string }) => `${slot.start}-${slot.end}`);
+  const daySlots: { start: string; end: string }[] = availability[dayOfWeek].slots || [];
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const isSelectedToday = selectedDate === todayStr;
+  const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
+
+  return daySlots
+    .filter(slot => {
+      if (!isSelectedToday) return true;
+      const [endH, endM] = slot.end.split(":").map(Number);
+      return endH * 60 + endM > nowMins;
+    })
+    .map(slot => `${slot.start}-${slot.end}`);
 }
 
 type AppointmentFormValues = z.infer<typeof appointmentFormSchema>;
+
+const rescheduleSchema = z.object({
+  date: z.string().min(1, "Date is required"),
+  slot: z.string().optional(),
+});
+type RescheduleFormValues = z.infer<typeof rescheduleSchema>;
 
 function RescheduleDialog({ appointment }: { appointment: any }) {
   const { toast } = useToast();
@@ -53,16 +69,9 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
   const { data: doctors } = useDoctors();
   const [open, setOpen] = useState(false);
 
-  const form = useForm<AppointmentFormValues>({
-    resolver: zodResolver(appointmentFormSchema),
-    defaultValues: {
-      date: format(new Date(appointment.date), "yyyy-MM-dd"),
-      slot: "",
-      patientId: appointment.patientId,
-      doctorId: appointment.doctorId,
-      status: appointment.status,
-      reason: appointment.reason || "",
-    }
+  const form = useForm<RescheduleFormValues>({
+    resolver: zodResolver(rescheduleSchema),
+    defaultValues: { date: "", slot: "" },
   });
 
   const watchedRescheduleDate = form.watch("date");
@@ -73,22 +82,38 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
     if (!doctor?.doctorProfile?.availability) return [];
     const [y, mo, d] = watchedRescheduleDate.split("-").map(Number);
     const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(y, mo - 1, d).getDay()];
-    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
+    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek, watchedRescheduleDate);
   }, [watchedRescheduleDate, doctors, appointment.doctorId]);
 
   useEffect(() => {
-    if (rescheduleSlots.length > 0 && !form.getValues("slot")) {
-      form.setValue("slot", rescheduleSlots[0]);
-    } else if (rescheduleSlots.length > 0 && !rescheduleSlots.includes(form.getValues("slot"))) {
-      form.setValue("slot", rescheduleSlots[0]);
+    if (open) {
+      form.reset({ date: format(new Date(appointment.date), "yyyy-MM-dd"), slot: "" });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (rescheduleSlots.length > 0) {
+      const current = form.getValues("slot");
+      if (!current || !rescheduleSlots.includes(current)) {
+        form.setValue("slot", rescheduleSlots[0], { shouldValidate: false });
+      }
+    } else {
+      form.setValue("slot", "", { shouldValidate: false });
     }
   }, [rescheduleSlots]);
 
-  const onSubmit = (data: AppointmentFormValues) => {
-    const [start] = data.slot.split('-');
-    const [hours, minutes] = start.split(':');
-    const [y, mo, d] = data.date.split('-').map(Number);
-    const appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
+  const onSubmit = (data: RescheduleFormValues) => {
+    const originalDate = new Date(appointment.date);
+    let appointmentDate: Date;
+    if (data.slot) {
+      const [start] = data.slot.split("-");
+      const [h, m] = start.split(":").map(Number);
+      const [y, mo, d] = data.date.split("-").map(Number);
+      appointmentDate = new Date(y, mo - 1, d, h, m);
+    } else {
+      const [y, mo, d] = data.date.split("-").map(Number);
+      appointmentDate = new Date(y, mo - 1, d, originalDate.getHours(), originalDate.getMinutes());
+    }
 
     updateAppointment.mutate({
       id: appointment.id,
@@ -133,7 +158,7 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
                 <FormItem>
                   <FormLabel>New Date</FormLabel>
                   <FormControl>
-                    <Input type="date" {...field} className="rounded-xl h-11" />
+                    <Input type="date" {...field} min={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-11" />
                   </FormControl>
                 </FormItem>
               )}
@@ -144,16 +169,16 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Time Slot</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
+                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
                     <FormControl>
                       <SelectTrigger className="rounded-xl h-11">
-                        <SelectValue placeholder="Select Slot" />
+                        <SelectValue placeholder={rescheduleSlots.length === 0 ? "Keep original time" : "Select Slot"} />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
                       {rescheduleSlots.length === 0 ? (
                         <div className="px-2 py-4 text-center text-sm text-slate-500">
-                          No availability for this day
+                          No slots configured — original time will be kept
                         </div>
                       ) : (
                         rescheduleSlots.map(slot => (
@@ -181,9 +206,11 @@ export default function Appointments() {
   const { toast } = useToast();
   const { data: appointments, isLoading } = useAppointments();
   const updateAppointment = useUpdateAppointment();
+  const deleteAppointment = useDeleteAppointment();
   const { data: doctors } = useDoctors();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<any>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
   const [filter, setFilter] = useState("all");
   const [selectedDoctor, setSelectedDoctor] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
@@ -570,6 +597,23 @@ export default function Appointments() {
                             )}
                           </>
                         )}
+                        {can("appointments:delete") && ["cancelled", "no_show"].includes(apt.status) && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 rounded-lg text-slate-300 hover:text-red-600"
+                                  onClick={() => setDeleteTarget(apt)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent><p>Delete record</p></TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                       </div>
                     )}
                   </div>
@@ -579,6 +623,33 @@ export default function Appointments() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Appointment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete <strong>{deleteTarget?.patient?.name}</strong>'s {deleteTarget?.status} appointment with Dr. {deleteTarget?.doctor?.name}. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Keep</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-xl bg-red-600 hover:bg-red-700"
+              disabled={deleteAppointment.isPending}
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteAppointment.mutate(deleteTarget.id, {
+                  onSuccess: () => { toast({ title: "Appointment deleted" }); setDeleteTarget(null); },
+                  onError: () => toast({ title: "Error", description: "Failed to delete appointment", variant: "destructive" }),
+                });
+              }}
+            >
+              {deleteAppointment.isPending ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={cancelTarget !== null} onOpenChange={(open) => !open && setCancelTarget(null)}>
         <AlertDialogContent className="rounded-2xl">
@@ -592,6 +663,7 @@ export default function Appointments() {
             <AlertDialogCancel className="rounded-xl">Keep It</AlertDialogCancel>
             <AlertDialogAction
               className="rounded-xl bg-red-600 hover:bg-red-700"
+              disabled={updateAppointment.isPending}
               onClick={() => {
                 if (!cancelTarget) return;
                 updateAppointment.mutate(
@@ -606,7 +678,7 @@ export default function Appointments() {
                 );
               }}
             >
-              Yes, Cancel
+              {updateAppointment.isPending ? "Cancelling..." : "Yes, Cancel"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -671,7 +743,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
     if (!doctor?.doctorProfile?.availability) return [];
     const [y, mo, d] = watchedDate.split("-").map(Number);
     const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(y, mo - 1, d).getDay()];
-    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
+    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek, watchedDate);
   }, [watchedDoctorId, watchedDate, doctors]);
 
   useEffect(() => {
@@ -905,7 +977,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                     <FormItem>
                       <FormLabel>Date</FormLabel>
                       <FormControl>
-                        <Input type="date" {...field} className="rounded-xl h-11" />
+                        <Input type="date" {...field} min={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-11" />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

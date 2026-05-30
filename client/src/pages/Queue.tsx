@@ -4,7 +4,7 @@ import { useAppointments, useUpdateAppointment } from "@/hooks/use-appointments"
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useDoctors } from "@/hooks/use-doctors";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { format, parseISO, startOfWeek, addDays, startOfDay } from "date-fns";
+import { format, parseISO } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { GripVertical, Users, Banknote, Pill, Plus, Trash2, Phone, Copy, Check, ExternalLink, AlertTriangle, Share2 } from "lucide-react";
 import {
@@ -599,6 +599,7 @@ export default function Queue() {
   const queryClient = useQueryClient();
   const { data: settings } = useQuery<Record<string, any>>({ queryKey: ["/api/settings"] });
   const [selectedDoctor, setSelectedDoctor] = useState<string>("");
+  const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
   const [selectedSlot, setSelectedSlot] = useState<string>("");
   const [checkInTarget, setCheckInTarget] = useState<any>(null);
   const [checkInFee, setCheckInFee] = useState<string>("");
@@ -610,18 +611,6 @@ export default function Queue() {
 
   const { data: doctors, isLoading: isDoctorsLoading } = useDoctors();
   const updateAppointment = useUpdateAppointment();
-
-  const weekDates = useMemo(() => {
-    const now = new Date();
-    const todayStart = startOfDay(now);
-    const monday = startOfWeek(now, { weekStartsOn: 1 });
-    const dates: Date[] = [];
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(monday, i);
-      if (d >= todayStart) dates.push(d);
-    }
-    return dates;
-  }, []);
 
   const selectedDoctorProfile = useMemo(() => {
     if (!selectedDoctor || !doctors) return null;
@@ -637,44 +626,36 @@ export default function Queue() {
     const now = new Date();
     const todayStr = format(now, "yyyy-MM-dd");
     const nowMins = now.getHours() * 60 + now.getMinutes();
+    const isToday = selectedDate === todayStr;
 
-    for (const date of weekDates) {
-      const dayName = DAY_NAMES[date.getDay()];
-      const dayConfig = (profile.availability as Record<string, any>)[dayName];
-      const dateStr = format(date, "yyyy-MM-dd");
-      const dateLabel = format(date, "EEE, MMM d");
-      const isToday = dateStr === todayStr;
+    const dateObj = parseISO(selectedDate);
+    const dayName = DAY_NAMES[dateObj.getDay()];
+    const dayConfig = (profile.availability as Record<string, any>)[dayName];
+    const dateLabel = isToday ? "Today" : format(dateObj, "EEE, MMM d");
 
-      if (!dayConfig?.enabled || !dayConfig.slots?.length) continue;
+    if (!dayConfig?.enabled || !dayConfig.slots?.length) return [];
 
-      for (const s of dayConfig.slots as { start: string; end: string }[]) {
-        if (isToday) {
-          const [endH, endM] = s.end.split(":").map(Number);
-          if (endH * 60 + endM <= nowMins) continue;
-        }
-        slots.push({
-          id: `${dateStr}|${s.start}-${s.end}`,
-          label: `${isToday ? "Today" : dateLabel} — ${s.start} - ${s.end}`,
-          date: dateStr,
-          start: s.start,
-          end: s.end,
-        });
+    for (const s of dayConfig.slots as { start: string; end: string }[]) {
+      if (isToday) {
+        const [endH, endM] = s.end.split(":").map(Number);
+        if (endH * 60 + endM <= nowMins) continue;
       }
+      slots.push({
+        id: `${selectedDate}|${s.start}-${s.end}`,
+        label: `${dateLabel} — ${s.start} - ${s.end}`,
+        date: selectedDate,
+        start: s.start,
+        end: s.end,
+      });
     }
 
     return slots;
-  }, [selectedDoctorProfile, weekDates]);
+  }, [selectedDoctorProfile, selectedDate]);
 
-  const activeDate = useMemo(() => {
-    if (!selectedSlot) return format(new Date(), "yyyy-MM-dd");
-    const [dateStr] = selectedSlot.split("|");
-    return dateStr || format(new Date(), "yyyy-MM-dd");
-  }, [selectedSlot]);
-
-  const { data: appointments, isLoading } = useAppointments({
-    date: activeDate,
-    doctorId: selectedDoctor || undefined,
-  });
+  const { data: appointments, isLoading } = useAppointments(
+    { date: selectedDate, doctorId: selectedDoctor || undefined },
+    { keepPrevious: true }
+  );
 
   const filteredAndSorted = useMemo(() => {
     if (!appointments) return [];
@@ -726,11 +707,7 @@ export default function Queue() {
   }, [doctors, selectedDoctor]);
 
   useEffect(() => {
-    if (doctorSlots.length && !selectedSlot) {
-      setSelectedSlot(doctorSlots[0].id);
-    } else if (doctorSlots.length && selectedSlot && !doctorSlots.find((s) => s.id === selectedSlot)) {
-      setSelectedSlot(doctorSlots[0].id);
-    } else if (!doctorSlots.length) {
+    if (selectedSlot && !doctorSlots.find((s) => s.id === selectedSlot)) {
       setSelectedSlot("");
     }
   }, [doctorSlots, selectedSlot]);
@@ -801,8 +778,11 @@ export default function Queue() {
           credentials: "include",
         });
         if (!billRes.ok) {
-          const err = await billRes.json().catch(() => ({}));
-          throw new Error(err?.message || "Failed to record payment");
+          // 409 means a concurrent check-in already created the bill — that's fine, continue.
+          if (billRes.status !== 409) {
+            const err = await billRes.json().catch(() => ({}));
+            throw new Error(err?.message || "Failed to record payment");
+          }
         }
       }
       updateAppointment.mutate(
@@ -876,7 +856,7 @@ export default function Queue() {
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Queue Management"
-          description={`Live queue — ${activeDate === format(new Date(), "yyyy-MM-dd") ? "today" : format(parseISO(activeDate), "EEEE, MMM d")}`}
+          description={`Live queue — ${selectedDate === format(new Date(), "yyyy-MM-dd") ? "today" : format(parseISO(selectedDate), "EEEE, MMM d")}`}
         />
 
         <div className="flex flex-col sm:flex-row gap-3">
@@ -895,11 +875,18 @@ export default function Queue() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={selectedSlot} onValueChange={setSelectedSlot} disabled={!doctorSlots.length}>
-            <SelectTrigger className="bg-white border-slate-200 rounded-xl w-full sm:w-72 h-11">
-              <SelectValue placeholder={doctorSlots.length ? "Select date & slot" : "No slots available"} />
+          <Input
+            type="date"
+            value={selectedDate}
+            onChange={(e) => { setSelectedDate(e.target.value); setSelectedSlot(""); }}
+            className="bg-white border-slate-200 rounded-xl w-full sm:w-44 h-11 px-3 text-sm cursor-pointer"
+          />
+          <Select value={selectedSlot} onValueChange={setSelectedSlot}>
+            <SelectTrigger className="bg-white border-slate-200 rounded-xl w-full sm:w-64 h-11">
+              <SelectValue placeholder={doctorSlots.length ? "All slots" : "No slots configured"} />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="">All slots</SelectItem>
               {doctorSlots.map((s) => (
                 <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
               ))}
@@ -1041,6 +1028,7 @@ export default function Queue() {
                           size="sm"
                           className="rounded-xl h-9 bg-blue-600 hover:bg-blue-700 text-white"
                           onClick={() => handleStatusChange(apt.id, "in_progress")}
+                          disabled={updateAppointment.isPending}
                         >
                           Start
                         </Button>
@@ -1051,6 +1039,7 @@ export default function Queue() {
                           variant="outline"
                           className="rounded-xl h-9 text-red-500 border-red-100 hover:bg-red-50"
                           onClick={() => setNoShowTarget(apt)}
+                          disabled={updateAppointment.isPending}
                         >
                           No Show
                         </Button>
@@ -1085,12 +1074,12 @@ export default function Queue() {
                       </Button>
                     )}
                     {apt.status === "checked_in" && can("queue:status-change") && (
-                      <Button size="sm" className="rounded-xl h-8 text-xs bg-blue-600 text-white" onClick={() => handleStatusChange(apt.id, "in_progress")}>
+                      <Button size="sm" className="rounded-xl h-8 text-xs bg-blue-600 text-white" onClick={() => handleStatusChange(apt.id, "in_progress")} disabled={updateAppointment.isPending}>
                         Start
                       </Button>
                     )}
                     {(apt.status === "booked" || apt.status === "checked_in") && can("queue:status-change") && (
-                      <Button size="sm" variant="outline" className="rounded-xl h-8 text-xs text-red-500 border-red-100" onClick={() => setNoShowTarget(apt)}>
+                      <Button size="sm" variant="outline" className="rounded-xl h-8 text-xs text-red-500 border-red-100" onClick={() => setNoShowTarget(apt)} disabled={updateAppointment.isPending}>
                         No Show
                       </Button>
                     )}
@@ -1124,7 +1113,7 @@ export default function Queue() {
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={confirmNoShow} className="rounded-xl bg-red-600 hover:bg-red-700">
+              <AlertDialogAction onClick={confirmNoShow} className="rounded-xl bg-red-600 hover:bg-red-700" disabled={updateAppointment.isPending}>
                 Yes, No Show
               </AlertDialogAction>
             </AlertDialogFooter>
