@@ -600,7 +600,7 @@ export default function Queue() {
   const { data: settings } = useQuery<Record<string, any>>({ queryKey: ["/api/settings"] });
   const [selectedDoctor, setSelectedDoctor] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
-  const [selectedSlot, setSelectedSlot] = useState<string>("");
+  const [selectedSlot, setSelectedSlot] = useState<string>("all");
   const [checkInTarget, setCheckInTarget] = useState<any>(null);
   const [checkInFee, setCheckInFee] = useState<string>("");
   const [checkInPaymentMethod, setCheckInPaymentMethod] = useState<string>("cash");
@@ -666,7 +666,7 @@ export default function Queue() {
         String(apt.doctorId) === selectedDoctor
     );
 
-    if (selectedSlot && doctorSlots.length > 0) {
+    if (selectedSlot && selectedSlot !== "all" && doctorSlots.length > 0) {
       const slot = doctorSlots.find((s) => s.id === selectedSlot);
       if (slot) {
         const [startH, startM] = slot.start.split(":").map(Number);
@@ -707,8 +707,8 @@ export default function Queue() {
   }, [doctors, selectedDoctor]);
 
   useEffect(() => {
-    if (selectedSlot && !doctorSlots.find((s) => s.id === selectedSlot)) {
-      setSelectedSlot("");
+    if (selectedSlot && selectedSlot !== "all" && !doctorSlots.find((s) => s.id === selectedSlot)) {
+      setSelectedSlot("all");
     }
   }, [doctorSlots, selectedSlot]);
 
@@ -862,7 +862,7 @@ export default function Queue() {
         <div className="flex flex-col sm:flex-row gap-3">
           <Select
             value={selectedDoctor}
-            onValueChange={(v) => { setSelectedDoctor(v); setSelectedSlot(""); }}
+            onValueChange={(v) => { setSelectedDoctor(v); setSelectedSlot("all"); }}
           >
             <SelectTrigger className="bg-white border-slate-200 rounded-xl w-full sm:w-56 h-11">
               <SelectValue placeholder="Select doctor" />
@@ -878,7 +878,7 @@ export default function Queue() {
           <Input
             type="date"
             value={selectedDate}
-            onChange={(e) => { setSelectedDate(e.target.value); setSelectedSlot(""); }}
+            onChange={(e) => { setSelectedDate(e.target.value); setSelectedSlot("all"); }}
             className="bg-white border-slate-200 rounded-xl w-full sm:w-44 h-11 px-3 text-sm cursor-pointer"
           />
           <Select value={selectedSlot} onValueChange={setSelectedSlot}>
@@ -886,7 +886,7 @@ export default function Queue() {
               <SelectValue placeholder={doctorSlots.length ? "All slots" : "No slots configured"} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">All slots</SelectItem>
+              <SelectItem value="all">All slots</SelectItem>
               {doctorSlots.map((s) => (
                 <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
               ))}

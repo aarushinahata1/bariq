@@ -28,8 +28,8 @@ import { useRole } from "@/hooks/use-role";
 
 // Frontend needs slightly different schema for the form (string date instead of Date object initially)
 const appointmentFormSchema = z.object({
-  date: z.string().min(1, "Date is required"), 
-  slot: z.string().min(1, "Time slot is required"),
+  date: z.string().min(1, "Date is required"),
+  slot: z.string().optional(),
   patientId: z.coerce.number().min(1, "Patient is required"),
   doctorId: z.string().min(1, "Doctor is required"),
   status: z.enum(["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"]),
@@ -703,19 +703,23 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   }, "Enter a valid 10-digit mobile number");
 
   const formSchema = useMemo(() => {
-    const base = appointmentFormSchema.extend({
+    let base = appointmentFormSchema.extend({
       patientName: z.string().optional(),
       patientPhone: z.string().optional(),
       patientEmail: z.string().optional(),
     });
     if (isNewPatient) {
-      return base.extend({
+      base = base.extend({
         patientId: z.any().optional(),
         patientName: z.string().min(1, "Name is required"),
         patientPhone: phoneValidation,
-      });
+      }) as typeof base;
     }
-    return base;
+    return base.superRefine((data, ctx) => {
+      if (data.status !== "checked_in" && !data.slot) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Time slot is required", path: ["slot"] });
+      }
+    });
   }, [isNewPatient]);
 
   const form = useForm<any>({
@@ -792,6 +796,10 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         appointmentDate = new Date();
         finalReason = `EMERGENCY: ${data.reason}`;
       } else {
+        if (!data.slot) {
+          toast({ title: "Error", description: "Please select a time slot", variant: "destructive" });
+          return;
+        }
         const [start] = data.slot.split('-');
         const [hours, minutes] = start.split(':');
         const [y, mo, d] = data.date.split('-').map(Number);
@@ -927,7 +935,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                   render={({ field }) => (
                     <FormItem className="md:col-span-1">
                       <FormLabel>Patient</FormLabel>
-                      <Select onValueChange={field.onChange} defaultValue={String(field.value)}>
+                      <Select onValueChange={field.onChange} value={field.value ? String(field.value) : ""}>
                         <FormControl>
                           <SelectTrigger className="rounded-xl h-11">
                             <SelectValue placeholder="Select Patient" />
