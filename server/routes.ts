@@ -1158,6 +1158,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .orderBy(desc(clinicPayments.createdAt));
       res.json(payments);
     } catch (err) {
+      console.error("[payments GET]", err);
       res.status(500).json({ message: "Failed to fetch payments" });
     }
   });
