@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  Clock, CheckCircle, XCircle, Stethoscope, Copy, AlertTriangle, RefreshCw,
+  Clock, CheckCircle, XCircle, Stethoscope, Copy, AlertTriangle, RefreshCw, LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +48,13 @@ export default function PaymentWall() {
   const { clinic } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    qc.clear();
+    localStorage.removeItem("medqueue-role");
+    window.location.href = "/login";
+  }
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>("quarterly");
   const [utr, setUtr] = useState("");
   const [copied, setCopied] = useState(false);
@@ -107,11 +114,20 @@ export default function PaymentWall() {
   return (
     <div className="min-h-screen bg-[#f0f0ea] flex flex-col">
       {/* Header */}
-      <header className="bg-teal-800 text-white px-6 py-4 flex items-center gap-3">
-        <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
-          <Stethoscope className="w-4 h-4" />
+      <header className="bg-teal-800 text-white px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-white/10 rounded-lg flex items-center justify-center">
+            <Stethoscope className="w-4 h-4" />
+          </div>
+          <span className="font-bold text-lg">BariQ</span>
         </div>
-        <span className="font-bold text-lg">BariQ</span>
+        <button
+          onClick={handleLogout}
+          className="flex items-center gap-2 text-teal-200 hover:text-white text-sm font-medium transition-colors"
+        >
+          <LogOut className="w-4 h-4" />
+          Logout
+        </button>
       </header>
 
       <div className="flex-1 flex items-start justify-center px-4 py-12">

@@ -295,31 +295,47 @@ function RegistrationQR({ token, clinicName, tagline, address }: { token: string
 
 function WhatsAppWebPanel() {
   const { toast } = useToast();
-  const qc = useQueryClient();
+  const [connecting, setConnecting] = useState(false);
+  const prevStatus = useRef<string>("disconnected");
 
   const { data: statusData, refetch } = useQuery<{ status: string; qr?: string }>({
     queryKey: ["/api/whatsapp-web/status"],
     queryFn: async () => {
       const r = await fetch("/api/whatsapp-web/status", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to fetch status");
       return r.json();
     },
     refetchInterval: (query) => {
       const s = query.state.data?.status;
-      return s === "connecting" || s === "qr" ? 3000 : false;
+      return s === "connecting" || s === "qr" ? 2000 : false;
     },
   });
 
   const status = statusData?.status ?? "disconnected";
   const qr = statusData?.qr;
 
-  const connect = async () => {
-    const r = await fetch("/api/whatsapp-web/connect", { method: "POST", credentials: "include" });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      toast({ title: "Failed to start", description: err.message, variant: "destructive" });
-      return;
+  useEffect(() => {
+    if (prevStatus.current === "connecting" && status === "disconnected") {
+      toast({ title: "Connection failed", description: "WhatsApp Web could not start. Check server logs — Chrome may not be installed.", variant: "destructive" });
     }
-    refetch();
+    prevStatus.current = status;
+  }, [status]);
+
+  const connect = async () => {
+    setConnecting(true);
+    try {
+      const r = await fetch("/api/whatsapp-web/connect", { method: "POST", credentials: "include" });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        toast({ title: "Failed to start", description: err.message || "Server error", variant: "destructive" });
+        return;
+      }
+      await refetch();
+    } catch (e: any) {
+      toast({ title: "Network error", description: e?.message || "Could not reach server", variant: "destructive" });
+    } finally {
+      setConnecting(false);
+    }
   };
 
   const disconnect = async () => {
