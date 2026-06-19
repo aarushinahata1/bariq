@@ -1,7 +1,7 @@
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Clock, Calendar } from "lucide-react";
+import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Clock, Calendar, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, addDays } from "date-fns";
 
@@ -83,6 +83,17 @@ export default function Register() {
     },
     enabled: !!token,
     retry: false,
+  });
+
+  const { data: queuePreview } = useQuery<{ nextQueueNumber: number }>({
+    queryKey: ["kiosk-preview", token, selectedDoctorId, selectedDate],
+    queryFn: async () => {
+      const res = await fetch(`/api/kiosk/${token}/queue-preview?doctorId=${selectedDoctorId}&date=${selectedDate}`);
+      if (!res.ok) throw new Error("preview failed");
+      return res.json();
+    },
+    enabled: !!token && !!selectedDoctorId,
+    refetchInterval: 15000,
   });
 
   const doctors = info?.doctors ?? [];
@@ -518,6 +529,24 @@ export default function Register() {
                 />
               </div>
             </div>
+
+            {/* Queue number preview */}
+            {selectedDoctorId && queuePreview && (
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-teal-600 text-white shadow-lg shadow-teal-200">
+                <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center shrink-0">
+                  <span className="text-2xl font-black">#{queuePreview.nextQueueNumber}</span>
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-teal-200">Your Token Number</p>
+                  <p className="font-bold text-base">You will get token #{queuePreview.nextQueueNumber}</p>
+                  <p className="text-xs text-teal-200 mt-0.5">
+                    {queuePreview.nextQueueNumber === 1
+                      ? "You'll be first in queue!"
+                      : `${queuePreview.nextQueueNumber - 1} patient${queuePreview.nextQueueNumber - 1 === 1 ? "" : "s"} ahead of you`}
+                  </p>
+                </div>
+              </div>
+            )}
 
             {/* Error */}
             {registerMutation.isError && (

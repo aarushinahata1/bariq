@@ -874,6 +874,48 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // GET /api/kiosk/:token/queue-preview — returns the next queue number for a doctor+date (no auth)
+  app.get("/api/kiosk/:token/queue-preview", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const { doctorId, date: dateParam } = req.query as { doctorId?: string; date?: string };
+      if (!doctorId) return res.status(400).json({ message: "doctorId is required" });
+
+      const tokenRows = await db.select().from(clinicSettings)
+        .where(eq(clinicSettings.key, "registrationToken"));
+      const tokenRow = tokenRows.find((r: any) => r.value === token);
+      if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
+      const clinicId = tokenRow.clinicId;
+
+      const now = new Date();
+      const todayMidnight = new Date(now); todayMidnight.setHours(0, 0, 0, 0);
+      let targetDate: Date;
+      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        const [y, mo, d] = dateParam.split("-").map(Number);
+        targetDate = new Date(y, mo - 1, d);
+        if (targetDate < todayMidnight) targetDate = new Date(todayMidnight);
+      } else {
+        targetDate = new Date(todayMidnight);
+      }
+      const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
+      const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
+
+      const [maxRow] = await db.select({
+        maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
+      }).from(appointments).where(and(
+        eq(appointments.clinicId, clinicId),
+        eq(appointments.doctorId, doctorId),
+        gte(appointments.date, targetStart),
+        lte(appointments.date, targetEnd),
+      ));
+
+      res.json({ nextQueueNumber: (maxRow?.maxNum ?? 0) + 1 });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to get queue preview" });
+    }
+  });
+
   // POST /api/kiosk/:token  — register patient + create appointment (no auth)
   app.post("/api/kiosk/:token", async (req, res) => {
     try {
