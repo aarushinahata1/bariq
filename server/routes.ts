@@ -279,6 +279,33 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // GET /api/appointments/queue-preview — next queue number for a doctor+date (auth required)
+  app.get("/api/appointments/queue-preview", requireAuth, async (req, res) => {
+    try {
+      const { doctorId, date: dateParam } = req.query as { doctorId?: string; date?: string };
+      if (!doctorId || !dateParam) return res.status(400).json({ message: "doctorId and date are required" });
+
+      const clinicId = req.session.clinicId!;
+      const [y, mo, d] = dateParam.split("-").map(Number);
+      const targetDate = new Date(y, mo - 1, d);
+      const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
+      const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
+
+      const [maxRow] = await db.select({
+        maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
+      }).from(appointments).where(and(
+        eq(appointments.clinicId, clinicId),
+        eq(appointments.doctorId, doctorId),
+        gte(appointments.date, targetStart),
+        lte(appointments.date, targetEnd),
+      ));
+
+      res.json({ nextQueueNumber: (maxRow?.maxNum ?? 0) + 1 });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to get queue preview" });
+    }
+  });
+
   // ── QUEUE REORDER ─────────────────────────────────────────────────────────
 
   app.patch("/api/queue/reorder", requireAuth, async (req, res) => {

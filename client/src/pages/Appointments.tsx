@@ -4,6 +4,7 @@ import { useAppointments, useCreateAppointment, useUpdateAppointment, useDeleteA
 import { useDoctors } from "@/hooks/use-doctors";
 import { usePatients } from "@/hooks/use-patients";
 import { useState, useMemo, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
@@ -758,6 +759,19 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
     }
   }, [availableSlots]);
 
+  const showPreview = !!watchedDoctorId && !!watchedDate && watchedStatus !== "checked_in" && !isQuickCheck;
+
+  const { data: queuePreview } = useQuery<{ nextQueueNumber: number }>({
+    queryKey: ["/api/appointments/queue-preview", watchedDoctorId, watchedDate],
+    queryFn: async () => {
+      const r = await fetch(`/api/appointments/queue-preview?doctorId=${watchedDoctorId}&date=${watchedDate}`, { credentials: "include" });
+      if (!r.ok) throw new Error("preview failed");
+      return r.json();
+    },
+    enabled: showPreview,
+    refetchInterval: showPreview ? 15000 : false,
+  });
+
   const onSubmit = async (data: any) => {
     try {
       let patientId = data.patientId;
@@ -1024,6 +1038,23 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
               </div>
             )}
 
+            {showPreview && queuePreview && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-teal-50 border border-teal-200">
+                <div className="w-10 h-10 rounded-xl bg-teal-600 flex items-center justify-center shrink-0">
+                  <span className="text-white font-black text-sm">#{queuePreview.nextQueueNumber}</span>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-teal-700 uppercase tracking-wider">Expected Token</p>
+                  <p className="text-sm font-semibold text-teal-900">
+                    Patient will get token #{queuePreview.nextQueueNumber}
+                    {queuePreview.nextQueueNumber === 1
+                      ? " — first in queue!"
+                      : ` · ${queuePreview.nextQueueNumber - 1} patient${queuePreview.nextQueueNumber - 1 === 1 ? "" : "s"} ahead`}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <FormField
               control={form.control}
               name="reason"
@@ -1038,9 +1069,9 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
               )}
             />
 
-            <Button 
-              type="submit" 
-              disabled={createAppointment.isPending} 
+            <Button
+              type="submit"
+              disabled={createAppointment.isPending}
               className={`w-full rounded-xl h-12 font-semibold mt-4 ${watchedStatus === 'checked_in' ? 'bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20' : ''}`}
             >
               {createAppointment.isPending ? "Booking..." : (watchedStatus === 'checked_in' ? "Create Emergency Entry" : "Confirm Booking")}
