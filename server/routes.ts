@@ -1541,5 +1541,73 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ── STAFF MANAGEMENT (receptionist / pharmacist) ──────────────────────────
+
+  // GET /api/staff — list all non-doctor staff for this clinic
+  app.get("/api/staff", requireAuth, async (req, res) => {
+    try {
+      const rows = await db.select({
+        id: users.id, name: users.name, email: users.email, role: users.role, createdAt: users.createdAt,
+      }).from(users).where(and(
+        eq(users.clinicId, req.session.clinicId!),
+        sql`${users.role} IN ('receptionist','pharmacist','staff')`,
+      )).orderBy(users.createdAt);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch staff" });
+    }
+  });
+
+  // POST /api/staff — create a new staff member
+  app.post("/api/staff", requireAuth, async (req, res) => {
+    try {
+      const { name, email, role, password } = req.body;
+      if (!name?.trim()) return res.status(400).json({ message: "Name is required" });
+      if (!["receptionist", "pharmacist", "staff"].includes(role)) return res.status(400).json({ message: "Invalid role" });
+      if (!password || password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      const passwordHash = await bcrypt.hash(password, 10);
+      const [row] = await db.insert(users).values({
+        clinicId: req.session.clinicId!,
+        name: name.trim(),
+        email: email?.trim() || null,
+        role,
+        passwordHash,
+      }).returning({ id: users.id, name: users.name, email: users.email, role: users.role, createdAt: users.createdAt });
+      res.status(201).json(row);
+    } catch (err: any) {
+      if (err?.code === "23505") return res.status(409).json({ message: "Email already exists" });
+      res.status(500).json({ message: "Failed to create staff member" });
+    }
+  });
+
+  // PUT /api/staff/:id — update name / password
+  app.put("/api/staff/:id", requireAuth, async (req, res) => {
+    try {
+      const { name, password } = req.body;
+      const updates: Record<string, any> = {};
+      if (name?.trim()) updates.name = name.trim();
+      if (password && password.length >= 6) updates.passwordHash = await bcrypt.hash(password, 10);
+      if (!Object.keys(updates).length) return res.status(400).json({ message: "Nothing to update" });
+      const [row] = await db.update(users).set(updates)
+        .where(and(eq(users.id, req.params.id), eq(users.clinicId, req.session.clinicId!)))
+        .returning({ id: users.id, name: users.name, email: users.email, role: users.role, createdAt: users.createdAt });
+      if (!row) return res.status(404).json({ message: "Staff not found" });
+      res.json(row);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to update staff" });
+    }
+  });
+
+  // DELETE /api/staff/:id
+  app.delete("/api/staff/:id", requireAuth, async (req, res) => {
+    try {
+      await db.delete(users).where(and(eq(users.id, req.params.id), eq(users.clinicId, req.session.clinicId!)));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to delete staff" });
+    }
+  });
+
   return httpServer;
 }

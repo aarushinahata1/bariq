@@ -8,13 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer, Smartphone, Wifi, WifiOff, Loader2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer, Smartphone, Wifi, WifiOff, Loader2, Users, Plus, Trash2, Edit2, Pill } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
 import QRCode from "react-qr-code";
 
-type Tab = "clinic" | "billing" | "whatsapp" | "sms";
+type Tab = "clinic" | "billing" | "whatsapp" | "sms" | "staff";
 
 const WHATSAPP_PROVIDERS = [
   { value: "web", label: "WhatsApp Web (Free — scan QR)" },
@@ -411,6 +412,193 @@ function WhatsAppWebPanel() {
   );
 }
 
+// ── Staff & Roles Panel ──────────────────────────────────────────────────────
+
+const STAFF_ROLES = [
+  { value: "receptionist", label: "Receptionist", color: "bg-cyan-100 text-cyan-700", icon: "R" },
+  { value: "pharmacist", label: "Pharmacist", color: "bg-violet-100 text-violet-700", icon: "P" },
+];
+
+function StaffPanel() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [form, setForm] = useState({ name: "", email: "", role: "pharmacist", password: "" });
+  const [showPw, setShowPw] = useState(false);
+
+  const { data: staff = [] } = useQuery<any[]>({
+    queryKey: ["/api/staff"],
+    queryFn: () => fetch("/api/staff", { credentials: "include" }).then(r => r.json()),
+  });
+
+  function openAdd() { setEditing(null); setForm({ name: "", email: "", role: "pharmacist", password: "" }); setDialogOpen(true); }
+  function openEdit(s: any) { setEditing(s); setForm({ name: s.name, email: s.email || "", role: s.role, password: "" }); setDialogOpen(true); }
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const url = editing ? `/api/staff/${editing.id}` : "/api/staff";
+      const method = editing ? "PUT" : "POST";
+      const body: any = { name: form.name, role: form.role };
+      if (form.email) body.email = form.email;
+      if (form.password) body.password = form.password;
+      const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "include" });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/staff"] });
+      toast({ title: editing ? "Staff updated" : "Staff member added" });
+      setDialogOpen(false);
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) =>
+      fetch(`/api/staff/${id}`, { method: "DELETE", credentials: "include" }).then(r => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/staff"] });
+      toast({ title: "Staff member removed" });
+    },
+  });
+
+  return (
+    <Card className="p-6 space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-violet-100 flex items-center justify-center">
+            <Users className="w-5 h-5 text-violet-600" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-slate-900">Staff & Roles</h2>
+            <p className="text-xs text-slate-500">Manage receptionist and pharmacist accounts</p>
+          </div>
+        </div>
+        <Button onClick={openAdd} className="bg-violet-600 hover:bg-violet-700 rounded-xl gap-2 text-sm">
+          <Plus className="w-4 h-4" /> Add Staff
+        </Button>
+      </div>
+
+      {/* Role descriptions */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {[
+          { role: "receptionist", label: "Receptionist", desc: "Dashboard, Appointments, Queue, Patients", icon: "R", color: "bg-cyan-500", border: "border-cyan-200 bg-cyan-50" },
+          { role: "pharmacist", label: "Pharmacist", desc: "Pharmacy inventory & billing only", icon: "P", color: "bg-violet-500", border: "border-violet-200 bg-violet-50", pill: true },
+        ].map(r => (
+          <div key={r.role} className={`rounded-xl border ${r.border} p-4 flex items-start gap-3`}>
+            <div className={`w-9 h-9 rounded-full ${r.color} flex items-center justify-center text-white font-bold text-sm shrink-0`}>{r.icon}</div>
+            <div>
+              <div className="flex items-center gap-2">
+                <p className="font-semibold text-slate-800 text-sm">{r.label}</p>
+                {r.pill && <Pill className="w-3.5 h-3.5 text-violet-600" />}
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">{r.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Staff list */}
+      <div className="space-y-2">
+        {staff.length === 0 ? (
+          <div className="py-10 text-center text-slate-400">
+            <Users className="w-10 h-10 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No staff members yet. Add one above.</p>
+          </div>
+        ) : staff.map((s: any) => {
+          const roleInfo = STAFF_ROLES.find(r => r.value === s.role);
+          return (
+            <div key={s.id} className="flex items-center justify-between px-4 py-3 rounded-xl bg-slate-50 border border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm text-white ${s.role === "pharmacist" ? "bg-violet-500" : "bg-cyan-500"}`}>
+                  {(s.name || "?")[0].toUpperCase()}
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-800 text-sm">{s.name}</p>
+                  <p className="text-xs text-slate-400">{s.email || "No email"}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${roleInfo?.color ?? "bg-slate-100 text-slate-600"}`}>
+                  {roleInfo?.label ?? s.role}
+                </span>
+                <button onClick={() => openEdit(s)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors">
+                  <Edit2 className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => remove.mutate(s.id)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Note about Switch Role */}
+      <div className="rounded-xl bg-teal-50 border border-teal-200 px-4 py-3 text-xs text-teal-800">
+        <strong>Switch Role</strong> in the sidebar lets you preview each role's experience.
+        Staff accounts created here can be used to set up dedicated logins in future updates.
+      </div>
+
+      {/* Add / Edit dialog */}
+      <Dialog open={dialogOpen} onOpenChange={v => !v && setDialogOpen(false)}>
+        <DialogContent className="sm:max-w-[420px] rounded-2xl">
+          <DialogHeader>
+            <DialogTitle>{editing ? "Edit Staff Member" : "Add Staff Member"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 pt-2">
+            <div>
+              <Label className="text-xs font-semibold text-slate-600 mb-1 block">Name *</Label>
+              <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" className="rounded-xl h-10" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold text-slate-600 mb-1 block">Email (optional)</Label>
+              <Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="staff@clinic.com" className="rounded-xl h-10" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold text-slate-600 mb-1 block">Role *</Label>
+              <select
+                value={form.role}
+                onChange={e => setForm(f => ({ ...f, role: e.target.value }))}
+                className="w-full border border-slate-200 rounded-xl h-10 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-violet-400"
+              >
+                {STAFF_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold text-slate-600 mb-1 block">{editing ? "New Password (leave blank to keep)" : "Password *"}</Label>
+              <div className="relative">
+                <Input
+                  type={showPw ? "text" : "password"}
+                  value={form.password}
+                  onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  placeholder={editing ? "Leave blank to keep existing" : "Min 6 characters"}
+                  className="rounded-xl h-10 pr-10"
+                />
+                <button type="button" onClick={() => setShowPw(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1 rounded-xl" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button
+                className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-700"
+                onClick={() => save.mutate()}
+                disabled={save.isPending || !form.name.trim() || (!editing && !form.password)}
+              >
+                {save.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+                {editing ? "Save Changes" : "Add Staff"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const [activeTab, setActiveTab] = useState<Tab>("clinic");
   const { toast } = useToast();
@@ -518,6 +706,7 @@ export default function Settings() {
   const tabs: { id: Tab; label: string; icon: typeof MessageCircle; color: string }[] = [
     { id: "clinic", label: "Clinic Profile", icon: Building2, color: "text-teal-700" },
     { id: "billing", label: "Plan & Billing", icon: CreditCard, color: "text-teal-700" },
+    { id: "staff", label: "Staff & Roles", icon: Users, color: "text-violet-600" },
     { id: "whatsapp", label: "WhatsApp API", icon: MessageCircle, color: "text-emerald-600" },
     { id: "sms", label: "SMS API", icon: MessageSquare, color: "text-teal-700" },
   ];
@@ -1103,6 +1292,9 @@ export default function Settings() {
             </div>
           </Card>
         )}
+
+        {/* Staff & Roles Panel */}
+        {activeTab === "staff" && <StaffPanel />}
 
         {/* Info banner */}
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex gap-3 text-sm text-amber-800">
