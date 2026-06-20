@@ -93,7 +93,9 @@ export default function Register() {
       return res.json();
     },
     enabled: !!token && !!selectedDoctorId,
-    refetchInterval: 15000,
+    staleTime: 0,
+    gcTime: 0,
+    refetchInterval: 10000,
   });
 
   const doctors = info?.doctors ?? [];

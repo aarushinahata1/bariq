@@ -769,7 +769,9 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
       return r.json();
     },
     enabled: showPreview,
-    refetchInterval: showPreview ? 15000 : false,
+    staleTime: 0,
+    gcTime: 0,
+    refetchInterval: showPreview ? 10000 : false,
   });
 
   const onSubmit = async (data: any) => {
