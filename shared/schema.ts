@@ -1,4 +1,4 @@
-import { pgTable, text, integer, serial, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, serial, timestamp, boolean, jsonb, index, uniqueIndex, primaryKey, date } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -182,6 +182,52 @@ export const prescriptions = pgTable("prescriptions", {
   apptIdx: uniqueIndex("prescriptions_appointment_id_unique").on(t.appointmentId),
 }));
 
+// ── Pharmacy ──────────────────────────────────────────────────────────────────
+
+export const medicines = pgTable("medicines", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  name: text("name").notNull(),
+  genericName: text("generic_name"),
+  category: text("category").notNull().default("General"),
+  manufacturer: text("manufacturer"),
+  batchNo: text("batch_no"),
+  expiryDate: date("expiry_date"),
+  costPrice: integer("cost_price").notNull().default(0),
+  sellingPrice: integer("selling_price").notNull().default(0),
+  stockQty: integer("stock_qty").notNull().default(0),
+  minStockQty: integer("min_stock_qty").notNull().default(10),
+  unit: text("unit").notNull().default("Strip"),
+  hsnCode: text("hsn_code"),
+  gstPercent: integer("gst_percent").notNull().default(12),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("medicines_clinic_id_idx").on(t.clinicId),
+}));
+
+export const pharmacyBills = pgTable("pharmacy_bills", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  patientId: integer("patient_id").references(() => patients.id, { onDelete: "set null" }),
+  patientName: text("patient_name"),
+  patientPhone: text("patient_phone"),
+  appointmentId: integer("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+  items: jsonb("items").notNull().default([]),
+  subtotal: integer("subtotal").notNull().default(0),
+  discountPercent: integer("discount_percent").notNull().default(0),
+  discountAmount: integer("discount_amount").notNull().default(0),
+  gstTotal: integer("gst_total").notNull().default(0),
+  totalAmount: integer("total_amount").notNull().default(0),
+  paymentMethod: text("payment_method").default("cash"),
+  status: text("status").notNull().default("paid"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("pharmacy_bills_clinic_id_idx").on(t.clinicId),
+  clinicDateIdx: index("pharmacy_bills_clinic_date_idx").on(t.clinicId, t.createdAt),
+}));
+
 // ── Relations ─────────────────────────────────────────────────────────────────
 
 export const clinicsRelations = relations(clinics, ({ many }) => ({
@@ -274,3 +320,18 @@ export type ClinicSetting = typeof clinicSettings.$inferSelect;
 
 export type CreateUserRequest = InsertUser & { doctorProfile?: Partial<z.infer<typeof insertDoctorProfileSchema>> };
 export type UpdateAppointmentRequest = Partial<InsertAppointment> & { status?: typeof appointmentStatus[number] };
+
+export const insertMedicineSchema = createInsertSchema(medicines).omit({ id: true, createdAt: true }).extend({
+  name: z.string().min(1, "Medicine name is required"),
+  sellingPrice: z.coerce.number().min(0),
+  costPrice: z.coerce.number().min(0),
+  stockQty: z.coerce.number().min(0),
+  minStockQty: z.coerce.number().min(0),
+  gstPercent: z.coerce.number().min(0),
+});
+export const insertPharmacyBillSchema = createInsertSchema(pharmacyBills).omit({ id: true, createdAt: true });
+
+export type Medicine = typeof medicines.$inferSelect;
+export type InsertMedicine = z.infer<typeof insertMedicineSchema>;
+export type PharmacyBill = typeof pharmacyBills.$inferSelect;
+export type InsertPharmacyBill = z.infer<typeof insertPharmacyBillSchema>;

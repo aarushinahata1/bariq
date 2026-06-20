@@ -3,9 +3,9 @@ import { createServer, type Server } from "http";
 import { getStorage } from "./storage";
 import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
-import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema } from "@shared/schema";
+import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, desc, sql, count, sum } from "drizzle-orm";
+import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt } from "drizzle-orm";
 import { z } from "zod";
 import { setupAuth, requireAuth, requireSuperAdmin } from "./auth";
 import { nanoid } from "nanoid";
@@ -1098,6 +1098,144 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: "Failed to register. Please try again." });
+    }
+  });
+
+  // ── PHARMACY ──────────────────────────────────────────────────────────────
+
+  // GET /api/pharmacy/stats
+  app.get("/api/pharmacy/stats", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+      const thirtyDaysFromNow = new Date(); thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+      const thirtyDaysStr = thirtyDaysFromNow.toISOString().split("T")[0];
+
+      const [totalMeds] = await db.select({ count: count() }).from(medicines)
+        .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true)));
+
+      const [lowStock] = await db.select({ count: count() }).from(medicines)
+        .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true),
+          sql`${medicines.stockQty} <= ${medicines.minStockQty}`));
+
+      const [expiringSoon] = await db.select({ count: count() }).from(medicines)
+        .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true),
+          sql`${medicines.expiryDate} IS NOT NULL AND ${medicines.expiryDate} <= ${thirtyDaysStr} AND ${medicines.expiryDate} >= CURRENT_DATE`));
+
+      const [todaySales] = await db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
+        .from(pharmacyBills)
+        .where(and(eq(pharmacyBills.clinicId, clinicId),
+          gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd)));
+
+      const [monthSales] = await db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
+        .from(pharmacyBills)
+        .where(and(eq(pharmacyBills.clinicId, clinicId),
+          gte(pharmacyBills.createdAt, new Date(new Date().getFullYear(), new Date().getMonth(), 1))));
+
+      res.json({
+        totalMedicines: totalMeds?.count ?? 0,
+        lowStockCount: lowStock?.count ?? 0,
+        expiringSoonCount: expiringSoon?.count ?? 0,
+        todaySales: todaySales?.total ?? 0,
+        monthSales: monthSales?.total ?? 0,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch pharmacy stats" });
+    }
+  });
+
+  // GET /api/pharmacy/medicines
+  app.get("/api/pharmacy/medicines", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { search, category, lowStock, expiringSoon } = req.query as Record<string, string>;
+      const conditions = [eq(medicines.clinicId, clinicId), eq(medicines.isActive, true)];
+      if (search) conditions.push(or(ilike(medicines.name, `%${search}%`), ilike(medicines.genericName, `%${search}%`))!);
+      if (category && category !== "all") conditions.push(eq(medicines.category, category));
+      if (lowStock === "true") conditions.push(sql`${medicines.stockQty} <= ${medicines.minStockQty}`);
+      if (expiringSoon === "true") {
+        const d = new Date(); d.setDate(d.getDate() + 30);
+        conditions.push(sql`${medicines.expiryDate} IS NOT NULL AND ${medicines.expiryDate} <= ${d.toISOString().split("T")[0]} AND ${medicines.expiryDate} >= CURRENT_DATE`);
+      }
+      const rows = await db.select().from(medicines).where(and(...conditions)).orderBy(medicines.name);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch medicines" });
+    }
+  });
+
+  // POST /api/pharmacy/medicines
+  app.post("/api/pharmacy/medicines", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const [med] = await db.insert(medicines).values({ ...req.body, clinicId }).returning();
+      res.json(med);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to create medicine" });
+    }
+  });
+
+  // PUT /api/pharmacy/medicines/:id
+  app.put("/api/pharmacy/medicines/:id", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { id } = req.params;
+      const [med] = await db.update(medicines).set({ ...req.body })
+        .where(and(eq(medicines.id, Number(id)), eq(medicines.clinicId, clinicId))).returning();
+      if (!med) return res.status(404).json({ message: "Medicine not found" });
+      res.json(med);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to update medicine" });
+    }
+  });
+
+  // DELETE /api/pharmacy/medicines/:id (soft delete)
+  app.delete("/api/pharmacy/medicines/:id", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      await db.update(medicines).set({ isActive: false })
+        .where(and(eq(medicines.id, Number(req.params.id)), eq(medicines.clinicId, clinicId)));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to delete medicine" });
+    }
+  });
+
+  // GET /api/pharmacy/bills
+  app.get("/api/pharmacy/bills", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const rows = await db.select().from(pharmacyBills)
+        .where(eq(pharmacyBills.clinicId, clinicId))
+        .orderBy(desc(pharmacyBills.createdAt))
+        .limit(100);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch pharmacy bills" });
+    }
+  });
+
+  // POST /api/pharmacy/bills
+  app.post("/api/pharmacy/bills", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { items, ...rest } = req.body;
+      // Deduct stock for each item
+      await db.transaction(async (tx) => {
+        for (const item of (items as any[])) {
+          if (item.medicineId) {
+            await tx.update(medicines)
+              .set({ stockQty: sql`${medicines.stockQty} - ${item.qty}` })
+              .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
+          }
+        }
+        const [bill] = await tx.insert(pharmacyBills)
+          .values({ ...rest, items, clinicId }).returning();
+        res.json(bill);
+      });
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to create pharmacy bill" });
     }
   });
 

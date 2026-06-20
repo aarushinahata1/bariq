@@ -1,4 +1,4 @@
-export type Role = "admin" | "doctor" | "receptionist";
+export type Role = "admin" | "doctor" | "receptionist" | "pharmacist";
 
 /** Granular actions that can be permission-gated */
 export type Action =
@@ -15,7 +15,10 @@ export type Action =
   | "queue:status-change"
   | "doctors:manage"
   | "billing:view"
-  | "crm:access";
+  | "crm:access"
+  | "pharmacy:view"
+  | "pharmacy:manage"
+  | "pharmacy:billing";
 
 export interface RoleConfig {
   label: string;
@@ -39,6 +42,7 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
       "/patients/:id",
       "/doctors",
       "/settings",
+      "/pharmacy",
     ],
     defaultRoute: "/dashboard",
     sidebarItems: [
@@ -48,6 +52,7 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
       "Appointments",
       "Patients",
       "Doctors",
+      "Pharmacy",
       "Settings",
     ],
     actions: [
@@ -65,6 +70,9 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
       "doctors:manage",
       "billing:view",
       "crm:access",
+      "pharmacy:view",
+      "pharmacy:manage",
+      "pharmacy:billing",
     ],
   },
   doctor: {
@@ -117,13 +125,20 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
       "billing:view",
     ],
   },
+  pharmacist: {
+    label: "Pharmacist",
+    description: "Pharmacy inventory & billing",
+    allowedRoutes: ["/pharmacy"],
+    defaultRoute: "/pharmacy",
+    sidebarItems: ["Pharmacy"],
+    actions: ["pharmacy:view", "pharmacy:manage", "pharmacy:billing"],
+  },
 };
 
 /** Check if a given path is allowed for the role */
 export function isRouteAllowed(role: Role, path: string): boolean {
   const config = ROLE_CONFIGS[role];
   return config.allowedRoutes.some((route) => {
-    // Convert route patterns like /patients/:id to regex
     const pattern = route.replace(/:[^/]+/g, "[^/]+");
     return new RegExp(`^${pattern}$`).test(path);
   });

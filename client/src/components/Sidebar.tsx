@@ -11,6 +11,7 @@ import {
   Shield,
   ChevronDown,
   LogOut,
+  Pill,
 } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
 import { Role, ROLE_CONFIGS } from "@/lib/roles";
@@ -25,12 +26,14 @@ const ROLE_ICONS: Record<Role, string> = {
   admin: "A",
   doctor: "D",
   receptionist: "R",
+  pharmacist: "P",
 };
 
 const ROLE_COLORS: Record<Role, string> = {
   admin: "bg-teal-500",
   doctor: "bg-emerald-500",
   receptionist: "bg-cyan-500",
+  pharmacist: "bg-violet-500",
 };
 
 const ALL_MENU_ITEMS = [
@@ -40,6 +43,7 @@ const ALL_MENU_ITEMS = [
   { label: "Appointments",    icon: Calendar,         href: "/appointments" },
   { label: "Patients",        icon: Users,            href: "/patients" },
   { label: "Doctors",         icon: Stethoscope,      href: "/doctors" },
+  { label: "Pharmacy",        icon: Pill,             href: "/pharmacy" },
   { label: "Settings",        icon: Settings,         href: "/settings" },
 ];
 
