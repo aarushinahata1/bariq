@@ -664,6 +664,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // DELETE /api/prescriptions/:id — delete a prescription
+  app.delete("/api/prescriptions/:id", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const [deleted] = await db.delete(prescriptions)
+        .where(and(eq(prescriptions.id, id), eq(prescriptions.clinicId, req.session.clinicId!)))
+        .returning();
+      if (!deleted) return res.status(404).json({ message: "Prescription not found" });
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to delete prescription" });
+    }
+  });
+
   // ── DASHBOARD ─────────────────────────────────────────────────────────────
 
   app.get(api.dashboard.stats.path, requireAuth, async (req, res) => {
@@ -1577,14 +1592,51 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // POST /api/admin/payments — manually record a payment and immediately activate the clinic
+  app.post("/api/admin/payments", requireSuperAdmin, async (req, res) => {
+    try {
+      const { clinicId, planType, amount, utr, notes } = req.body;
+      if (!clinicId || !planType) return res.status(400).json({ message: "clinicId and planType are required" });
+
+      const subEnds = new Date();
+      if (planType === "quarterly") subEnds.setMonth(subEnds.getMonth() + 3);
+      else if (planType === "annual") subEnds.setFullYear(subEnds.getFullYear() + 1);
+      else subEnds.setMonth(subEnds.getMonth() + 1);
+
+      const amountPaise = Math.round(Number(amount) || 0);
+
+      const [payment] = await db.insert(clinicPayments).values({
+        clinicId: Number(clinicId),
+        amount: amountPaise,
+        planType,
+        utr: utr?.trim() || null,
+        notes: notes?.trim() || null,
+        status: "approved",
+        paidAt: new Date(),
+      }).returning();
+
+      await db.update(clinics)
+        .set({ planStatus: "active", subscriptionEndsAt: subEnds })
+        .where(eq(clinics.id, Number(clinicId)));
+
+      res.status(201).json(payment);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to record payment" });
+    }
+  });
+
   app.patch("/api/admin/clinics/:id", requireSuperAdmin, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { action, days } = req.body;
+      const { action, days, plan } = req.body;
 
       let updates: Record<string, any> = {};
       if (action === "activate") {
-        const subEnds = new Date(); subEnds.setMonth(subEnds.getMonth() + 1);
+        const subEnds = new Date();
+        if (plan === "quarterly") subEnds.setMonth(subEnds.getMonth() + 3);
+        else if (plan === "annual") subEnds.setFullYear(subEnds.getFullYear() + 1);
+        else subEnds.setMonth(subEnds.getMonth() + 1);
         updates = { planStatus: "active", subscriptionEndsAt: subEnds };
       } else if (action === "extend-trial") {
         const trialEnds = new Date(); trialEnds.setDate(trialEnds.getDate() + (days || 7));

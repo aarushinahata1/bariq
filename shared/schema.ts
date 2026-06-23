@@ -107,6 +107,12 @@ export const patients = pgTable("patients", {
   status: text("status").default("lead"),
   funnelStage: text("funnel_stage").default("new"),
   lastContactedAt: timestamp("last_contacted_at"),
+  // Patient demographics for clinical use
+  dateOfBirth: date("date_of_birth"),
+  gender: text("gender"),
+  bloodGroup: text("blood_group"),
+  allergies: text("allergies"),
+  address: text("address"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 }, (t) => ({
   clinicIdx: index("patients_clinic_id_idx").on(t.clinicId),
@@ -149,6 +155,7 @@ export const appointments = pgTable("appointments", {
   checkInTime: timestamp("check_in_time"),
   consultationStartTime: timestamp("consultation_start_time"),
   completedAt: timestamp("completed_at"),
+  vitals: jsonb("vitals").$type<{ bp?: string; pulse?: number; temperature?: number; weight?: number; spO2?: number; height?: number }>(),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 }, (t) => ({
   clinicDateIdx: index("appointments_clinic_date_idx").on(t.clinicId, t.date),
