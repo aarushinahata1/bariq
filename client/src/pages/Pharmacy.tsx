@@ -17,9 +17,10 @@ import {
   Edit2, Trash2, X, ShoppingCart, Printer, IndianRupee,
   ChevronRight, RefreshCw, BarChart2, Clock, CheckCircle,
   PackagePlus, FileText, ChevronDown, ChevronUp,
+  AlertOctagon, ClipboardList, ListChecks, ArrowUpDown, Truck,
 } from "lucide-react";
 
-type Tab = "dashboard" | "inventory" | "billing" | "bills";
+type Tab = "dashboard" | "inventory" | "billing" | "bills" | "alerts" | "reorder";
 
 const CATEGORIES = [
   "General", "Antibiotic", "Analgesic", "Antacid", "Antidiabetic",
@@ -34,7 +35,8 @@ interface Medicine {
   id: number; clinicId: number; name: string; genericName?: string; category: string;
   manufacturer?: string; batchNo?: string; expiryDate?: string;
   costPrice: number; sellingPrice: number; stockQty: number; minStockQty: number;
-  unit: string; hsnCode?: string; gstPercent: number; isActive: boolean; createdAt?: string;
+  unit: string; hsnCode?: string; gstPercent: number; isActive: boolean;
+  supplierName?: string; reorderQty?: number; createdAt?: string;
 }
 
 interface CartItem {
@@ -199,7 +201,7 @@ function MedicineDialog({ open, onClose, medicine }: {
   const empty = {
     name: "", genericName: "", category: "General", manufacturer: "", batchNo: "",
     expiryDate: "", costPrice: "", sellingPrice: "", stockQty: "", minStockQty: "10",
-    unit: "Strip", hsnCode: "", gstPercent: "12",
+    unit: "Strip", hsnCode: "", gstPercent: "12", supplierName: "", reorderQty: "",
   };
   const [form, setForm] = useState(empty);
 
@@ -212,6 +214,7 @@ function MedicineDialog({ open, onClose, medicine }: {
         costPrice: String(medicine.costPrice / 100), sellingPrice: String(medicine.sellingPrice / 100),
         stockQty: String(medicine.stockQty), minStockQty: String(medicine.minStockQty),
         unit: medicine.unit, hsnCode: medicine.hsnCode ?? "", gstPercent: String(medicine.gstPercent),
+        supplierName: medicine.supplierName ?? "", reorderQty: medicine.reorderQty ? String(medicine.reorderQty) : "",
       } : empty);
     }
   }, [open, medicine]);
@@ -227,6 +230,8 @@ function MedicineDialog({ open, onClose, medicine }: {
         stockQty: parseInt(form.stockQty || "0"),
         minStockQty: parseInt(form.minStockQty || "10"),
         gstPercent: parseInt(form.gstPercent || "12"),
+        reorderQty: form.reorderQty ? parseInt(form.reorderQty) : null,
+        supplierName: form.supplierName.trim() || null,
       };
       const url = isEdit ? `/api/pharmacy/medicines/${medicine!.id}` : "/api/pharmacy/medicines";
       const r = await fetch(url, {
@@ -292,6 +297,8 @@ function MedicineDialog({ open, onClose, medicine }: {
           {field("Stock Qty", "stockQty", { type: "number", required: true })}
           {field("Min Stock Alert", "minStockQty", { type: "number" })}
           {field("Expiry Date", "expiryDate", { type: "date" })}
+          {field("Supplier / Vendor", "supplierName", { placeholder: "e.g. Cipla Distributor" })}
+          {field("Reorder Qty", "reorderQty", { type: "number", placeholder: "e.g. 100" })}
           <div>
             <Label className="text-xs font-semibold text-slate-600 mb-1 block">GST %</Label>
             <Select value={form.gstPercent} onValueChange={v => set("gstPercent", v)}>
@@ -404,6 +411,347 @@ function RxImportSection({ patientId, medicines, onAddToCart }: {
   );
 }
 
+// ── Alerts Tab ──────────────────────────────────────────────────────────────
+
+function AlertsTab({ medicines, today, onRestock, onDelete, onGoToInventory }: {
+  medicines: Medicine[]; today: string;
+  onRestock: (m: Medicine) => void;
+  onDelete: (id: number) => void;
+  onGoToInventory: () => void;
+}) {
+  const in7 = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+  const in90 = new Date(Date.now() + 90 * 86400000).toISOString().split("T")[0];
+
+  const expired = medicines.filter(m => m.expiryDate && m.expiryDate < today).sort((a, b) => (a.expiryDate ?? "").localeCompare(b.expiryDate ?? ""));
+  const critical = medicines.filter(m => m.expiryDate && m.expiryDate >= today && m.expiryDate <= in7).sort((a, b) => (a.expiryDate ?? "").localeCompare(b.expiryDate ?? ""));
+  const warning = medicines.filter(m => m.expiryDate && m.expiryDate > in7 && m.expiryDate <= in30).sort((a, b) => (a.expiryDate ?? "").localeCompare(b.expiryDate ?? ""));
+  const notice = medicines.filter(m => m.expiryDate && m.expiryDate > in30 && m.expiryDate <= in90).sort((a, b) => (a.expiryDate ?? "").localeCompare(b.expiryDate ?? ""));
+  const lowStock = medicines.filter(m => m.stockQty <= m.minStockQty && m.isActive);
+
+  const total = expired.length + critical.length + warning.length + notice.length + lowStock.length;
+
+  if (total === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+          <CheckCircle className="w-8 h-8 text-green-500" />
+        </div>
+        <h3 className="font-semibold text-slate-700 text-lg mb-1">All Clear!</h3>
+        <p className="text-slate-400 text-sm">No expiry or stock alerts right now.</p>
+      </div>
+    );
+  }
+
+  function MedRow({ m, accent, badge }: { m: Medicine; accent: string; badge: string }) {
+    return (
+      <div className={cn("flex items-center gap-3 bg-white rounded-xl px-3 py-2.5 border", accent)}>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-semibold text-slate-900">{m.name}</p>
+            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full", badge)}>{m.category}</span>
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {m.batchNo && <span>Batch: {m.batchNo} · </span>}
+            {m.stockQty} {m.unit}s in stock
+            {m.expiryDate && <span> · Exp: {format(new Date(m.expiryDate), "dd MMM yyyy")}</span>}
+            {m.supplierName && <span> · {m.supplierName}</span>}
+          </p>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => onRestock(m)}
+            title="Add stock"
+            className="h-7 px-2 rounded-lg text-xs font-semibold bg-violet-50 text-violet-700 hover:bg-violet-100 flex items-center gap-1 transition-colors"
+          >
+            <PackagePlus className="w-3 h-3" /> Restock
+          </button>
+          <button
+            onClick={() => onDelete(m.id)}
+            title="Remove from inventory"
+            className="h-7 w-7 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-colors"
+          >
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  function Section({ title, items, colorClass, badgeClass, icon }: {
+    title: string; items: Medicine[]; colorClass: string; badgeClass: string; icon: React.ReactNode;
+  }) {
+    const [show, setShow] = useState(true);
+    if (items.length === 0) return null;
+    return (
+      <div className={cn("rounded-2xl border p-4 space-y-2", colorClass)}>
+        <button onClick={() => setShow(v => !v)} className="w-full flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            {icon}
+            <p className="font-semibold text-sm">{title}</p>
+            <span className="font-bold text-xs bg-white/60 px-1.5 py-0.5 rounded-full">{items.length}</span>
+          </div>
+          {show ? <ChevronUp className="w-4 h-4 opacity-60" /> : <ChevronDown className="w-4 h-4 opacity-60" />}
+        </button>
+        {show && (
+          <div className="space-y-1.5 mt-1">
+            {items.map(m => <MedRow key={m.id} m={m} accent="border-slate-100" badge={badgeClass} />)}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-slate-500">{total} alert{total !== 1 ? "s" : ""} need attention</p>
+        <button onClick={onGoToInventory} className="text-xs text-violet-700 font-medium hover:text-violet-900 flex items-center gap-1">
+          View Inventory <ChevronRight className="w-3 h-3" />
+        </button>
+      </div>
+      <Section
+        title="Expired — Remove from Shelf"
+        items={expired}
+        colorClass="bg-red-50 border-red-200 text-red-800"
+        badgeClass="bg-red-100 text-red-700"
+        icon={<AlertOctagon className="w-4 h-4 text-red-500" />}
+      />
+      <Section
+        title="Expiring Within 7 Days"
+        items={critical}
+        colorClass="bg-orange-50 border-orange-200 text-orange-800"
+        badgeClass="bg-orange-100 text-orange-700"
+        icon={<AlertTriangle className="w-4 h-4 text-orange-500" />}
+      />
+      <Section
+        title="Expiring in 7–30 Days — Sell First (FEFO)"
+        items={warning}
+        colorClass="bg-amber-50 border-amber-200 text-amber-800"
+        badgeClass="bg-amber-100 text-amber-700"
+        icon={<Clock className="w-4 h-4 text-amber-500" />}
+      />
+      <Section
+        title="Expiring in 30–90 Days"
+        items={notice}
+        colorClass="bg-yellow-50 border-yellow-200 text-yellow-800"
+        badgeClass="bg-yellow-100 text-yellow-700"
+        icon={<Clock className="w-4 h-4 text-yellow-500" />}
+      />
+      <Section
+        title="Low Stock — Below Minimum Level"
+        items={lowStock}
+        colorClass="bg-blue-50 border-blue-200 text-blue-800"
+        badgeClass="bg-blue-100 text-blue-700"
+        icon={<Package className="w-4 h-4 text-blue-500" />}
+      />
+    </div>
+  );
+}
+
+// ── Reorder Tab ──────────────────────────────────────────────────────────────
+
+function buildReorderHtml(items: Medicine[], clinicProfile?: Record<string, any>): string {
+  const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  const cName = esc(clinicProfile?.name || "Pharmacy");
+  const rows = items.map(m => {
+    const suggested = m.reorderQty ?? Math.max(m.minStockQty * 2 - m.stockQty, m.minStockQty);
+    return `<tr>
+      <td>${esc(m.name)}</td>
+      <td>${esc(m.genericName || "—")}</td>
+      <td>${esc(m.category)}</td>
+      <td>${esc(m.batchNo || "—")}</td>
+      <td>${m.stockQty} ${esc(m.unit)}</td>
+      <td>${m.minStockQty}</td>
+      <td><strong>${suggested} ${esc(m.unit)}</strong></td>
+      <td>${esc(m.supplierName || "—")}</td>
+    </tr>`;
+  }).join("");
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Reorder List</title>
+<style>
+body{font-family:sans-serif;padding:24px;font-size:12px}
+.cn{font-size:18px;font-weight:bold;text-align:center;margin-bottom:4px}
+.cs{text-align:center;font-size:11px;color:#64748b;margin-bottom:2px}
+h2{text-align:center;font-size:14px;color:#475569;margin:12px 0 4px;letter-spacing:.5px}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th{background:#f1f5f9;padding:6px 8px;text-align:left;font-size:10px;font-weight:600;border:1px solid #e2e8f0}
+td{padding:5px 8px;border:1px solid #e2e8f0;vertical-align:top}
+tr:nth-child(even){background:#f8fafc}
+.footer{text-align:center;font-size:10px;color:#94a3b8;margin-top:16px}
+</style></head><body>
+<div class="cn">${cName}</div>
+<div class="cs">Purchase Order / Reorder List</div>
+<div class="cs">Date: ${today}</div>
+<table>
+  <thead><tr><th>Medicine</th><th>Generic</th><th>Category</th><th>Batch</th><th>In Stock</th><th>Min Level</th><th>Order Qty</th><th>Supplier</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+<div class="footer">${items.length} item(s) · Generated by ${cName} Pharmacy System</div>
+<script>window.onload=()=>window.print();</script>
+</body></html>`;
+}
+
+function ReorderTab({ medicines, today, settings, onRestock }: {
+  medicines: Medicine[]; today: string; settings?: Record<string, any>;
+  onRestock: (m: Medicine) => void;
+}) {
+  const [orderedIds, setOrderedIds] = useState<Set<number>>(new Set());
+  const [sortBy, setSortBy] = useState<"stock" | "expiry" | "name">("stock");
+
+  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+
+  const needsReorder = useMemo(() => {
+    const list = medicines.filter(m =>
+      m.isActive && (
+        m.stockQty <= m.minStockQty ||
+        (m.expiryDate && m.expiryDate <= in30)
+      )
+    );
+    if (sortBy === "stock") return [...list].sort((a, b) => a.stockQty - b.stockQty);
+    if (sortBy === "expiry") return [...list].sort((a, b) => {
+      if (!a.expiryDate && !b.expiryDate) return 0;
+      if (!a.expiryDate) return 1;
+      if (!b.expiryDate) return -1;
+      return a.expiryDate.localeCompare(b.expiryDate);
+    });
+    return [...list].sort((a, b) => a.name.localeCompare(b.name));
+  }, [medicines, sortBy, in30]);
+
+  const pendingItems = needsReorder.filter(m => !orderedIds.has(m.id));
+  const doneItems = needsReorder.filter(m => orderedIds.has(m.id));
+
+  function toggleOrdered(id: number) {
+    setOrderedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function printReorderList() {
+    const toPrint = pendingItems.length > 0 ? pendingItems : needsReorder;
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(buildReorderHtml(toPrint, settings?.clinicProfile)); w.document.close(); }
+  }
+
+  if (needsReorder.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
+          <CheckCircle className="w-8 h-8 text-green-500" />
+        </div>
+        <h3 className="font-semibold text-slate-700 text-lg mb-1">Stock levels are healthy!</h3>
+        <p className="text-slate-400 text-sm">No medicines need reordering right now.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <p className="text-sm text-slate-600">
+            <span className="font-bold text-slate-900">{pendingItems.length}</span> to order
+            {doneItems.length > 0 && <span className="text-green-600 ml-2">· {doneItems.length} marked ordered</span>}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+            {(["stock", "expiry", "name"] as const).map(s => (
+              <button key={s} onClick={() => setSortBy(s)}
+                className={cn("px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all",
+                  sortBy === s ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+              >{s === "stock" ? "Low Stock" : s === "expiry" ? "Expiry" : "Name"}</button>
+            ))}
+          </div>
+          <Button size="sm" variant="outline" onClick={printReorderList} className="rounded-xl h-9 gap-1.5">
+            <Printer className="w-3.5 h-3.5" /> Print Order
+          </Button>
+        </div>
+      </div>
+
+      {/* Pending items */}
+      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+        <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide px-4 py-2.5 bg-slate-50 border-b border-slate-100"
+          style={{ gridTemplateColumns: "1fr 80px 80px 100px 120px 100px" }}>
+          <span>Medicine</span>
+          <span className="text-right">In Stock</span>
+          <span className="text-right">Min Level</span>
+          <span className="text-right">Order Qty</span>
+          <span>Supplier</span>
+          <span className="text-right">Action</span>
+        </div>
+        <div className="divide-y divide-slate-50">
+          {pendingItems.length === 0 ? (
+            <p className="text-center text-slate-400 text-sm py-8">All items marked as ordered</p>
+          ) : pendingItems.map(m => {
+            const isLow = m.stockQty <= m.minStockQty;
+            const isExpiring = m.expiryDate && m.expiryDate <= in30;
+            const isExpired = m.expiryDate && m.expiryDate < today;
+            const suggested = m.reorderQty ?? Math.max(m.minStockQty * 2 - m.stockQty, m.minStockQty);
+            return (
+              <div key={m.id} className="grid items-center px-4 py-3 hover:bg-slate-50 transition-colors"
+                style={{ gridTemplateColumns: "1fr 80px 80px 100px 120px 100px" }}>
+                <div>
+                  <p className="font-semibold text-slate-900 text-sm">{m.name}</p>
+                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                    {m.batchNo && <span className="text-[10px] text-slate-400">Batch: {m.batchNo}</span>}
+                    {isExpired && <span className="text-[10px] bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded-full">EXPIRED</span>}
+                    {!isExpired && isExpiring && <span className="text-[10px] bg-amber-100 text-amber-600 font-bold px-1.5 py-0.5 rounded-full">Exp {format(new Date(m.expiryDate!), "dd MMM")}</span>}
+                    {isLow && !isExpired && <span className="text-[10px] bg-red-50 text-red-500 font-semibold px-1.5 py-0.5 rounded-full">Low Stock</span>}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <span className={cn("font-bold text-sm", isLow ? "text-red-600" : "text-slate-700")}>{m.stockQty}</span>
+                  <p className="text-[10px] text-slate-400">{m.unit}s</p>
+                </div>
+                <div className="text-right text-sm text-slate-500">{m.minStockQty}</div>
+                <div className="text-right">
+                  <span className="font-bold text-violet-700 text-sm">{suggested}</span>
+                  <p className="text-[10px] text-slate-400">{m.unit}s</p>
+                </div>
+                <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">—</span>}</div>
+                <div className="flex items-center justify-end gap-1">
+                  <button onClick={() => onRestock(m)} title="Add stock" className="h-7 w-7 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors">
+                    <PackagePlus className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={() => toggleOrdered(m.id)}
+                    className="h-7 px-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-green-100 hover:text-green-700 transition-colors whitespace-nowrap"
+                  >
+                    Mark Ordered
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Ordered items */}
+      {doneItems.length > 0 && (
+        <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
+          <p className="text-sm font-semibold text-green-800 mb-2 flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-green-500" /> Ordered ({doneItems.length})
+          </p>
+          <div className="space-y-1.5">
+            {doneItems.map(m => (
+              <div key={m.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-green-100">
+                <div>
+                  <p className="text-sm font-semibold text-slate-700 line-through opacity-60">{m.name}</p>
+                  {m.supplierName && <p className="text-xs text-slate-400">{m.supplierName}</p>}
+                </div>
+                <button onClick={() => toggleOrdered(m.id)} className="text-xs text-slate-400 hover:text-slate-600">Undo</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Billing Tab ─────────────────────────────────────────────────────────────
 
 function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?: Record<string, any> }) {
@@ -432,10 +780,19 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
   const filtered = useMemo(() => {
     if (!search.trim()) return [];
     const q = search.toLowerCase();
-    return medicines.filter(m =>
-      m.isActive && m.stockQty > 0 &&
-      (m.name.toLowerCase().includes(q) || (m.genericName ?? "").toLowerCase().includes(q))
-    ).slice(0, 8);
+    return medicines
+      .filter(m =>
+        m.isActive && m.stockQty > 0 &&
+        (m.name.toLowerCase().includes(q) || (m.genericName ?? "").toLowerCase().includes(q))
+      )
+      // FEFO: sort by expiry date soonest-first so pharmacist auto-grabs batch expiring earliest
+      .sort((a, b) => {
+        if (!a.expiryDate && !b.expiryDate) return 0;
+        if (!a.expiryDate) return 1;
+        if (!b.expiryDate) return -1;
+        return a.expiryDate.localeCompare(b.expiryDate);
+      })
+      .slice(0, 10);
   }, [search, medicines]);
 
   function calcItem(item: CartItem): CartItem {
@@ -706,6 +1063,7 @@ export default function Pharmacy() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [showLowStock, setShowLowStock] = useState(false);
+  const [inventorySortBy, setInventorySortBy] = useState<"name" | "expiry" | "stock">("name");
   const [billSearch, setBillSearch] = useState("");
   const [billDateFilter, setBillDateFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [medicineDialog, setMedicineDialog] = useState<{ open: boolean; medicine?: Medicine | null }>({ open: false });
@@ -749,8 +1107,18 @@ export default function Pharmacy() {
     }
     if (categoryFilter !== "all") list = list.filter(m => m.category === categoryFilter);
     if (showLowStock) list = list.filter(m => m.stockQty <= m.minStockQty);
+    if (inventorySortBy === "expiry") {
+      list = [...list].sort((a, b) => {
+        if (!a.expiryDate && !b.expiryDate) return a.name.localeCompare(b.name);
+        if (!a.expiryDate) return 1;
+        if (!b.expiryDate) return -1;
+        return a.expiryDate.localeCompare(b.expiryDate);
+      });
+    } else if (inventorySortBy === "stock") {
+      list = [...list].sort((a, b) => a.stockQty - b.stockQty);
+    }
     return list;
-  }, [medicines, search, categoryFilter, showLowStock]);
+  }, [medicines, search, categoryFilter, showLowStock, inventorySortBy]);
 
   const filteredBills = useMemo(() => {
     let result = bills;
@@ -774,6 +1142,14 @@ export default function Pharmacy() {
   }, [bills, billSearch, billDateFilter]);
 
   const today = format(new Date(), "yyyy-MM-dd");
+  const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+
+  const alertCount = useMemo(() => {
+    const expired = medicines.filter(m => m.expiryDate && m.expiryDate < today).length;
+    const expiring = medicines.filter(m => m.expiryDate && m.expiryDate >= today && m.expiryDate <= in30).length;
+    const low = medicines.filter(m => m.stockQty <= m.minStockQty && m.isActive).length;
+    return expired + expiring + low;
+  }, [medicines, today, in30]);
 
   return (
     <Layout>
@@ -798,11 +1174,20 @@ export default function Pharmacy() {
 
         {/* Tabs */}
         <Tabs value={tab} onValueChange={v => setTab(v as Tab)}>
-          <TabsList className="grid grid-cols-4 w-full sm:w-auto sm:inline-grid rounded-xl">
-            <TabsTrigger value="dashboard" className="rounded-lg text-xs gap-1"><BarChart2 className="w-3.5 h-3.5" />Dashboard</TabsTrigger>
-            <TabsTrigger value="inventory" className="rounded-lg text-xs gap-1"><Package className="w-3.5 h-3.5" />Inventory</TabsTrigger>
-            <TabsTrigger value="billing" className="rounded-lg text-xs gap-1"><ShoppingCart className="w-3.5 h-3.5" />New Bill</TabsTrigger>
-            <TabsTrigger value="bills" className="rounded-lg text-xs gap-1"><Clock className="w-3.5 h-3.5" />History</TabsTrigger>
+          <TabsList className="flex w-full overflow-x-auto rounded-xl gap-0 h-auto p-1">
+            <TabsTrigger value="dashboard" className="rounded-lg text-xs gap-1 shrink-0"><BarChart2 className="w-3.5 h-3.5" />Dashboard</TabsTrigger>
+            <TabsTrigger value="inventory" className="rounded-lg text-xs gap-1 shrink-0"><Package className="w-3.5 h-3.5" />Inventory</TabsTrigger>
+            <TabsTrigger value="billing" className="rounded-lg text-xs gap-1 shrink-0"><ShoppingCart className="w-3.5 h-3.5" />New Bill</TabsTrigger>
+            <TabsTrigger value="bills" className="rounded-lg text-xs gap-1 shrink-0"><Clock className="w-3.5 h-3.5" />History</TabsTrigger>
+            <TabsTrigger value="alerts" className="rounded-lg text-xs gap-1 shrink-0 relative">
+              <AlertOctagon className="w-3.5 h-3.5" />Alerts
+              {alertCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">
+                  {alertCount > 99 ? "99+" : alertCount}
+                </span>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="reorder" className="rounded-lg text-xs gap-1 shrink-0"><ListChecks className="w-3.5 h-3.5" />Reorder</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -830,6 +1215,31 @@ export default function Pharmacy() {
               })}
             </div>
 
+            {/* Expired medicines alert */}
+            {medicines.filter(m => m.expiryDate && m.expiryDate < today).length > 0 && (
+              <div className="bg-red-100 border border-red-300 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <AlertOctagon className="w-4 h-4 text-red-600" />
+                    <p className="font-bold text-red-900 text-sm">
+                      {medicines.filter(m => m.expiryDate && m.expiryDate < today).length} Medicine(s) EXPIRED — Remove from shelf immediately
+                    </p>
+                  </div>
+                  <button onClick={() => setTab("alerts")} className="text-xs text-red-700 font-semibold hover:text-red-900 flex items-center gap-1">
+                    View <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {medicines.filter(m => m.expiryDate && m.expiryDate < today).slice(0, 3).map(m => (
+                    <span key={m.id} className="text-xs bg-white border border-red-200 text-red-700 font-semibold px-2 py-1 rounded-lg">{m.name}</span>
+                  ))}
+                  {medicines.filter(m => m.expiryDate && m.expiryDate < today).length > 3 && (
+                    <span className="text-xs text-red-500">+{medicines.filter(m => m.expiryDate && m.expiryDate < today).length - 3} more</span>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Low stock alert */}
             {(stats?.lowStockCount ?? 0) > 0 && (
               <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
@@ -838,7 +1248,7 @@ export default function Pharmacy() {
                     <AlertTriangle className="w-4 h-4 text-red-500" />
                     <p className="font-semibold text-red-800 text-sm">Low Stock ({stats?.lowStockCount})</p>
                   </div>
-                  <button onClick={() => { setTab("inventory"); setShowLowStock(true); }}
+                  <button onClick={() => setTab("alerts")}
                     className="text-xs text-red-700 hover:text-red-900 font-medium flex items-center gap-1">
                     View all <ChevronRight className="w-3 h-3" />
                   </button>
@@ -941,6 +1351,15 @@ export default function Pharmacy() {
               >
                 <AlertTriangle className="w-3.5 h-3.5" /> Low Stock
               </button>
+              <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+                <ArrowUpDown className="w-3 h-3 text-slate-400 ml-1" />
+                {(["name", "expiry", "stock"] as const).map(s => (
+                  <button key={s} onClick={() => setInventorySortBy(s)}
+                    className={cn("px-2.5 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all",
+                      inventorySortBy === s ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+                  >{s === "expiry" ? "FEFO" : s === "stock" ? "Stock" : "A–Z"}</button>
+                ))}
+              </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
@@ -952,8 +1371,8 @@ export default function Pharmacy() {
                       <th className="px-4 py-3 text-left font-semibold">Category</th>
                       <th className="px-4 py-3 text-right font-semibold">Stock</th>
                       <th className="px-4 py-3 text-right font-semibold">MRP</th>
-                      <th className="px-4 py-3 text-left font-semibold">Expiry</th>
-                      <th className="px-4 py-3 text-left font-semibold">GST</th>
+                      <th className="px-4 py-3 text-left font-semibold">Batch / Expiry</th>
+                      <th className="px-4 py-3 text-left font-semibold">Supplier</th>
                       <th className="px-4 py-3 text-right font-semibold">Actions</th>
                     </tr>
                   </thead>
@@ -982,15 +1401,16 @@ export default function Pharmacy() {
                           </td>
                           <td className="px-4 py-3 text-right font-semibold text-slate-900">₹{rupees(m.sellingPrice)}</td>
                           <td className="px-4 py-3">
+                            {m.batchNo && <p className="text-xs text-slate-400 mb-0.5">Batch: {m.batchNo}</p>}
                             {m.expiryDate ? (
                               <span className={cn("text-xs font-semibold", isExpired ? "text-red-600" : isExpiring ? "text-amber-600" : "text-slate-500")}>
                                 {format(new Date(m.expiryDate), "MMM yyyy")}
-                                {isExpired && " · Expired"}
-                                {!isExpired && isExpiring && " · Soon"}
+                                {isExpired && <span className="ml-1 bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full text-[10px] font-bold">EXPIRED</span>}
+                                {!isExpired && isExpiring && <span className="ml-1 bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full text-[10px] font-bold">Soon</span>}
                               </span>
-                            ) : <span className="text-slate-300">—</span>}
+                            ) : <span className="text-slate-300 text-xs">—</span>}
                           </td>
-                          <td className="px-4 py-3 text-slate-500">{m.gstPercent}%</td>
+                          <td className="px-4 py-3 text-xs text-slate-500">{m.supplierName || <span className="text-slate-300">—</span>}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-1">
                               <button
@@ -1022,6 +1442,27 @@ export default function Pharmacy() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── ALERTS ── */}
+        {tab === "alerts" && (
+          <AlertsTab
+            medicines={medicines}
+            today={today}
+            onRestock={m => setRestockDialog({ open: true, medicine: m })}
+            onDelete={id => deleteMedicine.mutate(id)}
+            onGoToInventory={() => setTab("inventory")}
+          />
+        )}
+
+        {/* ── REORDER ── */}
+        {tab === "reorder" && (
+          <ReorderTab
+            medicines={medicines}
+            today={today}
+            settings={settings}
+            onRestock={m => setRestockDialog({ open: true, medicine: m })}
+          />
         )}
 
         {/* ── BILLING ── */}

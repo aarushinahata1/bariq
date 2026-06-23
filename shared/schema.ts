@@ -204,6 +204,8 @@ export const medicines = pgTable("medicines", {
   hsnCode: text("hsn_code"),
   gstPercent: integer("gst_percent").notNull().default(12),
   isActive: boolean("is_active").notNull().default(true),
+  supplierName: text("supplier_name"),
+  reorderQty: integer("reorder_qty"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 }, (t) => ({
   clinicIdx: index("medicines_clinic_id_idx").on(t.clinicId),

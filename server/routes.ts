@@ -1237,8 +1237,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/medicines", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent } = req.body;
-      const [med] = await db.insert(medicines).values({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, clinicId }).returning();
+      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty } = req.body;
+      const [med] = await db.insert(medicines).values({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty, clinicId }).returning();
       res.json(med);
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "Failed to create medicine" });
@@ -1250,9 +1250,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const clinicId = req.session.clinicId!;
       const { id } = req.params;
-      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent } = req.body;
+      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty } = req.body;
       const [med] = await db.update(medicines)
-        .set({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent })
+        .set({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty })
         .where(and(eq(medicines.id, Number(id)), eq(medicines.clinicId, clinicId))).returning();
       if (!med) return res.status(404).json({ message: "Medicine not found" });
       res.json(med);
