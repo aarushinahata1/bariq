@@ -15,13 +15,16 @@ import {
   Pill, Plus, Search, AlertTriangle, TrendingUp, Package,
   Edit2, Trash2, X, ShoppingCart, Printer, IndianRupee,
   ChevronRight, RefreshCw, BarChart2, Clock, CheckCircle,
+  PackagePlus, FileText, ChevronDown, ChevronUp,
 } from "lucide-react";
 
 type Tab = "dashboard" | "inventory" | "billing" | "bills";
 
-const CATEGORIES = ["General", "Antibiotic", "Analgesic", "Antacid", "Antidiabetic",
+const CATEGORIES = [
+  "General", "Antibiotic", "Analgesic", "Antacid", "Antidiabetic",
   "Antihypertensive", "Vitamin", "Antihistamine", "Antifungal", "Cardiovascular",
-  "Dermatology", "Eye/Ear Drops", "Injection", "Syrup", "Other"];
+  "Dermatology", "Eye/Ear Drops", "Injection", "Syrup", "Other",
+];
 const UNITS = ["Strip", "Tablet", "Capsule", "Bottle", "Vial", "Sachet", "Tube", "Cream", "Ointment", "Drops", "Injection", "Syrup"];
 const GST_OPTIONS = [0, 5, 12, 18];
 const PAYMENT_METHODS = ["Cash", "UPI", "Card", "Online"];
@@ -52,21 +55,151 @@ interface Stats {
 
 function rupees(paise: number) { return (paise / 100).toFixed(2); }
 
+// ── Printable bill builder (clinic-branded) ─────────────────────────────────
+
+function buildBillHtml(bill: PharmacyBill, clinicProfile?: Record<string, any>): string {
+  const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const rows = (bill.items as CartItem[]).map(i =>
+    `<tr><td>${esc(i.name)}</td><td style="text-align:center">${i.qty} ${esc(i.unit)}</td><td style="text-align:right">₹${rupees(i.sellingPrice)}</td><td style="text-align:right">${i.gstPercent}%</td><td style="text-align:right">₹${rupees(i.total)}</td></tr>`
+  ).join("");
+  const cName = esc(clinicProfile?.name || "Pharmacy");
+  const cAddr = clinicProfile?.address ? `<div class="cs">${esc(clinicProfile.address)}</div>` : "";
+  const cPhone = clinicProfile?.phone ? `<div class="cs">Ph: ${esc(clinicProfile.phone)}</div>` : "";
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Bill #${bill.id}</title>
+<style>
+body{font-family:sans-serif;max-width:480px;margin:0 auto;padding:20px;font-size:13px}
+.cn{font-size:18px;font-weight:bold;text-align:center;margin-bottom:2px}
+.cs{text-align:center;font-size:11px;color:#64748b;margin:1px 0}
+h3{text-align:center;font-size:12px;color:#475569;margin:10px 0 4px;letter-spacing:.5px}
+p{margin:2px 0}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+th{background:#f1f5f9;padding:6px 8px;text-align:left;font-size:11px;font-weight:600}
+td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
+.bold{font-weight:bold}.right{text-align:right}
+hr{border:none;border-top:1px dashed #cbd5e1;margin:10px 0}
+</style></head><body>
+<div class="cn">${cName}</div>${cAddr}${cPhone}
+<h3>— PHARMACY RECEIPT —</h3><hr/>
+<p><strong>Bill No:</strong> #${bill.id}</p>
+<p><strong>Date:</strong> ${format(new Date(bill.createdAt), "dd MMM yyyy, h:mm a")}</p>
+<p><strong>Patient:</strong> ${esc(bill.patientName || "Walk-in")}</p>
+${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>` : ""}
+<hr/>
+<table><thead><tr><th>Medicine</th><th style="text-align:center">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">GST</th><th style="text-align:right">Amt</th></tr></thead>
+<tbody>${rows}</tbody></table>
+<hr/>
+<table><tbody>
+<tr><td>Subtotal</td><td class="right">₹${rupees(bill.subtotal)}</td></tr>
+<tr><td>GST</td><td class="right">₹${rupees(bill.gstTotal)}</td></tr>
+${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td class="right">-₹${rupees(bill.discountAmount)}</td></tr>` : ""}
+<tr class="bold"><td><strong>TOTAL</strong></td><td class="right"><strong>₹${rupees(bill.totalAmount)}</strong></td></tr>
+<tr><td>Payment</td><td class="right">${esc(bill.paymentMethod || "Cash")}</td></tr>
+</tbody></table>
+${bill.notes ? `<p style="margin-top:8px;font-size:11px;color:#475569"><em>${esc(bill.notes)}</em></p>` : ""}
+<p style="text-align:center;font-size:11px;color:#64748b;margin-top:14px">Thank you for choosing ${cName}!</p>
+<script>window.onload=()=>{window.print();}</script>
+</body></html>`;
+}
+
+// ── Restock Dialog ──────────────────────────────────────────────────────────
+
+function RestockDialog({ medicine, open, onClose }: {
+  medicine: Medicine | null; open: boolean; onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [qty, setQty] = useState("");
+
+  useEffect(() => { if (open) setQty(""); }, [open]);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const n = parseInt(qty);
+      if (!medicine || isNaN(n) || n <= 0) throw new Error("Enter a valid quantity");
+      const r = await fetch(`/api/pharmacy/medicines/${medicine.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stockQty: medicine.stockQty + n }),
+        credentials: "include",
+      });
+      if (!r.ok) throw new Error("Failed to update stock");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/medicines"] });
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/stats"] });
+      toast({ title: "Stock added", description: `${medicine?.name} +${qty} ${medicine?.unit}s` });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const newTotal = medicine && parseInt(qty) > 0 ? medicine.stockQty + parseInt(qty) : null;
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="sm:max-w-xs rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-base">Add Stock</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-1">
+          <div className="bg-slate-50 rounded-xl px-4 py-3">
+            <p className="font-semibold text-slate-800 text-sm">{medicine?.name}</p>
+            {medicine?.genericName && <p className="text-xs text-slate-400">{medicine.genericName}</p>}
+            <p className="text-xs text-slate-500 mt-1.5">
+              Current:{" "}
+              <span className={cn("font-bold", medicine && medicine.stockQty <= medicine.minStockQty ? "text-red-600" : "text-slate-700")}>
+                {medicine?.stockQty} {medicine?.unit}s
+              </span>
+              {" · "}Min alert: {medicine?.minStockQty}
+            </p>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Units to Add *</Label>
+            <Input
+              type="number" min="1" value={qty}
+              onChange={e => setQty(e.target.value)}
+              placeholder="e.g. 50"
+              className="rounded-xl h-10"
+              autoFocus
+              onKeyDown={e => e.key === "Enter" && save.mutate()}
+            />
+          </div>
+          {newTotal !== null && (
+            <p className="text-xs bg-green-50 border border-green-100 text-green-700 rounded-lg px-3 py-2">
+              New stock: <strong>{newTotal} {medicine?.unit}s</strong>
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1 rounded-xl h-10" onClick={onClose}>Cancel</Button>
+            <Button
+              className="flex-1 rounded-xl h-10 bg-violet-600 hover:bg-violet-700"
+              onClick={() => save.mutate()}
+              disabled={save.isPending || !qty || parseInt(qty) <= 0}
+            >
+              {save.isPending ? <RefreshCw className="w-4 h-4 animate-spin mr-1.5" /> : <PackagePlus className="w-4 h-4 mr-1.5" />}
+              Add Stock
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ── Medicine Form Dialog ────────────────────────────────────────────────────
 
-function MedicineDialog({
-  open, onClose, medicine,
-}: { open: boolean; onClose: () => void; medicine?: Medicine | null }) {
+function MedicineDialog({ open, onClose, medicine }: {
+  open: boolean; onClose: () => void; medicine?: Medicine | null;
+}) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const isEdit = !!medicine;
-
   const empty = {
     name: "", genericName: "", category: "General", manufacturer: "", batchNo: "",
     expiryDate: "", costPrice: "", sellingPrice: "", stockQty: "", minStockQty: "10",
     unit: "Strip", hsnCode: "", gstPercent: "12",
   };
-
   const [form, setForm] = useState(empty);
 
   useEffect(() => {
@@ -95,8 +228,11 @@ function MedicineDialog({
         gstPercent: parseInt(form.gstPercent || "12"),
       };
       const url = isEdit ? `/api/pharmacy/medicines/${medicine!.id}` : "/api/pharmacy/medicines";
-      const method = isEdit ? "PUT" : "POST";
-      const r = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "include" });
+      const r = await fetch(url, {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body), credentials: "include",
+      });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
@@ -112,13 +248,8 @@ function MedicineDialog({
   const field = (label: string, key: string, opts?: { type?: string; required?: boolean; placeholder?: string }) => (
     <div>
       <Label className="text-xs font-semibold text-slate-600 mb-1 block">{label}{opts?.required && " *"}</Label>
-      <Input
-        type={opts?.type ?? "text"}
-        value={(form as any)[key]}
-        onChange={e => set(key, e.target.value)}
-        placeholder={opts?.placeholder}
-        className="rounded-xl h-10"
-      />
+      <Input type={opts?.type ?? "text"} value={(form as any)[key]} onChange={e => set(key, e.target.value)}
+        placeholder={opts?.placeholder} className="rounded-xl h-10" />
     </div>
   );
 
@@ -131,7 +262,6 @@ function MedicineDialog({
         <div className="grid grid-cols-2 gap-3 pt-2">
           <div className="col-span-2">{field("Medicine Name", "name", { required: true, placeholder: "e.g. Paracetamol 500mg" })}</div>
           <div className="col-span-2">{field("Generic Name", "genericName", { placeholder: "e.g. Acetaminophen" })}</div>
-
           <div>
             <Label className="text-xs font-semibold text-slate-600 mb-1 block">Category *</Label>
             <Select value={form.category} onValueChange={v => set("category", v)}>
@@ -146,16 +276,12 @@ function MedicineDialog({
               <SelectContent>{UNITS.map(u => <SelectItem key={u} value={u}>{u}</SelectItem>)}</SelectContent>
             </Select>
           </div>
-
           {field("Manufacturer", "manufacturer", { placeholder: "e.g. Cipla" })}
           {field("Batch No.", "batchNo", { placeholder: "e.g. BT2024001" })}
-
           {field("Cost Price (₹)", "costPrice", { type: "number", required: true, placeholder: "0.00" })}
           {field("Selling Price (₹)", "sellingPrice", { type: "number", required: true, placeholder: "0.00" })}
-
           {field("Stock Qty", "stockQty", { type: "number", required: true })}
           {field("Min Stock Alert", "minStockQty", { type: "number" })}
-
           {field("Expiry Date", "expiryDate", { type: "date" })}
           <div>
             <Label className="text-xs font-semibold text-slate-600 mb-1 block">GST %</Label>
@@ -164,7 +290,6 @@ function MedicineDialog({
               <SelectContent>{GST_OPTIONS.map(g => <SelectItem key={g} value={String(g)}>{g}%</SelectItem>)}</SelectContent>
             </Select>
           </div>
-
           {field("HSN Code", "hsnCode", { placeholder: "e.g. 30049099" })}
         </div>
         <div className="flex gap-2 pt-2">
@@ -183,9 +308,96 @@ function MedicineDialog({
   );
 }
 
+// ── Prescription → Cart Import ──────────────────────────────────────────────
+
+function findInventoryMatch(rxName: string, meds: Medicine[]): Medicine | null {
+  if (!rxName) return null;
+  const clean = rxName.replace(/\s*\(.*?\)\s*/g, "").trim().toLowerCase();
+  const exact = meds.find(m => m.isActive && m.name.toLowerCase() === clean);
+  if (exact) return exact;
+  const words = clean.split(/\s+/).filter(w => w.length >= 3);
+  return meds.find(m => m.isActive && words.some(w => m.name.toLowerCase().includes(w))) ?? null;
+}
+
+function RxImportSection({ patientId, medicines, onAddToCart }: {
+  patientId: number; medicines: Medicine[]; onAddToCart: (med: Medicine) => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const { data: rxList = [] } = useQuery<any[]>({
+    queryKey: ["/api/prescriptions", "billing", patientId],
+    queryFn: () => fetch(`/api/prescriptions?patientId=${patientId}`, { credentials: "include" }).then(r => r.json()),
+    staleTime: 0,
+    enabled: !!patientId,
+  });
+
+  const rx = rxList[0];
+  if (!rx || !(rx.medications as any[])?.length) return null;
+
+  const items = (rx.medications as any[]).map((m: any) => ({
+    rxMed: m,
+    match: findInventoryMatch(m.name ?? "", medicines),
+  }));
+  const availCount = items.filter(i => i.match).length;
+
+  return (
+    <div className="border border-violet-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="w-full flex items-center justify-between px-3 py-2.5 bg-violet-50 hover:bg-violet-100 transition-colors"
+      >
+        <div className="flex items-center gap-2 text-sm font-semibold text-violet-800">
+          <FileText className="w-3.5 h-3.5 shrink-0" />
+          Doctor's Prescription
+          {rx.diagnosis && (
+            <span className="font-normal text-violet-500 text-xs truncate max-w-[100px]">· {rx.diagnosis}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {availCount > 0 && (
+            <span className="text-[10px] bg-violet-600 text-white rounded-full px-2 py-0.5 font-bold">
+              {availCount} in stock
+            </span>
+          )}
+          {expanded ? <ChevronUp className="w-3.5 h-3.5 text-violet-500" /> : <ChevronDown className="w-3.5 h-3.5 text-violet-500" />}
+        </div>
+      </button>
+      {expanded && (
+        <div className="bg-white p-3 space-y-1.5">
+          {items.map(({ rxMed, match }, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 border border-slate-100">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-800 leading-tight truncate">{rxMed.name}</p>
+                <p className="text-[11px] text-slate-400">
+                  {[rxMed.dosage, rxMed.frequency, rxMed.duration].filter(Boolean).join(" · ")}
+                </p>
+              </div>
+              {match ? (
+                <Button size="sm" onClick={() => onAddToCart(match)}
+                  className="h-7 px-2.5 text-xs rounded-lg bg-violet-600 hover:bg-violet-700 gap-1 shrink-0">
+                  <Plus className="w-3 h-3" /> Add
+                </Button>
+              ) : (
+                <span className="text-[11px] text-slate-400 shrink-0">Not stocked</span>
+              )}
+            </div>
+          ))}
+          {availCount > 1 && (
+            <button
+              onClick={() => items.forEach(({ match }) => match && onAddToCart(match))}
+              className="w-full text-center text-xs font-semibold text-violet-700 hover:text-violet-900 py-1 transition-colors"
+            >
+              Add all {availCount} available →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Billing Tab ─────────────────────────────────────────────────────────────
 
-function BillingTab({ medicines }: { medicines: Medicine[] }) {
+function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?: Record<string, any> }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: patients = [] } = usePatients();
@@ -200,25 +412,22 @@ function BillingTab({ medicines }: { medicines: Medicine[] }) {
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
 
+  const medStockMap = useMemo(() => {
+    const m = new Map<number, number>();
+    medicines.forEach(med => m.set(med.id, med.stockQty));
+    return m;
+  }, [medicines]);
+
+  const in30days = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+
   const filtered = useMemo(() => {
     if (!search.trim()) return [];
     const q = search.toLowerCase();
     return medicines.filter(m =>
-      m.stockQty > 0 &&
+      m.isActive && m.stockQty > 0 &&
       (m.name.toLowerCase().includes(q) || (m.genericName ?? "").toLowerCase().includes(q))
     ).slice(0, 8);
   }, [search, medicines]);
-
-  function addToCart(med: Medicine) {
-    setCart(prev => {
-      const exists = prev.find(i => i.medicineId === med.id);
-      if (exists) {
-        return prev.map(i => i.medicineId === med.id ? calcItem({ ...i, qty: i.qty + 1 }) : i);
-      }
-      return [...prev, calcItem({ medicineId: med.id, name: med.name, unit: med.unit, sellingPrice: med.sellingPrice, gstPercent: med.gstPercent, qty: 1, gstAmount: 0, total: 0 })];
-    });
-    setSearch("");
-  }
 
   function calcItem(item: CartItem): CartItem {
     const base = item.sellingPrice * item.qty;
@@ -226,8 +435,27 @@ function BillingTab({ medicines }: { medicines: Medicine[] }) {
     return { ...item, gstAmount: gstAmt, total: base + gstAmt };
   }
 
+  function addToCart(med: Medicine) {
+    const currentQtyInCart = cart.find(i => i.medicineId === med.id)?.qty ?? 0;
+    if (currentQtyInCart >= med.stockQty) {
+      toast({ title: `Only ${med.stockQty} ${med.unit}s in stock`, variant: "destructive" });
+      return;
+    }
+    setCart(prev => {
+      const exists = prev.find(i => i.medicineId === med.id);
+      if (exists) return prev.map(i => i.medicineId === med.id ? calcItem({ ...i, qty: i.qty + 1 }) : i);
+      return [...prev, calcItem({ medicineId: med.id, name: med.name, unit: med.unit, sellingPrice: med.sellingPrice, gstPercent: med.gstPercent, qty: 1, gstAmount: 0, total: 0 })];
+    });
+    setSearch("");
+  }
+
   function updateQty(medicineId: number, qty: number) {
     if (qty <= 0) { setCart(c => c.filter(i => i.medicineId !== medicineId)); return; }
+    const maxStock = medStockMap.get(medicineId) ?? Infinity;
+    if (qty > maxStock) {
+      toast({ title: `Only ${maxStock} units available`, variant: "destructive" });
+      return;
+    }
     setCart(c => c.map(i => i.medicineId === medicineId ? calcItem({ ...i, qty }) : i));
   }
 
@@ -239,20 +467,17 @@ function BillingTab({ medicines }: { medicines: Medicine[] }) {
   const submit = useMutation({
     mutationFn: async () => {
       const body = {
-        items: cart,
-        subtotal,
-        discountPercent,
-        discountAmount,
-        gstTotal,
-        totalAmount,
-        paymentMethod: paymentMethod.toLowerCase(),
-        status: "paid",
+        items: cart, subtotal, discountPercent, discountAmount, gstTotal, totalAmount,
+        paymentMethod: paymentMethod.toLowerCase(), status: "paid",
         notes: notes.trim() || null,
         ...(patientMode === "existing" && selectedPatientId
           ? { patientId: Number(selectedPatientId) }
           : { patientName: patientName.trim() || "Walk-in", patientPhone: patientPhone.trim() || null }),
       };
-      const r = await fetch("/api/pharmacy/bills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), credentials: "include" });
+      const r = await fetch("/api/pharmacy/bills", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body), credentials: "include",
+      });
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
@@ -260,86 +485,56 @@ function BillingTab({ medicines }: { medicines: Medicine[] }) {
       qc.invalidateQueries({ queryKey: ["/api/pharmacy/bills"] });
       qc.invalidateQueries({ queryKey: ["/api/pharmacy/stats"] });
       qc.invalidateQueries({ queryKey: ["/api/pharmacy/medicines"] });
-      toast({ title: "Bill created successfully" });
-      printBill(bill);
+      toast({ title: "Bill created" });
+      const w = window.open("", "_blank");
+      if (w) { w.document.write(buildBillHtml(bill, settings?.clinicProfile)); w.document.close(); }
       setCart([]); setPatientName(""); setPatientPhone(""); setSelectedPatientId("");
       setDiscountPercent(0); setNotes(""); setPaymentMethod("Cash");
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  function printBill(bill: PharmacyBill) {
-    const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const rows = (bill.items as CartItem[]).map(i =>
-      `<tr><td>${esc(i.name)}</td><td style="text-align:center">${i.qty} ${esc(i.unit)}</td><td style="text-align:right">₹${rupees(i.sellingPrice)}</td><td style="text-align:right">${i.gstPercent}%</td><td style="text-align:right">₹${rupees(i.total)}</td></tr>`
-    ).join("");
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pharmacy Bill</title>
-<style>body{font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;font-size:13px}
-h2{text-align:center;margin-bottom:4px}p{margin:2px 0}
-table{width:100%;border-collapse:collapse;margin-top:12px}
-th{background:#f1f5f9;padding:6px 8px;text-align:left;font-size:12px}
-td{padding:5px 8px;border-bottom:1px solid #e2e8f0}
-.total-row{font-weight:bold;font-size:14px}.right{text-align:right}
-hr{border:none;border-top:1px dashed #94a3b8;margin:10px 0}
-</style></head><body>
-<h2>Pharmacy Bill</h2>
-<p><strong>Bill #:</strong> ${bill.id}</p>
-<p><strong>Date:</strong> ${format(new Date(bill.createdAt), "dd MMM yyyy, h:mm a")}</p>
-<p><strong>Patient:</strong> ${esc(bill.patientName || "Walk-in")}</p>
-${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>` : ""}
-<hr/>
-<table><thead><tr><th>Medicine</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">GST</th><th style="text-align:right">Total</th></tr></thead>
-<tbody>${rows}</tbody></table>
-<hr/>
-<table><tbody>
-<tr><td>Subtotal</td><td class="right">₹${rupees(bill.subtotal)}</td></tr>
-<tr><td>GST</td><td class="right">₹${rupees(bill.gstTotal)}</td></tr>
-${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td class="right">-₹${rupees(bill.discountAmount)}</td></tr>` : ""}
-<tr class="total-row"><td><strong>Total</strong></td><td class="right"><strong>₹${rupees(bill.totalAmount)}</strong></td></tr>
-<tr><td>Payment</td><td class="right">${esc(bill.paymentMethod || "Cash")}</td></tr>
-</tbody></table>
-<hr/><p style="text-align:center;font-size:11px;color:#64748b">Thank you for your purchase!</p>
-<script>window.onload=()=>{window.print();}</script></body></html>`;
-    const w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.close(); }
-  }
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {/* Left: Search + Cart */}
       <div className="lg:col-span-2 space-y-4">
-        {/* Medicine Search */}
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
           <h3 className="font-semibold text-slate-800">Search & Add Medicines</h3>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <Input
-              placeholder="Search by name or generic name…"
+              placeholder="Search by medicine name or generic…"
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="pl-10 rounded-xl h-11"
             />
           </div>
           {filtered.length > 0 && (
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              {filtered.map(m => (
-                <button
-                  key={m.id}
-                  onClick={() => addToCart(m)}
-                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-violet-50 transition-colors border-b border-slate-100 last:border-0 text-left"
-                >
-                  <div>
-                    <p className="font-semibold text-slate-800 text-sm">{m.name}</p>
-                    <p className="text-xs text-slate-400">{m.genericName ? `${m.genericName} · ` : ""}{m.category} · {m.unit}</p>
-                  </div>
-                  <div className="text-right shrink-0 ml-4">
-                    <p className="font-bold text-violet-700 text-sm">₹{rupees(m.sellingPrice)}</p>
-                    <p className={cn("text-xs", m.stockQty <= m.minStockQty ? "text-red-500 font-semibold" : "text-slate-400")}>
-                      Stock: {m.stockQty}
-                    </p>
-                  </div>
-                </button>
-              ))}
+            <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
+              {filtered.map(m => {
+                const isExpiring = m.expiryDate && m.expiryDate <= in30days;
+                return (
+                  <button
+                    key={m.id}
+                    onClick={() => addToCart(m)}
+                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-violet-50 transition-colors text-left"
+                  >
+                    <div>
+                      <p className="font-semibold text-slate-800 text-sm">{m.name}</p>
+                      <p className="text-xs text-slate-400">
+                        {m.genericName ? `${m.genericName} · ` : ""}{m.category} · {m.unit}
+                        {isExpiring && <span className="text-amber-600"> · Exp {format(new Date(m.expiryDate!), "MMM yy")}</span>}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0 ml-4">
+                      <p className="font-bold text-violet-700 text-sm">₹{rupees(m.sellingPrice)}</p>
+                      <p className={cn("text-xs", m.stockQty <= m.minStockQty ? "text-red-500 font-semibold" : "text-slate-400")}>
+                        {m.stockQty} {m.unit}s
+                      </p>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -349,7 +544,9 @@ ${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td cla
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-slate-800 flex items-center gap-2">
               <ShoppingCart className="w-4 h-4 text-violet-600" /> Cart
-              {cart.length > 0 && <span className="bg-violet-100 text-violet-700 text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>}
+              {cart.length > 0 && (
+                <span className="bg-violet-100 text-violet-700 text-xs font-bold px-2 py-0.5 rounded-full">{cart.length}</span>
+              )}
             </h3>
             {cart.length > 0 && (
               <button onClick={() => setCart([])} className="text-xs text-red-500 hover:text-red-700">Clear all</button>
@@ -359,30 +556,38 @@ ${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td cla
           {cart.length === 0 ? (
             <div className="py-10 text-center text-slate-400">
               <ShoppingCart className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Search and add medicines above</p>
+              <p className="text-sm">Search medicines above or import from prescription</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {cart.map(item => (
-                <div key={item.medicineId} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-800 text-sm truncate">{item.name}</p>
-                    <p className="text-xs text-slate-400">₹{rupees(item.sellingPrice)}/{item.unit} · GST {item.gstPercent}%</p>
+              {cart.map(item => {
+                const maxStock = medStockMap.get(item.medicineId) ?? Infinity;
+                return (
+                  <div key={item.medicineId} className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-slate-800 text-sm truncate">{item.name}</p>
+                      <p className="text-xs text-slate-400">₹{rupees(item.sellingPrice)}/{item.unit} · GST {item.gstPercent}%</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button onClick={() => updateQty(item.medicineId, item.qty - 1)}
+                        className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center font-bold text-sm">−</button>
+                      <span className="w-8 text-center font-bold text-sm">{item.qty}</span>
+                      <button
+                        onClick={() => updateQty(item.medicineId, item.qty + 1)}
+                        disabled={item.qty >= maxStock}
+                        className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                      >+</button>
+                    </div>
+                    <div className="text-right shrink-0 min-w-[70px]">
+                      <p className="font-bold text-slate-900 text-sm">₹{rupees(item.total)}</p>
+                      <p className="text-xs text-slate-400">incl. GST</p>
+                    </div>
+                    <button onClick={() => updateQty(item.medicineId, 0)} className="text-slate-300 hover:text-red-500 transition-colors">
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button onClick={() => updateQty(item.medicineId, item.qty - 1)} className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center font-bold">−</button>
-                    <span className="w-8 text-center font-bold text-sm">{item.qty}</span>
-                    <button onClick={() => updateQty(item.medicineId, item.qty + 1)} className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center font-bold">+</button>
-                  </div>
-                  <div className="text-right shrink-0 min-w-[70px]">
-                    <p className="font-bold text-slate-900 text-sm">₹{rupees(item.total)}</p>
-                    <p className="text-xs text-slate-400">incl. GST</p>
-                  </div>
-                  <button onClick={() => updateQty(item.medicineId, 0)} className="text-slate-300 hover:text-red-500 transition-colors">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -390,7 +595,6 @@ ${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td cla
 
       {/* Right: Patient + Summary */}
       <div className="space-y-4">
-        {/* Patient Info */}
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
           <h3 className="font-semibold text-slate-800">Patient</h3>
           <div className="flex rounded-xl overflow-hidden border border-slate-200">
@@ -401,7 +605,7 @@ ${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td cla
             <button
               onClick={() => setPatientMode("existing")}
               className={cn("flex-1 py-2 text-xs font-semibold transition-colors", patientMode === "existing" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-50")}
-            >Existing</button>
+            >Existing Patient</button>
           </div>
 
           {patientMode === "walkin" ? (
@@ -410,46 +614,53 @@ ${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td cla
               <Input placeholder="Phone (optional)" value={patientPhone} onChange={e => setPatientPhone(e.target.value)} className="rounded-xl h-10" />
             </div>
           ) : (
-            <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
-              <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Select patient" /></SelectTrigger>
-              <SelectContent>
-                {(patients as any[]).map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name} · {p.phone}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <div className="space-y-3">
+              <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
+                <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Select patient…" /></SelectTrigger>
+                <SelectContent>
+                  {(patients as any[]).map(p => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.name}{p.phone ? ` · ${p.phone}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedPatientId && (
+                <RxImportSection
+                  patientId={Number(selectedPatientId)}
+                  medicines={medicines}
+                  onAddToCart={addToCart}
+                />
+              )}
+            </div>
           )}
         </div>
 
         {/* Bill Summary */}
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
           <h3 className="font-semibold text-slate-800">Bill Summary</h3>
-
           <div className="space-y-1.5 text-sm">
-            <div className="flex justify-between text-slate-600">
-              <span>Subtotal</span><span>₹{rupees(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-slate-600">
-              <span>GST</span><span>₹{rupees(gstTotal)}</span>
-            </div>
+            <div className="flex justify-between text-slate-600"><span>Subtotal</span><span>₹{rupees(subtotal)}</span></div>
+            <div className="flex justify-between text-slate-600"><span>GST</span><span>₹{rupees(gstTotal)}</span></div>
             <div className="flex items-center justify-between">
-              <span className="text-slate-600">Discount %</span>
+              <span className="text-slate-600 text-sm">Discount %</span>
               <input
                 type="number" min="0" max="100" value={discountPercent}
                 onChange={e => setDiscountPercent(Math.min(100, Math.max(0, Number(e.target.value))))}
-                className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-right text-sm"
+                className="w-16 border border-slate-200 rounded-lg px-2 py-1 text-right text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
               />
             </div>
             {discountAmount > 0 && (
-              <div className="flex justify-between text-green-600">
-                <span>Discount</span><span>-₹{rupees(discountAmount)}</span>
-              </div>
+              <div className="flex justify-between text-green-600"><span>Discount</span><span>-₹{rupees(discountAmount)}</span></div>
             )}
-            <div className="flex justify-between font-bold text-base text-slate-900 border-t border-slate-200 pt-2 mt-2">
-              <span>Total</span><span>₹{rupees(totalAmount)}</span>
+            <div className="flex justify-between font-bold text-base text-slate-900 border-t border-slate-100 pt-2 mt-2">
+              <span>Total</span>
+              <span className="text-violet-700">₹{rupees(totalAmount)}</span>
             </div>
           </div>
 
           <div>
-            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Payment Method</Label>
+            <Label className="text-xs font-semibold text-slate-600 mb-1.5 block">Payment Method</Label>
             <div className="grid grid-cols-2 gap-2">
               {PAYMENT_METHODS.map(m => (
                 <button
@@ -466,10 +677,10 @@ ${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td cla
           <Button
             onClick={() => submit.mutate()}
             disabled={cart.length === 0 || submit.isPending}
-            className="w-full rounded-xl h-12 bg-violet-600 hover:bg-violet-700 font-semibold gap-2"
+            className="w-full rounded-xl h-12 bg-violet-600 hover:bg-violet-700 font-semibold gap-2 shadow-lg shadow-violet-600/20"
           >
             {submit.isPending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
-            {submit.isPending ? "Creating…" : "Create Bill & Print"}
+            {submit.isPending ? "Creating…" : `Create Bill · ₹${rupees(totalAmount)}`}
           </Button>
         </div>
       </div>
@@ -486,7 +697,12 @@ export default function Pharmacy() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [showLowStock, setShowLowStock] = useState(false);
+  const [billSearch, setBillSearch] = useState("");
+  const [billDateFilter, setBillDateFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [medicineDialog, setMedicineDialog] = useState<{ open: boolean; medicine?: Medicine | null }>({ open: false });
+  const [restockDialog, setRestockDialog] = useState<{ open: boolean; medicine: Medicine | null }>({ open: false, medicine: null });
+
+  const { data: settings } = useQuery<Record<string, any>>({ queryKey: ["/api/settings"] });
 
   const { data: stats } = useQuery<Stats>({
     queryKey: ["/api/pharmacy/stats"],
@@ -499,10 +715,11 @@ export default function Pharmacy() {
     queryFn: () => fetch("/api/pharmacy/medicines", { credentials: "include" }).then(r => r.json()),
   });
 
+  // Always fetch bills (not just on bills tab) so dashboard recent bills works
   const { data: bills = [] } = useQuery<PharmacyBill[]>({
     queryKey: ["/api/pharmacy/bills"],
     queryFn: () => fetch("/api/pharmacy/bills", { credentials: "include" }).then(r => r.json()),
-    enabled: tab === "bills",
+    staleTime: 30000,
   });
 
   const deleteMedicine = useMutation({
@@ -526,26 +743,26 @@ export default function Pharmacy() {
     return list;
   }, [medicines, search, categoryFilter, showLowStock]);
 
-  function printBillFromHistory(bill: PharmacyBill) {
-    const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const rows = (bill.items as CartItem[]).map(i =>
-      `<tr><td>${esc(i.name)}</td><td style="text-align:center">${i.qty} ${esc(i.unit)}</td><td style="text-align:right">₹${rupees(i.sellingPrice)}</td><td style="text-align:right">₹${rupees(i.total)}</td></tr>`
-    ).join("");
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Pharmacy Bill #${bill.id}</title>
-<style>body{font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px;font-size:13px}h2{text-align:center}p{margin:2px 0}table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#f1f5f9;padding:6px 8px;text-align:left}td{padding:5px 8px;border-bottom:1px solid #e2e8f0}.right{text-align:right}hr{border:none;border-top:1px dashed #94a3b8;margin:10px 0}</style>
-</head><body><h2>Pharmacy Bill #${bill.id}</h2>
-<p><strong>Date:</strong> ${format(new Date(bill.createdAt), "dd MMM yyyy, h:mm a")}</p>
-<p><strong>Patient:</strong> ${esc(bill.patientName || "Walk-in")}</p>
-${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>` : ""}
-<hr/><table><thead><tr><th>Medicine</th><th>Qty</th><th class="right">Price</th><th class="right">Total</th></tr></thead><tbody>${rows}</tbody></table>
-<hr/><p><strong>GST:</strong> ₹${rupees(bill.gstTotal)}</p>${bill.discountAmount ? `<p><strong>Discount:</strong> -₹${rupees(bill.discountAmount)}</p>` : ""}
-<p style="font-size:15px;font-weight:bold;margin-top:8px">Total: ₹${rupees(bill.totalAmount)}</p>
-<p>Payment: ${esc(bill.paymentMethod || "Cash")}</p>
-<hr/><p style="text-align:center;font-size:11px;color:#64748b">Thank you!</p>
-<script>window.onload=()=>{window.print();}</script></body></html>`;
-    const w = window.open("", "_blank");
-    if (w) { w.document.write(html); w.document.close(); }
-  }
+  const filteredBills = useMemo(() => {
+    let result = bills;
+    if (billSearch.trim()) {
+      const q = billSearch.toLowerCase();
+      result = result.filter(b =>
+        (b.patientName || "walk-in").toLowerCase().includes(q) ||
+        (b.patientPhone || "").includes(q) ||
+        String(b.id).includes(q)
+      );
+    }
+    if (billDateFilter !== "all") {
+      const now = new Date();
+      let cutoff: Date;
+      if (billDateFilter === "today") { cutoff = new Date(now); cutoff.setHours(0, 0, 0, 0); }
+      else if (billDateFilter === "week") { cutoff = new Date(now.getTime() - 7 * 86400000); }
+      else { cutoff = new Date(now.getFullYear(), now.getMonth(), 1); }
+      result = result.filter(b => new Date(b.createdAt) >= cutoff);
+    }
+    return result;
+  }, [bills, billSearch, billDateFilter]);
 
   const today = format(new Date(), "yyyy-MM-dd");
 
@@ -560,17 +777,12 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
             </div>
             <div>
               <h1 className="text-xl font-bold text-slate-900">Pharmacy</h1>
-              <p className="text-xs text-slate-500">Inventory & Billing</p>
+              <p className="text-xs text-slate-500">Inventory · Billing · Prescriptions</p>
             </div>
           </div>
           {tab === "inventory" && (
             <Button onClick={() => setMedicineDialog({ open: true })} className="rounded-xl bg-violet-600 hover:bg-violet-700 gap-2">
               <Plus className="w-4 h-4" /> Add Medicine
-            </Button>
-          )}
-          {tab === "billing" && (
-            <Button onClick={() => setTab("billing")} variant="outline" className="rounded-xl gap-2">
-              <ShoppingCart className="w-4 h-4" /> New Bill
             </Button>
           )}
         </div>
@@ -588,7 +800,6 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
         {/* ── DASHBOARD ── */}
         {tab === "dashboard" && (
           <div className="space-y-6">
-            {/* Stat cards */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               {[
                 { label: "Total Medicines", value: stats?.totalMedicines ?? "—", icon: Pill, color: "bg-violet-100 text-violet-600", textColor: "text-violet-700" },
@@ -610,15 +821,16 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
               })}
             </div>
 
-            {/* Alerts */}
+            {/* Low stock alert */}
             {(stats?.lowStockCount ?? 0) > 0 && (
               <div className="bg-red-50 border border-red-200 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-red-500" />
-                    <p className="font-semibold text-red-800 text-sm">Low Stock Alerts ({stats?.lowStockCount})</p>
+                    <p className="font-semibold text-red-800 text-sm">Low Stock ({stats?.lowStockCount})</p>
                   </div>
-                  <button onClick={() => { setTab("inventory"); setShowLowStock(true); }} className="text-xs text-red-700 hover:text-red-900 font-medium flex items-center gap-1">
+                  <button onClick={() => { setTab("inventory"); setShowLowStock(true); }}
+                    className="text-xs text-red-700 hover:text-red-900 font-medium flex items-center gap-1">
                     View all <ChevronRight className="w-3 h-3" />
                   </button>
                 </div>
@@ -647,12 +859,20 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
                   <p className="font-semibold text-amber-800 text-sm">Expiring Within 30 Days</p>
                 </div>
                 <div className="space-y-1.5">
-                  {medicines.filter(m => m.expiryDate && m.expiryDate <= new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0] && m.expiryDate >= today).slice(0, 5).map(m => (
-                    <div key={m.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2.5 border border-amber-100">
-                      <p className="text-sm font-semibold text-slate-800">{m.name}</p>
-                      <p className="text-sm font-bold text-amber-700">Exp: {m.expiryDate ? format(new Date(m.expiryDate), "dd MMM yyyy") : "—"}</p>
-                    </div>
-                  ))}
+                  {medicines
+                    .filter(m => m.expiryDate && m.expiryDate <= new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0] && m.expiryDate >= today)
+                    .slice(0, 5)
+                    .map(m => (
+                      <div key={m.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2.5 border border-amber-100">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-800">{m.name}</p>
+                          <p className="text-xs text-slate-400">{m.stockQty} {m.unit}s in stock</p>
+                        </div>
+                        <p className="text-sm font-bold text-amber-700">
+                          Exp: {m.expiryDate ? format(new Date(m.expiryDate), "dd MMM yyyy") : "—"}
+                        </p>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}
@@ -661,21 +881,27 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
             <div className="bg-white rounded-2xl border border-slate-100 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-slate-800">Recent Bills</h3>
-                <button onClick={() => setTab("bills")} className="text-xs text-violet-700 hover:text-violet-900 font-medium flex items-center gap-1">
+                <button onClick={() => setTab("bills")}
+                  className="text-xs text-violet-700 hover:text-violet-900 font-medium flex items-center gap-1">
                   View all <ChevronRight className="w-3 h-3" />
                 </button>
               </div>
               {bills.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center py-6">No bills yet today</p>
+                <p className="text-sm text-slate-400 text-center py-6">No bills yet</p>
               ) : (
                 <div className="space-y-2">
                   {bills.slice(0, 5).map(b => (
                     <div key={b.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50">
                       <div>
                         <p className="text-sm font-semibold text-slate-800">{b.patientName || "Walk-in"}</p>
-                        <p className="text-xs text-slate-400">{format(new Date(b.createdAt), "h:mm a")} · {(b.items as any[]).length} item{(b.items as any[]).length !== 1 ? "s" : ""}</p>
+                        <p className="text-xs text-slate-400">
+                          #{b.id} · {format(new Date(b.createdAt), "dd MMM, h:mm a")} · {(b.items as any[]).length} item{(b.items as any[]).length !== 1 ? "s" : ""}
+                        </p>
                       </div>
-                      <p className="font-bold text-violet-700">₹{rupees(b.totalAmount)}</p>
+                      <div className="text-right">
+                        <p className="font-bold text-violet-700">₹{rupees(b.totalAmount)}</p>
+                        <p className="text-xs capitalize text-slate-400">{b.paymentMethod || "cash"}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -687,7 +913,6 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
         {/* ── INVENTORY ── */}
         {tab === "inventory" && (
           <div className="space-y-4">
-            {/* Filters */}
             <div className="flex flex-wrap gap-3">
               <div className="relative flex-1 min-w-[200px]">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -709,10 +934,9 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
               </button>
             </div>
 
-            {/* Table */}
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[700px]">
+                <table className="w-full text-sm min-w-[750px]">
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 uppercase tracking-wide">
                       <th className="px-4 py-3 text-left font-semibold">Medicine</th>
@@ -760,10 +984,23 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
                           <td className="px-4 py-3 text-slate-500">{m.gstPercent}%</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-1">
-                              <button onClick={() => setMedicineDialog({ open: true, medicine: m })} className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors">
+                              <button
+                                onClick={() => setRestockDialog({ open: true, medicine: m })}
+                                title="Add stock"
+                                className="w-8 h-8 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors"
+                              >
+                                <PackagePlus className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setMedicineDialog({ open: true, medicine: m })}
+                                className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors"
+                              >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
-                              <button onClick={() => deleteMedicine.mutate(m.id)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
+                              <button
+                                onClick={() => deleteMedicine.mutate(m.id)}
+                                className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors"
+                              >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
@@ -779,51 +1016,94 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
         )}
 
         {/* ── BILLING ── */}
-        {tab === "billing" && <BillingTab medicines={medicines} />}
+        {tab === "billing" && <BillingTab medicines={medicines} settings={settings} />}
 
         {/* ── BILLS HISTORY ── */}
         {tab === "bills" && (
-          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[600px]">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 uppercase tracking-wide">
-                    <th className="px-4 py-3 text-left font-semibold">Bill #</th>
-                    <th className="px-4 py-3 text-left font-semibold">Patient</th>
-                    <th className="px-4 py-3 text-left font-semibold">Date & Time</th>
-                    <th className="px-4 py-3 text-right font-semibold">Items</th>
-                    <th className="px-4 py-3 text-right font-semibold">Total</th>
-                    <th className="px-4 py-3 text-left font-semibold">Payment</th>
-                    <th className="px-4 py-3 text-right font-semibold">Print</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {bills.length === 0 ? (
-                    <tr><td colSpan={7} className="text-center text-slate-400 py-12">No bills yet</td></tr>
-                  ) : bills.map(b => (
-                    <tr key={b.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 font-mono font-semibold text-violet-700">#{b.id}</td>
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-slate-800">{b.patientName || "Walk-in"}</p>
-                        {b.patientPhone && <p className="text-xs text-slate-400">{b.patientPhone}</p>}
-                      </td>
-                      <td className="px-4 py-3 text-slate-500">{format(new Date(b.createdAt), "dd MMM yyyy, h:mm a")}</td>
-                      <td className="px-4 py-3 text-right text-slate-600">{(b.items as any[]).length}</td>
-                      <td className="px-4 py-3 text-right font-bold text-slate-900">₹{rupees(b.totalAmount)}</td>
-                      <td className="px-4 py-3">
-                        <span className="capitalize px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-xs font-semibold">
-                          {b.paymentMethod || "Cash"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <button onClick={() => printBillFromHistory(b)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center ml-auto transition-colors">
-                          <Printer className="w-3.5 h-3.5" />
-                        </button>
-                      </td>
+          <div className="space-y-4">
+            {/* Search + filters */}
+            <div className="flex flex-wrap gap-3">
+              <div className="relative flex-1 min-w-[200px]">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                <Input
+                  placeholder="Search by patient name, phone, bill #…"
+                  value={billSearch}
+                  onChange={e => setBillSearch(e.target.value)}
+                  className="pl-9 rounded-xl h-10"
+                />
+              </div>
+              <div className="flex rounded-xl overflow-hidden border border-slate-200">
+                {(["all", "today", "week", "month"] as const).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setBillDateFilter(f)}
+                    className={cn("px-3 py-2 text-xs font-semibold transition-colors",
+                      billDateFilter === f ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-50")}
+                  >
+                    {f === "all" ? "All" : f === "today" ? "Today" : f === "week" ? "7 days" : "Month"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[600px]">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 uppercase tracking-wide">
+                      <th className="px-4 py-3 text-left font-semibold">Bill #</th>
+                      <th className="px-4 py-3 text-left font-semibold">Patient</th>
+                      <th className="px-4 py-3 text-left font-semibold">Date & Time</th>
+                      <th className="px-4 py-3 text-right font-semibold">Items</th>
+                      <th className="px-4 py-3 text-right font-semibold">Total</th>
+                      <th className="px-4 py-3 text-left font-semibold">Payment</th>
+                      <th className="px-4 py-3 text-right font-semibold">Print</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {filteredBills.length === 0 ? (
+                      <tr><td colSpan={7} className="text-center text-slate-400 py-12">
+                        {billSearch || billDateFilter !== "all" ? "No bills match your filter" : "No bills yet"}
+                      </td></tr>
+                    ) : filteredBills.map(b => (
+                      <tr key={b.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-4 py-3 font-mono font-semibold text-violet-700">#{b.id}</td>
+                        <td className="px-4 py-3">
+                          <p className="font-semibold text-slate-800">{b.patientName || "Walk-in"}</p>
+                          {b.patientPhone && <p className="text-xs text-slate-400">{b.patientPhone}</p>}
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">{format(new Date(b.createdAt), "dd MMM yyyy, h:mm a")}</td>
+                        <td className="px-4 py-3 text-right text-slate-600">{(b.items as any[]).length}</td>
+                        <td className="px-4 py-3 text-right font-bold text-slate-900">₹{rupees(b.totalAmount)}</td>
+                        <td className="px-4 py-3">
+                          <span className="capitalize px-2 py-0.5 rounded-full bg-green-50 text-green-700 text-xs font-semibold">
+                            {b.paymentMethod || "Cash"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <button
+                            onClick={() => {
+                              const w = window.open("", "_blank");
+                              if (w) { w.document.write(buildBillHtml(b, settings?.clinicProfile)); w.document.close(); }
+                            }}
+                            className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center ml-auto transition-colors"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {filteredBills.length > 0 && (
+                <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between">
+                  <p className="text-xs text-slate-400">{filteredBills.length} bill{filteredBills.length !== 1 ? "s" : ""}</p>
+                  <p className="text-xs font-semibold text-slate-600">
+                    Total: ₹{rupees(filteredBills.reduce((s, b) => s + b.totalAmount, 0))}
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -833,6 +1113,11 @@ ${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>`
         open={medicineDialog.open}
         onClose={() => setMedicineDialog({ open: false })}
         medicine={medicineDialog.medicine}
+      />
+      <RestockDialog
+        open={restockDialog.open}
+        medicine={restockDialog.medicine}
+        onClose={() => setRestockDialog({ open: false, medicine: null })}
       />
     </Layout>
   );
