@@ -606,6 +606,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // PATCH /api/prescriptions/:id — update an existing prescription
+  app.patch("/api/prescriptions/:id", requireAuth, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { chiefComplaints, diagnosis, medications, notes } = req.body;
+      const [row] = await db.update(prescriptions)
+        .set({
+          chiefComplaints: chiefComplaints?.trim() || null,
+          diagnosis: diagnosis?.trim() || null,
+          medications: medications || [],
+          notes: notes?.trim() || null,
+        })
+        .where(and(eq(prescriptions.id, id), eq(prescriptions.clinicId, req.session.clinicId!)))
+        .returning();
+      if (!row) return res.status(404).json({ message: "Prescription not found" });
+      res.json(row);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to update prescription" });
+    }
+  });
+
   // ── DASHBOARD ─────────────────────────────────────────────────────────────
 
   app.get(api.dashboard.stats.path, requireAuth, async (req, res) => {

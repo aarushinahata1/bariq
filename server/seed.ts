@@ -184,11 +184,11 @@ async function seed() {
     clinicId,
     notes: ["Take rest and drink plenty of fluids.", "Monitor BP daily.", "Follow-up in 2 weeks.", "Avoid spicy food.", "Complete the full antibiotic course."][i % 5],
     medications: [
-      [{ name: "Paracetamol", dosage: "500mg", duration: "5 days", instructions: "Twice a day after meals" }, { name: "Cetirizine", dosage: "10mg", duration: "3 days", instructions: "Once at night" }],
-      [{ name: "Amlodipine", dosage: "5mg", duration: "30 days", instructions: "Once a day in the morning" }],
-      [{ name: "Metformin", dosage: "500mg", duration: "30 days", instructions: "Twice a day with meals" }, { name: "Glimepiride", dosage: "1mg", duration: "30 days", instructions: "Once before breakfast" }],
-      [{ name: "Amoxicillin", dosage: "250mg", duration: "7 days", instructions: "Three times a day" }, { name: "Ibuprofen", dosage: "400mg", duration: "3 days", instructions: "Twice a day after food" }],
-      [{ name: "Omeprazole", dosage: "20mg", duration: "14 days", instructions: "Once before breakfast" }],
+      [{ name: "Paracetamol", dosage: "500mg", frequency: "1-0-1", duration: "5 days", timing: "After Food", instructions: "" }, { name: "Cetirizine", dosage: "10mg", frequency: "0-0-1", duration: "3 days", timing: "Bedtime", instructions: "" }],
+      [{ name: "Amlodipine", dosage: "5mg", frequency: "1-0-0", duration: "30 days", timing: "Before Food", instructions: "" }],
+      [{ name: "Metformin", dosage: "500mg", frequency: "1-0-1", duration: "30 days", timing: "With Food", instructions: "" }, { name: "Glimepiride", dosage: "1mg", frequency: "1-0-0", duration: "30 days", timing: "Before Food", instructions: "" }],
+      [{ name: "Amoxicillin", dosage: "250mg", frequency: "TDS", duration: "7 days", timing: "After Food", instructions: "" }, { name: "Ibuprofen", dosage: "400mg", frequency: "BD", duration: "3 days", timing: "After Food", instructions: "" }],
+      [{ name: "Omeprazole", dosage: "20mg", frequency: "1-0-0", duration: "14 days", timing: "Empty Stomach", instructions: "" }],
     ][i % 5],
   }));
 

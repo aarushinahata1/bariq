@@ -476,15 +476,23 @@ export default function PatientHistory() {
                                 <Pill className="w-3.5 h-3.5" />
                                 <span className="text-[10px] font-bold uppercase">Prescription</span>
                               </div>
+                              {apptPrescriptions[0].chiefComplaints && (
+                                <p className="text-[11px] text-purple-700 mb-1"><span className="font-bold">Complaints:</span> {apptPrescriptions[0].chiefComplaints}</p>
+                              )}
+                              {apptPrescriptions[0].diagnosis && (
+                                <p className="text-[11px] text-purple-700 mb-2"><span className="font-bold">Dx:</span> {apptPrescriptions[0].diagnosis}</p>
+                              )}
                               <div className="space-y-1.5">
-                                {apptPrescriptions[0].medications?.slice(0, 3).map((med: any, i: number) => (
+                                {apptPrescriptions[0].medications?.slice(0, 4).map((med: any, i: number) => (
                                   <div key={i} className="flex items-center justify-between text-xs">
                                     <span className="font-semibold text-purple-900">{med.name}</span>
-                                    <span className="text-purple-600">{med.dosage} · {med.duration}</span>
+                                    <span className="text-purple-600">
+                                      {[med.dosage, med.frequency, med.duration, med.timing].filter(Boolean).join(" · ")}
+                                    </span>
                                   </div>
                                 ))}
-                                {apptPrescriptions[0].medications?.length > 3 && (
-                                  <p className="text-xs text-purple-500">+{apptPrescriptions[0].medications.length - 3} more</p>
+                                {apptPrescriptions[0].medications?.length > 4 && (
+                                  <p className="text-xs text-purple-500">+{apptPrescriptions[0].medications.length - 4} more</p>
                                 )}
                                 {apptPrescriptions[0].notes && (
                                   <p className="text-xs text-purple-600 italic mt-1">{apptPrescriptions[0].notes}</p>

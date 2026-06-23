@@ -176,7 +176,9 @@ export const prescriptions = pgTable("prescriptions", {
   appointmentId: integer("appointment_id").references(() => appointments.id).notNull(),
   patientId: integer("patient_id").references(() => patients.id).notNull(),
   doctorId: text("doctor_id").references(() => users.id).notNull(),
-  medications: jsonb("medications").$type<{ name: string; dosage: string; duration: string; instructions: string }[]>().default([]),
+  chiefComplaints: text("chief_complaints"),
+  diagnosis: text("diagnosis"),
+  medications: jsonb("medications").$type<{ name: string; dosage: string; frequency: string; duration: string; timing: string; instructions: string }[]>().default([]),
   notes: text("notes"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 }, (t) => ({
