@@ -1,4 +1,5 @@
 import { Layout } from "@/components/Layout";
+import { MedicineNameAutocomplete } from "@/components/MedicineNameAutocomplete";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useAppointments, useUpdateAppointment } from "@/hooks/use-appointments";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -359,15 +360,6 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
   const [diagnosis, setDiagnosis] = useState("");
   const [meds, setMeds] = useState<typeof EMPTY_MED[]>([]);
   const [notes, setNotes] = useState("");
-  const [medNameSearch, setMedNameSearch] = useState<{ idx: number; q: string } | null>(null);
-
-  // Pharmacy medicine suggestions
-  const { data: pharmMeds = [] } = useQuery<any[]>({
-    queryKey: ["/api/pharmacy/medicines"],
-    queryFn: () => fetch("/api/pharmacy/medicines", { credentials: "include" }).then(r => r.json()),
-    enabled: open,
-    staleTime: 60000,
-  });
 
   // Load existing prescription for this appointment
   const { data: existingRx = [] } = useQuery<any[]>({
@@ -400,14 +392,6 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
   const removeMed = (i: number) => setMeds(prev => prev.filter((_, idx) => idx !== i));
   const updateMed = (i: number, field: string, val: string) =>
     setMeds(prev => prev.map((m, idx) => idx === i ? { ...m, [field]: val } : m));
-
-  const medSuggestions = useMemo(() => {
-    if (!medNameSearch || medNameSearch.q.length < 2) return [];
-    const q = medNameSearch.q.toLowerCase();
-    return (pharmMeds as any[]).filter(m =>
-      m.name?.toLowerCase().includes(q) || m.genericName?.toLowerCase().includes(q)
-    ).slice(0, 6);
-  }, [medNameSearch, pharmMeds]);
 
   const handleSave = async (andPrint = false) => {
     if (meds.length === 0) { toast({ title: "Add at least one medication", variant: "destructive" }); return; }
@@ -527,43 +511,15 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
                       </button>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-                      {/* Medicine name with autocomplete */}
-                      <div className="sm:col-span-2 space-y-1 relative">
+                      {/* Medicine name with master-list autocomplete */}
+                      <div className="sm:col-span-2 space-y-1">
                         <label className="text-[9px] font-bold text-slate-400 uppercase">Medicine Name *</label>
-                        <div className="relative">
-                          <Input
-                            placeholder="e.g. Paracetamol 500mg"
-                            value={med.name}
-                            onChange={e => {
-                              updateMed(idx, "name", e.target.value);
-                              setMedNameSearch({ idx, q: e.target.value });
-                            }}
-                            onBlur={() => setTimeout(() => setMedNameSearch(null), 150)}
-                            className="rounded-lg h-9 text-sm pr-8"
-                          />
-                          <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-300 pointer-events-none" />
-                        </div>
-                        {medNameSearch?.idx === idx && medSuggestions.length > 0 && (
-                          <div className="absolute z-50 top-full left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden mt-0.5">
-                            {medSuggestions.map((s: any) => (
-                              <button
-                                key={s.id}
-                                onMouseDown={() => {
-                                  updateMed(idx, "name", s.name);
-                                  if (s.genericName) updateMed(idx, "dosage", s.genericName);
-                                  setMedNameSearch(null);
-                                }}
-                                className="w-full text-left px-3 py-2.5 hover:bg-purple-50 flex items-center justify-between transition-colors"
-                              >
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-800">{s.name}</p>
-                                  {s.genericName && <p className="text-xs text-slate-400">{s.genericName}</p>}
-                                </div>
-                                <span className="text-xs text-slate-400">{s.category}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        <MedicineNameAutocomplete
+                          value={med.name}
+                          onChange={v => updateMed(idx, "name", v)}
+                          placeholder="e.g. Paracetamol 500mg"
+                          className="rounded-lg h-9 text-sm"
+                        />
                       </div>
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-slate-400 uppercase">Dosage</label>

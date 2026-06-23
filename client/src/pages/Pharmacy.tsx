@@ -1,4 +1,5 @@
 import { Layout } from "@/components/Layout";
+import { MedicineNameAutocomplete } from "@/components/MedicineNameAutocomplete";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -260,7 +261,15 @@ function MedicineDialog({ open, onClose, medicine }: {
           <DialogTitle>{isEdit ? "Edit Medicine" : "Add Medicine"}</DialogTitle>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3 pt-2">
-          <div className="col-span-2">{field("Medicine Name", "name", { required: true, placeholder: "e.g. Paracetamol 500mg" })}</div>
+          <div className="col-span-2">
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Medicine Name *</Label>
+            <MedicineNameAutocomplete
+              value={form.name}
+              onChange={v => set("name", v)}
+              placeholder="e.g. Paracetamol 500mg"
+              className="rounded-xl h-10"
+            />
+          </div>
           <div className="col-span-2">{field("Generic Name", "genericName", { placeholder: "e.g. Acetaminophen" })}</div>
           <div>
             <Label className="text-xs font-semibold text-slate-600 mb-1 block">Category *</Label>

@@ -272,6 +272,14 @@ export const prescriptionsRelations = relations(prescriptions, ({ one }) => ({
   doctor: one(users, { fields: [prescriptions.doctorId], references: [users.id] }),
 }));
 
+// ── Medicine Master List ──────────────────────────────────────────────────────
+
+export const medicineNames = pgTable("medicine_names", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+});
+
 // ── Insert schemas ────────────────────────────────────────────────────────────
 
 export const insertClinicSchema = z.object({

@@ -1,15 +1,41 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import { readFileSync, existsSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import { getStorage } from "./storage";
 import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
-import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills } from "@shared/schema";
+import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt } from "drizzle-orm";
 import { z } from "zod";
 import { setupAuth, requireAuth, requireSuperAdmin } from "./auth";
 import { nanoid } from "nanoid";
 import bcrypt from "bcryptjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Seed 195K medicine names from CSV on first startup (skips if table already populated)
+async function seedMedicineNames() {
+  try {
+    const csvPath = join(__dirname, "data", "medicine_names.csv");
+    if (!existsSync(csvPath)) return;
+    const [{ cnt }] = await db.select({ cnt: sql<number>`count(*)::int` }).from(medicineNames);
+    if (cnt > 0) return;
+    const lines = readFileSync(csvPath, "utf-8").split("\n").slice(1);
+    const names = lines.map(l => l.trim()).filter(n => n.length > 0).map(name => ({ name }));
+    console.log(`[medicine-names] Seeding ${names.length} names...`);
+    const BATCH = 5000;
+    for (let i = 0; i < names.length; i += BATCH) {
+      await db.insert(medicineNames).values(names.slice(i, i + BATCH)).onConflictDoNothing();
+    }
+    console.log(`[medicine-names] Done.`);
+  } catch (err) {
+    console.error("[medicine-names] Seed failed:", err);
+  }
+}
 
 function storage(req: Request) {
   return getStorage(req.session.clinicId!);
@@ -1630,6 +1656,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(500).json({ message: "Failed to delete staff" });
     }
   });
+
+  // ── MEDICINE NAMES (master autocomplete list) ─────────────────────────────
+
+  // GET /api/medicine-names?q=para — returns up to 15 matches, prefix-first ordering
+  app.get("/api/medicine-names", requireAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (q.length < 2) return res.json([]);
+      const rows = await db
+        .select({ name: medicineNames.name })
+        .from(medicineNames)
+        .where(ilike(medicineNames.name, `%${q}%`))
+        .orderBy(
+          sql`CASE WHEN ${medicineNames.name} ILIKE ${q + "%"} THEN 0 ELSE 1 END`,
+          medicineNames.name,
+        )
+        .limit(15);
+      res.json(rows.map(r => r.name));
+    } catch (err) {
+      res.status(500).json({ message: "Failed to search medicine names" });
+    }
+  });
+
+  // POST /api/medicine-names — add a custom medicine to the master list
+  app.post("/api/medicine-names", requireAuth, async (req, res) => {
+    try {
+      const name = String(req.body.name || "").trim();
+      if (!name) return res.status(400).json({ message: "Name is required" });
+      await db.insert(medicineNames).values({ name }).onConflictDoNothing();
+      res.json({ name });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to add medicine name" });
+    }
+  });
+
+  // Seed medicine names in background (non-blocking)
+  seedMedicineNames().catch(() => {});
 
   return httpServer;
 }
