@@ -714,7 +714,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         patientId: z.any().optional(),
         patientName: z.string().min(1, "Name is required"),
         patientPhone: phoneValidation,
-      }) as typeof base;
+      }) as unknown as typeof base;
     }
     return base.superRefine((data, ctx) => {
       if (data.status !== "checked_in" && !data.slot) {

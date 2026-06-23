@@ -20,6 +20,13 @@ const __dirname = dirname(__filename);
 // Seed 195K medicine names from CSV on first startup (skips if table already populated)
 async function seedMedicineNames() {
   try {
+    // Enable trigram extension so ILIKE '%q%' on 195K rows uses a GIN index (fast)
+    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS medicine_names_name_trgm_idx
+      ON medicine_names USING GIN (name gin_trgm_ops)
+    `);
+
     const csvPath = join(__dirname, "data", "medicine_names.csv");
     if (!existsSync(csvPath)) return;
     const [{ cnt }] = await db.select({ cnt: sql<number>`count(*)::int` }).from(medicineNames);
@@ -365,13 +372,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           .map(a => a.queuePosition ?? 0)
           .sort((a, b) => a - b);
 
-        for (let i = 0; i < orderedAppointmentIds.length; i++) {
-          await tx.update(appointments)
-            .set({ queuePosition: sortedPositions[i] ?? i + 1 })
-            .where(and(
-              eq(appointments.id, orderedAppointmentIds[i]),
-              eq(appointments.clinicId, req.session.clinicId!)
-            ));
+        if (orderedAppointmentIds.length > 0) {
+          const cases = orderedAppointmentIds.map((id: number, i: number) =>
+            sql`WHEN ${id} THEN ${sortedPositions[i] ?? i + 1}`
+          );
+          await tx.execute(sql`
+            UPDATE appointments
+            SET queue_position = CASE id ${sql.join(cases, sql` `)} END
+            WHERE id IN (${sql.join(orderedAppointmentIds.map((id: number) => sql`${id}`), sql`, `)})
+              AND clinic_id = ${req.session.clinicId!}
+          `);
         }
       });
 
@@ -886,10 +896,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const { token } = req.params;
 
-      // Find the clinic that owns this registration token
-      const tokenRows = await db.select().from(clinicSettings)
-        .where(eq(clinicSettings.key, "registrationToken"));
-      const tokenRow = tokenRows.find((r: any) => r.value === token);
+      // Find the clinic that owns this registration token using SQL filter (avoids full table scan)
+      const [tokenRow] = await db.select().from(clinicSettings)
+        .where(and(
+          eq(clinicSettings.key, "registrationToken"),
+          sql`${clinicSettings.value}::text = ${JSON.stringify(token)}`
+        ));
       if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
 
       const clinicId = tokenRow.clinicId;
@@ -956,9 +968,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { doctorId, date: dateParam } = req.query as { doctorId?: string; date?: string };
       if (!doctorId) return res.status(400).json({ message: "doctorId is required" });
 
-      const tokenRows = await db.select().from(clinicSettings)
-        .where(eq(clinicSettings.key, "registrationToken"));
-      const tokenRow = tokenRows.find((r: any) => r.value === token);
+      const [tokenRow] = await db.select().from(clinicSettings)
+        .where(and(
+          eq(clinicSettings.key, "registrationToken"),
+          sql`${clinicSettings.value}::text = ${JSON.stringify(token)}`
+        ));
       if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
       const clinicId = tokenRow.clinicId;
 
@@ -1006,10 +1020,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       }
       const last10 = normalizedPhone.slice(-10);
 
-      // Resolve clinic from token (read-only — safe outside transaction)
-      const tokenRows = await db.select().from(clinicSettings)
-        .where(eq(clinicSettings.key, "registrationToken"));
-      const tokenRow = tokenRows.find((r: any) => r.value === token);
+      // Resolve clinic from token using SQL filter (avoids full table scan)
+      const [tokenRow] = await db.select().from(clinicSettings)
+        .where(and(
+          eq(clinicSettings.key, "registrationToken"),
+          sql`${clinicSettings.value}::text = ${JSON.stringify(token)}`
+        ));
       if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
       const clinicId = tokenRow.clinicId;
 
@@ -1160,26 +1176,30 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const thirtyDaysFromNow = new Date(); thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
       const thirtyDaysStr = thirtyDaysFromNow.toISOString().split("T")[0];
 
-      const [totalMeds] = await db.select({ count: count() }).from(medicines)
-        .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true)));
-
-      const [lowStock] = await db.select({ count: count() }).from(medicines)
-        .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true),
-          sql`${medicines.stockQty} <= ${medicines.minStockQty}`));
-
-      const [expiringSoon] = await db.select({ count: count() }).from(medicines)
-        .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true),
-          sql`${medicines.expiryDate} IS NOT NULL AND ${medicines.expiryDate} <= ${thirtyDaysStr} AND ${medicines.expiryDate} >= CURRENT_DATE`));
-
-      const [todaySales] = await db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
-        .from(pharmacyBills)
-        .where(and(eq(pharmacyBills.clinicId, clinicId),
-          gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd)));
-
-      const [monthSales] = await db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
-        .from(pharmacyBills)
-        .where(and(eq(pharmacyBills.clinicId, clinicId),
-          gte(pharmacyBills.createdAt, new Date(new Date().getFullYear(), new Date().getMonth(), 1))));
+      const [
+        [totalMeds],
+        [lowStock],
+        [expiringSoon],
+        [todaySales],
+        [monthSales],
+      ] = await Promise.all([
+        db.select({ count: count() }).from(medicines)
+          .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true))),
+        db.select({ count: count() }).from(medicines)
+          .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true),
+            sql`${medicines.stockQty} <= ${medicines.minStockQty}`)),
+        db.select({ count: count() }).from(medicines)
+          .where(and(eq(medicines.clinicId, clinicId), eq(medicines.isActive, true),
+            sql`${medicines.expiryDate} IS NOT NULL AND ${medicines.expiryDate} <= ${thirtyDaysStr} AND ${medicines.expiryDate} >= CURRENT_DATE`)),
+        db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
+          .from(pharmacyBills)
+          .where(and(eq(pharmacyBills.clinicId, clinicId),
+            gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd))),
+        db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
+          .from(pharmacyBills)
+          .where(and(eq(pharmacyBills.clinicId, clinicId),
+            gte(pharmacyBills.createdAt, new Date(new Date().getFullYear(), new Date().getMonth(), 1)))),
+      ]);
 
       res.json({
         totalMedicines: totalMeds?.count ?? 0,
@@ -1217,7 +1237,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/medicines", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const [med] = await db.insert(medicines).values({ ...req.body, clinicId }).returning();
+      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent } = req.body;
+      const [med] = await db.insert(medicines).values({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, clinicId }).returning();
       res.json(med);
     } catch (err: any) {
       res.status(400).json({ message: err?.message || "Failed to create medicine" });
@@ -1229,7 +1250,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const clinicId = req.session.clinicId!;
       const { id } = req.params;
-      const [med] = await db.update(medicines).set({ ...req.body })
+      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent } = req.body;
+      const [med] = await db.update(medicines)
+        .set({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent })
         .where(and(eq(medicines.id, Number(id)), eq(medicines.clinicId, clinicId))).returning();
       if (!med) return res.status(404).json({ message: "Medicine not found" });
       res.json(med);
@@ -1269,20 +1292,26 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const clinicId = req.session.clinicId!;
       const { items, ...rest } = req.body;
-      // Deduct stock for each item
-      await db.transaction(async (tx) => {
+      const bill = await db.transaction(async (tx) => {
         for (const item of (items as any[])) {
-          if (item.medicineId) {
-            await tx.update(medicines)
-              .set({ stockQty: sql`${medicines.stockQty} - ${item.qty}` })
-              .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
+          if (!item.medicineId) continue;
+          const [med] = await tx.select({ stockQty: medicines.stockQty, name: medicines.name })
+            .from(medicines)
+            .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
+          if (!med || item.qty > med.stockQty) {
+            throw Object.assign(new Error(`Insufficient stock for ${med?.name ?? "item"}`), { isStockError: true });
           }
+          await tx.update(medicines)
+            .set({ stockQty: sql`${medicines.stockQty} - ${item.qty}` })
+            .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
         }
         const [bill] = await tx.insert(pharmacyBills)
           .values({ ...rest, items, clinicId }).returning();
-        res.json(bill);
+        return bill!;
       });
+      res.json(bill);
     } catch (err: any) {
+      if (err?.isStockError) return res.status(400).json({ message: err.message });
       res.status(400).json({ message: err?.message || "Failed to create pharmacy bill" });
     }
   });
@@ -1422,23 +1451,36 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get("/api/admin/clinics", requireSuperAdmin, async (_req, res) => {
     try {
-      const allClinics = await db.select().from(clinics).orderBy(desc(clinics.createdAt));
       const now = new Date();
 
-      const enriched = await Promise.all(allClinics.map(async (c) => {
-        const [{ value: patientCount }] = await db.select({ value: sql<number>`count(*)` }).from(patients).where(eq(patients.clinicId, c.id));
-        const [{ value: apptCount }] = await db.select({ value: sql<number>`count(*)` }).from(appointments).where(eq(appointments.clinicId, c.id));
-        const payments = await db.select().from(clinicPayments).where(eq(clinicPayments.clinicId, c.id));
-        const totalPaid = payments.filter(p => p.status === "approved").reduce((s, p) => s + p.amount, 0);
+      // 3 aggregate queries instead of 3N individual queries
+      const [allClinics, patientCounts, apptCounts, allPayments] = await Promise.all([
+        db.select().from(clinics).orderBy(desc(clinics.createdAt)),
+        db.select({ clinicId: patients.clinicId, cnt: sql<number>`count(*)::int` })
+          .from(patients).groupBy(patients.clinicId),
+        db.select({ clinicId: appointments.clinicId, cnt: sql<number>`count(*)::int` })
+          .from(appointments).groupBy(appointments.clinicId),
+        db.select().from(clinicPayments),
+      ]);
 
+      const patientCountMap = new Map(patientCounts.map(r => [r.clinicId, r.cnt]));
+      const apptCountMap = new Map(apptCounts.map(r => [r.clinicId, r.cnt]));
+      const paymentsByClinic = new Map<number, typeof allPayments>();
+      for (const p of allPayments) {
+        if (!paymentsByClinic.has(p.clinicId)) paymentsByClinic.set(p.clinicId, []);
+        paymentsByClinic.get(p.clinicId)!.push(p);
+      }
+
+      const enriched = allClinics.map(c => {
+        const payments = paymentsByClinic.get(c.id) ?? [];
+        const totalPaid = payments.filter(p => p.status === "approved").reduce((s, p) => s + p.amount, 0);
         const { passwordHash: _, ...safe } = c;
         const isExpired = (c.planStatus === "trial" && c.trialEndsAt && c.trialEndsAt < now) ||
           (c.planStatus === "active" && c.subscriptionEndsAt && c.subscriptionEndsAt < now);
-
         return {
           ...safe,
-          patientCount: Number(patientCount),
-          apptCount: Number(apptCount),
+          patientCount: patientCountMap.get(c.id) ?? 0,
+          apptCount: apptCountMap.get(c.id) ?? 0,
           totalPaid: totalPaid / 100,
           isExpired,
           daysLeft: c.planStatus === "trial" && c.trialEndsAt
@@ -1447,7 +1489,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
               ? Math.ceil((c.subscriptionEndsAt.getTime() - now.getTime()) / 86400000)
               : null,
         };
-      }));
+      });
 
       res.json(enriched);
     } catch (err) {
