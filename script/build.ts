@@ -38,8 +38,6 @@ async function buildAll() {
     outfile: "dist/index.cjs",
     define: {
       "process.env.NODE_ENV": '"production"',
-      // Shim import.meta.url for CJS output — esbuild doesn't auto-convert it
-      "import.meta.url": 'require("url").pathToFileURL(__filename).href',
     },
     minify: true,
     external: externals,
