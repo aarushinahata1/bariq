@@ -14,9 +14,6 @@ import { setupAuth, requireAuth, requireSuperAdmin } from "./auth";
 import { nanoid } from "nanoid";
 import bcrypt from "bcryptjs";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
 // Seed 195K medicine names from CSV on first startup (skips if table already populated)
 async function seedMedicineNames() {
   try {
@@ -27,7 +24,13 @@ async function seedMedicineNames() {
       ON medicine_names USING GIN (name gin_trgm_ops)
     `);
 
-    const csvPath = join(__dirname, "data", "medicine_names.csv");
+    // import.meta.url is undefined in the CJS production bundle — skip CSV seeding gracefully
+    let csvPath: string;
+    try {
+      csvPath = join(dirname(fileURLToPath(import.meta.url)), "data", "medicine_names.csv");
+    } catch {
+      return;
+    }
     if (!existsSync(csvPath)) return;
     const [{ cnt }] = await db.select({ cnt: sql<number>`count(*)::int` }).from(medicineNames);
     if (cnt > 0) return;
