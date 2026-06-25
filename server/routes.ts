@@ -24,12 +24,12 @@ async function seedMedicineNames() {
       ON medicine_names USING GIN (name gin_trgm_ops)
     `);
 
-    // import.meta.url is undefined in the CJS production bundle — skip CSV seeding gracefully
     let csvPath: string;
     try {
       csvPath = join(dirname(fileURLToPath(import.meta.url)), "data", "medicine_names.csv");
     } catch {
-      return;
+      // CJS production bundle: import.meta.url undefined, fall back to cwd (Render runs from project root)
+      csvPath = join(process.cwd(), "server", "data", "medicine_names.csv");
     }
     if (!existsSync(csvPath)) return;
     const [{ cnt }] = await db.select({ cnt: sql<number>`count(*)::int` }).from(medicineNames);
