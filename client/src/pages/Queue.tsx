@@ -66,10 +66,10 @@ function buildPrescriptionHtml(
   rx: { chiefComplaints?: string; diagnosis?: string; medications: PrescriptionMed[]; notes?: string },
   profile: Record<string, any>
 ): string {
-  const clinicName = esc(profile?.clinicName || "BariQ Clinic");
-  const tagline = profile?.tagline ? `<p class="sub">${esc(profile.tagline)}</p>` : "";
-  const address = profile?.address ? `<p class="sub">${esc(profile.address)}</p>` : "";
-  const contact = [profile?.phone, profile?.email].filter(Boolean).map(esc).join(" · ");
+  const clinicName = esc(profile?.clinicName || "Clinic");
+  const tagline = profile?.tagline ? `<p class="clinic-sub">${esc(profile.tagline)}</p>` : "";
+  const address = profile?.address ? `<p class="clinic-detail">${esc(profile.address).replace(/\n/g, "<br>")}</p>` : "";
+  const phone = profile?.phone ? `<p class="clinic-detail">${esc(profile.phone)}</p>` : "";
   const doctorName = esc(profile?.doctorName || doctor);
   const quals = profile?.qualifications ? esc(profile.qualifications) : "";
   const regNo = profile?.registrationNo ? `Reg. No. ${esc(profile.registrationNo)}` : "";
@@ -89,41 +89,47 @@ function buildPrescriptionHtml(
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{max-width:740px;margin:0 auto;padding:32px 40px}
-.header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:3px double #0d9488;margin-bottom:18px}
-.clinic-name{font-size:22px;font-weight:900;color:#0f766e;letter-spacing:-.5px}
-.sub{font-size:11px;color:#64748b;margin-top:3px;line-height:1.5}
+.page{max-width:760px;margin:0 auto}
+.accent{height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding:20px 40px 16px;border-bottom:2px solid #e2e8f0}
+.clinic-name{font-size:21px;font-weight:900;color:#0f766e;letter-spacing:-.3px;margin-bottom:4px}
+.clinic-sub{font-size:11px;color:#64748b;font-style:italic;margin-top:2px}
+.clinic-detail{font-size:12px;color:#475569;line-height:1.5;margin-top:3px}
 .dr-col{text-align:right}
-.dr-name{font-size:17px;font-weight:800;color:#0f172a}
+.dr-name{font-size:16px;font-weight:800;color:#0f172a}
 .dr-sub{font-size:11px;color:#64748b;margin-top:3px}
-.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:12.5px}
-.info-row{display:flex;gap:6px}
+.body{padding:18px 40px 28px}
+.doc-label{text-align:center;font-size:9px;font-weight:800;letter-spacing:.25em;color:#94a3b8;text-transform:uppercase;margin-bottom:14px}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 24px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:18px}
+.info-row{display:flex;gap:6px;font-size:12.5px}
 .lbl{color:#64748b;min-width:70px}.val{font-weight:600;color:#0f172a}
 .section{margin-bottom:14px}
 .sec-label{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.15em;margin-bottom:6px}
 .complaint-box{background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;color:#78350f;line-height:1.6}
 .diag-box{background:#dbeafe;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13.5px;font-weight:700;color:#1d4ed8}
-.rp{font-size:34px;font-style:italic;font-weight:900;color:#0d9488;margin-bottom:12px;line-height:1}
+.rp{font-size:36px;font-style:italic;font-weight:900;color:#0d9488;margin-bottom:12px;line-height:1}
 table{width:100%;border-collapse:collapse;margin-bottom:18px;font-size:12.5px}
-thead th{font-size:9px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.1em;padding:7px 9px;background:#f1f5f9;text-align:left;border-bottom:1px solid #e2e8f0}
-tbody td{padding:9px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+thead th{font-size:9px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.1em;padding:8px 10px;background:#0f766e;text-align:left}
+tbody td{padding:9px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+tbody tr:nth-child(even){background:#f8fafc}
 tbody tr:last-child td{border-bottom:none}
 .num{color:#94a3b8;width:20px;font-size:11px}
-.notes-box{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;color:#78350f;line-height:1.65;margin-bottom:22px}
 .notes-lbl{font-size:9px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:5px}
-.sig{display:flex;justify-content:flex-end;margin-top:28px}
+.notes-box{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;color:#78350f;line-height:1.65;margin-bottom:22px}
+.bottom-row{display:flex;justify-content:space-between;align-items:flex-end;padding-top:20px;border-top:1px dashed #e2e8f0;margin-top:8px}
+.branding{font-size:8px;color:#cbd5e1;padding-bottom:2px}
 .sig-box{text-align:center;min-width:180px}
-.sig-line{border-top:1.5px solid #94a3b8;margin-bottom:7px;height:36px}
+.sig-line{border-top:1.5px solid #94a3b8;margin-bottom:7px;height:40px}
 .sig-name{font-size:12px;font-weight:700;color:#0f172a}
 .sig-sub{font-size:10px;color:#64748b;margin-top:2px}
-.footer{margin-top:20px;padding-top:12px;border-top:1px dashed #e2e8f0;text-align:center;font-size:10px;color:#94a3b8}
-@media print{.page{padding:20px 24px}}
+@media print{.body{padding:12px 28px}.header{padding:12px 28px 12px}}
 </style></head><body>
 <div class="page">
+  <div class="accent"></div>
   <div class="header">
     <div>
       <p class="clinic-name">${clinicName}</p>
-      ${tagline}${address}${contact ? `<p class="sub">${contact}</p>` : ""}
+      ${tagline}${address}${phone}
     </div>
     <div class="dr-col">
       <p class="dr-name">Dr. ${doctorName}</p>
@@ -131,46 +137,31 @@ tbody tr:last-child td{border-bottom:none}
       ${regNo ? `<p class="dr-sub">${regNo}</p>` : ""}
     </div>
   </div>
-
-  <div class="info-grid">
-    <div class="info-row"><span class="lbl">Patient</span><span class="val">${esc(patient.name)}</span></div>
-    <div class="info-row"><span class="lbl">Date</span><span class="val">${esc(date)}</span></div>
-    ${patient.phone ? `<div class="info-row"><span class="lbl">Phone</span><span class="val">${esc(patient.phone)}</span></div>` : ""}
-    ${patient.age ? `<div class="info-row"><span class="lbl">Age</span><span class="val">${esc(patient.age)}</span></div>` : ""}
-  </div>
-
-  ${rx.chiefComplaints ? `
-  <div class="section">
-    <p class="sec-label">Chief Complaints</p>
-    <div class="complaint-box">${esc(rx.chiefComplaints)}</div>
-  </div>` : ""}
-
-  ${rx.diagnosis ? `
-  <div class="section">
-    <p class="sec-label">Diagnosis</p>
-    <div class="diag-box">${esc(rx.diagnosis)}</div>
-  </div>` : ""}
-
-  <p class="rp">&#8478;</p>
-  <table>
-    <thead><tr><th></th><th>Medicine</th><th>Dosage</th><th>Frequency</th><th>Timing</th><th>Duration</th><th>Instructions</th></tr></thead>
-    <tbody>${medRows}</tbody>
-  </table>
-
-  ${rx.notes ? `
-  <div>
-    <p class="notes-lbl">Advice / Notes</p>
-    <div class="notes-box">${esc(rx.notes)}</div>
-  </div>` : ""}
-
-  <div class="sig">
-    <div class="sig-box">
-      <div class="sig-line"></div>
-      <p class="sig-name">Dr. ${doctorName}</p>
-      ${quals ? `<p class="sig-sub">${quals}</p>` : ""}
+  <div class="body">
+    <p class="doc-label">Medical Prescription</p>
+    <div class="info-grid">
+      <div class="info-row"><span class="lbl">Patient</span><span class="val">${esc(patient.name)}</span></div>
+      <div class="info-row"><span class="lbl">Date</span><span class="val">${esc(date)}</span></div>
+      ${patient.phone ? `<div class="info-row"><span class="lbl">Phone</span><span class="val">${esc(patient.phone)}</span></div>` : ""}
+      ${patient.age ? `<div class="info-row"><span class="lbl">Age</span><span class="val">${esc(patient.age)}</span></div>` : ""}
+    </div>
+    ${rx.chiefComplaints ? `<div class="section"><p class="sec-label">Chief Complaints</p><div class="complaint-box">${esc(rx.chiefComplaints)}</div></div>` : ""}
+    ${rx.diagnosis ? `<div class="section"><p class="sec-label">Diagnosis</p><div class="diag-box">${esc(rx.diagnosis)}</div></div>` : ""}
+    <p class="rp">&#8478;</p>
+    <table>
+      <thead><tr><th></th><th>Medicine</th><th>Dosage</th><th>Frequency</th><th>Timing</th><th>Duration</th><th>Instructions</th></tr></thead>
+      <tbody>${medRows}</tbody>
+    </table>
+    ${rx.notes ? `<div><p class="notes-lbl">Advice / Notes</p><div class="notes-box">${esc(rx.notes)}</div></div>` : ""}
+    <div class="bottom-row">
+      <span class="branding">Powered by BariQ</span>
+      <div class="sig-box">
+        <div class="sig-line"></div>
+        <p class="sig-name">Dr. ${doctorName}</p>
+        ${quals ? `<p class="sig-sub">${quals}</p>` : ""}
+      </div>
     </div>
   </div>
-  <div class="footer"><p>${clinicName} · Digital Prescription via BariQ</p></div>
 </div>
 <script>window.onload=function(){window.print()}</script>
 </body></html>`;
@@ -181,14 +172,13 @@ function buildCombinedHtml(
   prescription: { medications: Array<{ name: string; dosage: string; frequency: string; duration: string; timing: string; instructions: string }>; notes: string } | null,
   profile: Record<string, any>
 ): string {
-  const clinicName = esc(profile?.clinicName || "BariQ Clinic");
-  const tagline = profile?.tagline ? `<p class="sub">${esc(profile.tagline)}</p>` : "";
-  const address = profile?.address ? `<p class="sub">${esc(profile.address)}</p>` : "";
-  const contactLine = [profile?.phone, profile?.email].filter(Boolean).map(esc).join(" · ");
-  const contact = contactLine ? `<p class="sub">${contactLine}</p>` : "";
+  const clinicName = esc(profile?.clinicName || "Clinic");
+  const tagline = profile?.tagline ? `<p class="clinic-sub">${esc(profile.tagline)}</p>` : "";
+  const address = profile?.address ? `<p class="clinic-detail">${esc(profile.address).replace(/\n/g, "<br>")}</p>` : "";
+  const phone = profile?.phone ? `<p class="clinic-detail">${esc(profile.phone)}</p>` : "";
   const doctorDisplay = esc(profile?.doctorName || receipt.doctor);
-  const quals = profile?.qualifications ? `<p class="quals">${esc(profile.qualifications)}</p>` : "";
-  const regNo = profile?.registrationNo ? `<p class="reg">Reg. No. ${esc(profile.registrationNo)}</p>` : "";
+  const quals = profile?.qualifications ? esc(profile.qualifications) : "";
+  const regNo = profile?.registrationNo ? `Reg. No. ${esc(profile.registrationNo)}` : "";
 
   let rxSection: string;
   if (prescription) {
@@ -224,93 +214,91 @@ function buildCombinedHtml(
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.page{max-width:680px;margin:0 auto;padding:36px 40px}
-.header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;border-bottom:3px solid #0d9488;margin-bottom:20px}
-.clinic-name{font-size:20px;font-weight:900;color:#0f766e}
-.sub{font-size:11px;color:#64748b;margin-top:4px;line-height:1.55}
-.doctor-col{text-align:right}
-.doctor-name{font-size:16px;font-weight:800;color:#0f172a}
-.quals{font-size:11.5px;color:#475569;margin-top:3px}
-.reg{font-size:10.5px;color:#94a3b8;margin-top:2px}
-.section-label{font-size:9.5px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.12em;margin-bottom:7px}
+.page{max-width:760px;margin:0 auto}
+.accent{height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding:20px 40px 16px;border-bottom:2px solid #e2e8f0}
+.clinic-name{font-size:21px;font-weight:900;color:#0f766e;letter-spacing:-.3px;margin-bottom:4px}
+.clinic-sub{font-size:11px;color:#64748b;font-style:italic;margin-top:2px}
+.clinic-detail{font-size:12px;color:#475569;line-height:1.5;margin-top:3px}
+.dr-col{text-align:right}
+.dr-name{font-size:16px;font-weight:800;color:#0f172a}
+.dr-sub{font-size:11px;color:#64748b;margin-top:3px}
+.body{padding:18px 40px 28px}
+.section-label{font-size:9px;font-weight:800;letter-spacing:.2em;color:#94a3b8;text-transform:uppercase;margin-bottom:8px}
 .row{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;padding:7px 0;border-bottom:1px solid #f1f5f9}
 .row:last-child{border-bottom:none}
 .lbl{color:#64748b}.val{font-weight:600;color:#0f172a}
 .amount-box{display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;margin:14px 0 20px}
 .amount-label{font-size:12px;font-weight:600;color:#15803d}
-.amount-method{font-size:11px;color:#4ade80;margin-top:2px}
+.amount-method{font-size:12px;color:#16a34a;margin-top:2px}
 .amount-value{font-size:26px;font-weight:900;color:#15803d}
 .badge{display:inline-block;background:#dcfce7;color:#16a34a;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em;margin-top:4px}
 .divider{display:flex;align-items:center;gap:12px;margin:4px 0 20px}
 .div-line{flex:1;height:1px;background:#e2e8f0}
-.div-label{font-size:10px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.2em}
-.rp{font-size:30px;font-style:italic;font-weight:900;color:#0d9488;margin-bottom:14px;line-height:1}
+.div-label{font-size:9px;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.2em}
+.rp{font-size:34px;font-style:italic;font-weight:900;color:#0d9488;margin-bottom:14px;line-height:1}
 table{width:100%;border-collapse:collapse;margin-bottom:22px}
-thead th{font-size:9.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.1em;padding:8px 10px;background:#f1f5f9;text-align:left}
+thead th{font-size:9px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.1em;padding:8px 10px;background:#0f766e;text-align:left}
 tbody td{font-size:13px;padding:10px;border-bottom:1px solid #f1f5f9}
+tbody tr:nth-child(even){background:#f8fafc}
 tbody tr:last-child td{border-bottom:none}
 .num{color:#94a3b8;width:24px;padding-right:6px;vertical-align:top}
 .notes{background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px 16px;margin-bottom:24px}
 .notes-blank{margin-bottom:24px}
-.nl{font-size:9.5px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
+.nl{font-size:9px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:6px}
 .nt{font-size:13px;color:#78350f;line-height:1.65}
 .write-area{margin-bottom:18px}
 .wline{border-bottom:1px solid #cbd5e1;height:32px;margin-bottom:4px}
-.sig{display:flex;justify-content:flex-end;margin-top:32px}
+.bottom-row{display:flex;justify-content:space-between;align-items:flex-end;padding-top:20px;border-top:1px dashed #e2e8f0;margin-top:8px}
+.branding{font-size:8px;color:#cbd5e1;padding-bottom:2px}
 .sig-box{text-align:center;min-width:180px}
-.sig-line{border-top:1px solid #94a3b8;margin-bottom:7px}
-.sig-name{font-size:12px;font-weight:600;color:#475569}
-.sig-sub{font-size:10.5px;color:#94a3b8;margin-top:2px}
-.footer{margin-top:22px;padding-top:14px;border-top:1px dashed #e2e8f0;text-align:center}
-.footer p{font-size:10px;color:#94a3b8;line-height:1.7}
-@media print{.page{padding:20px 24px}}
+.sig-line{border-top:1.5px solid #94a3b8;margin-bottom:7px;height:40px}
+.sig-name{font-size:12px;font-weight:700;color:#0f172a}
+.sig-sub{font-size:10px;color:#64748b;margin-top:2px}
+@media print{.body{padding:12px 28px}.header{padding:12px 28px 12px}}
 </style></head><body>
 <div class="page">
+  <div class="accent"></div>
   <div class="header">
     <div>
       <p class="clinic-name">${clinicName}</p>
-      ${tagline}${address}${contact}
+      ${tagline}${address}${phone}
     </div>
-    <div class="doctor-col">
-      <p class="doctor-name">Dr. ${doctorDisplay}</p>
-      ${quals}${regNo}
-    </div>
-  </div>
-
-  <p class="section-label">Bill Details</p>
-  <div class="row"><span class="lbl">Patient</span><span class="val">${esc(receipt.patient)}</span></div>
-  <div class="row"><span class="lbl">Doctor</span><span class="val">Dr. ${esc(receipt.doctor)}</span></div>
-  <div class="row"><span class="lbl">Date &amp; Time</span><span class="val">${esc(receipt.date)}</span></div>
-  <div class="amount-box">
-    <div>
-      <p class="amount-label">Amount Paid</p>
-      <p class="amount-method">${esc(receipt.paymentMethod)}</p>
-    </div>
-    <div style="text-align:right">
-      <p class="amount-value">&#8377;${esc(receipt.amount)}</p>
-      <span class="badge">&#10003; Paid</span>
+    <div class="dr-col">
+      <p class="dr-name">Dr. ${doctorDisplay}</p>
+      ${quals ? `<p class="dr-sub">${quals}</p>` : ""}
+      ${regNo ? `<p class="dr-sub">${regNo}</p>` : ""}
     </div>
   </div>
-
-  <div class="divider">
-    <div class="div-line"></div>
-    <span class="div-label">Prescription</span>
-    <div class="div-line"></div>
-  </div>
-
-  ${rxSection}
-
-  <div class="sig">
-    <div class="sig-box">
-      <div class="sig-line"></div>
-      <p class="sig-name">Dr. ${doctorDisplay}</p>
-      ${profile?.qualifications ? `<p class="sig-sub">${esc(profile.qualifications)}</p>` : ""}
+  <div class="body">
+    <p class="section-label">Bill Details</p>
+    <div class="row"><span class="lbl">Patient</span><span class="val">${esc(receipt.patient)}</span></div>
+    <div class="row"><span class="lbl">Doctor</span><span class="val">Dr. ${esc(receipt.doctor)}</span></div>
+    <div class="row"><span class="lbl">Date &amp; Time</span><span class="val">${esc(receipt.date)}</span></div>
+    <div class="amount-box">
+      <div>
+        <p class="amount-label">Amount Paid</p>
+        <p class="amount-method">${esc(receipt.paymentMethod)}</p>
+      </div>
+      <div style="text-align:right">
+        <p class="amount-value">&#8377;${esc(receipt.amount)}</p>
+        <span class="badge">&#10003; Paid</span>
+      </div>
     </div>
-  </div>
-
-  <div class="footer">
-    <p>This document serves as both a payment receipt and a prescription.</p>
-    <p>${clinicName} &middot; Generated by BariQ</p>
+    <div class="divider">
+      <div class="div-line"></div>
+      <span class="div-label">Prescription</span>
+      <div class="div-line"></div>
+    </div>
+    ${rxSection}
+    <div class="bottom-row">
+      <span class="branding">Powered by BariQ</span>
+      <div class="sig-box">
+        <div class="sig-line"></div>
+        <p class="sig-name">Dr. ${doctorDisplay}</p>
+        ${quals ? `<p class="sig-sub">${quals}</p>` : ""}
+      </div>
+    </div>
   </div>
 </div>
 <script>window.onload=function(){window.print()}</script>
@@ -819,7 +807,7 @@ export default function Queue() {
       }
       slots.push({
         id: `${selectedDate}|${s.start}-${s.end}`,
-        label: `${dateLabel} — ${s.start} - ${s.end}`,
+        label: `${dateLabel} · ${s.start} - ${s.end}`,
         date: selectedDate,
         start: s.start,
         end: s.end,

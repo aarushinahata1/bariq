@@ -16,8 +16,14 @@ declare module "express-session" {
   }
 }
 
-const SUPER_ADMIN_EMAIL = process.env.SUPER_ADMIN_EMAIL || "admin@tirthontech.com";
-const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD || "TirthonAdmin2024!";
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} environment variable is required`);
+  return value;
+}
+
+const SUPER_ADMIN_EMAIL = requireEnv("SUPER_ADMIN_EMAIL");
+const SUPER_ADMIN_PASSWORD = requireEnv("SUPER_ADMIN_PASSWORD");
 
 // Timing-safe string comparison — prevents timing attacks on password checks
 function timingSafeEqual(a: string, b: string): boolean {
@@ -75,7 +81,11 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
 export function setupAuth(app: Express) {
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "bariq-dev-secret-2024",
+      secret: (() => {
+        const s = process.env.SESSION_SECRET;
+        if (!s) throw new Error("SESSION_SECRET environment variable is required");
+        return s;
+      })(),
       store: new PgSession({
         pool,
         tableName: "sessions",
@@ -117,8 +127,8 @@ export function setupAuth(app: Express) {
       if (!name || !email || !password) {
         return res.status(400).json({ message: "Name, email and password are required" });
       }
-      if (password.length < 6) {
-        return res.status(400).json({ message: "Password must be at least 6 characters" });
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
       }
       const existing = await db.select().from(clinics).where(eq(clinics.email, email.toLowerCase().trim()));
       if (existing.length > 0) {

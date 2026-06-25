@@ -35,6 +35,7 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
     description: "Full access to all modules",
     allowedRoutes: [
       "/dashboard",
+      "/doctor-console",
       "/crm",
       "/queue",
       "/appointments",
@@ -47,6 +48,7 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
     defaultRoute: "/dashboard",
     sidebarItems: [
       "Dashboard",
+      "Doctor Console",
       "CRM & Marketing",
       "Queue Management",
       "Appointments",
@@ -83,9 +85,11 @@ export const ROLE_CONFIGS: Record<Role, RoleConfig> = {
       "/appointments",
       "/patients",
       "/patients/:id",
+      "/doctor-console",
     ],
-    defaultRoute: "/queue",
+    defaultRoute: "/doctor-console",
     sidebarItems: [
+      "Doctor Console",
       "Queue Management",
       "Appointments",
       "Patients",

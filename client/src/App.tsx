@@ -26,6 +26,7 @@ const PatientHistory = lazy(() => import("@/pages/PatientHistory"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const Register = lazy(() => import("@/pages/Register"));
 const Pharmacy = lazy(() => import("@/pages/Pharmacy"));
+const DoctorConsole = lazy(() => import("@/pages/DoctorConsole"));
 
 function Router() {
   const { isAuthenticated, isSuperAdmin, isLoading, clinic } = useAuth();
@@ -104,6 +105,7 @@ function Router() {
         <Route path="/queue" component={Queue} />
         <Route path="/settings" component={Settings} />
         <Route path="/pharmacy" component={Pharmacy} />
+        <Route path="/doctor-console" component={DoctorConsole} />
         <Route><Redirect to="/dashboard" /></Route>
       </Switch>
     </RoleProvider>

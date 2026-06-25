@@ -1,16 +1,16 @@
-import { useState } from "react";
+﻿import { useState } from "react";
 import { Link } from "wouter";
 import {
   Activity, Clock, Users, FileText, BarChart3, Shield,
   Star, CheckCircle, ArrowRight, Stethoscope, Zap, MessageCircle,
-  Pill, Package, Bell, Heart, Printer, AlertTriangle, Menu, X, Phone, Mail,
+  Pill, Package, Bell, Heart, Printer, AlertTriangle, Menu, X, Phone, Mail, MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const WHATSAPP = "https://wa.me/91942457591";
+const WHATSAPP = "https://wa.me/919424575918";
 
 const stats = [
-  { value: "500+", label: "Clinics" },
+  { value: "120+", label: "Clinics" },
   { value: "15,000+", label: "Patients Managed" },
   { value: "₹5 Cr+", label: "Billing Processed" },
 ];
@@ -19,19 +19,19 @@ const features = [
   {
     icon: Clock,
     title: "Live Queue Management",
-    desc: "Real-time digital tokens with SSE push updates. Patients track their position from their phone — no more crowded waiting rooms.",
+    desc: "Real-time digital tokens with SSE push updates. Patients track their position from their phone. No more crowded waiting rooms.",
     badge: null,
   },
   {
     icon: Heart,
     title: "Complete Patient Records",
-    desc: "Full medical history per visit — vitals (BP, pulse, SpO₂, temp, weight), diagnoses, prescriptions, and a one-click printable medical summary.",
+    desc: "Full medical history per visit: vitals (BP, pulse, SpO₂, temp, weight), diagnoses, prescriptions, and a one-click printable medical summary.",
     badge: "New",
   },
   {
     icon: Pill,
     title: "Smart Pharmacy POS",
-    desc: "Full pharmacy billing with FEFO auto-selection — the soonest-expiring batch is always sold first. Batch tracking, GST, and instant print invoices.",
+    desc: "Full pharmacy billing with FEFO auto-selection. The soonest-expiring batch is always sold first. Batch tracking, GST, and instant print invoices.",
     badge: "New",
   },
   {
@@ -43,13 +43,13 @@ const features = [
   {
     icon: AlertTriangle,
     title: "Allergy & Safety Alerts",
-    desc: "Patient allergies show as a red banner on every visit — doctors can't miss it. Blood group, age, gender always visible at a glance.",
+    desc: "Patient allergies show as a red banner on every visit. Doctors can't miss it. Blood group, age, gender always visible at a glance.",
     badge: "New",
   },
   {
     icon: FileText,
     title: "Digital Prescriptions",
-    desc: "Doctors write and print prescriptions digitally. Full history per patient — expand any past Rx, reprint it, or delete it with one tap.",
+    desc: "Doctors write and print prescriptions digitally. Full history per patient. Expand any past Rx, reprint it, or delete it with one tap.",
   },
   {
     icon: Users,
@@ -64,24 +64,24 @@ const features = [
   {
     icon: Shield,
     title: "Multi-Role Access",
-    desc: "Separate logins for doctors, receptionists, pharmacists, and admin. Each sees only what they need — no confusion, no data leaks.",
+    desc: "Separate logins for doctors, receptionists, pharmacists, and admin. Each sees only what they need. No confusion, no data leaks.",
   },
 ];
 
 const testimonials = [
   {
     name: "Dr. Priya Sharma",
-    clinic: "Sharma Multi-Specialty Clinic — Pune",
+    clinic: "Sharma Multi-Specialty Clinic, Pune",
     text: "Patient wait time dropped from 45 minutes to under 15. Our reception team is half as stressed now.",
   },
   {
     name: "Dr. Rohan Mehta",
-    clinic: "Mehta Paediatrics — Mumbai",
+    clinic: "Mehta Paediatrics, Mumbai",
     text: "The allergy banner and vitals tracking alone have made our clinic safer. We can't imagine going back to paper records.",
   },
   {
     name: "Dr. Kavitha Iyer",
-    clinic: "Iyer Women's Clinic — Bangalore",
+    clinic: "Iyer Women's Clinic, Bangalore",
     text: "The pharmacy expiry alerts saved us from dispensing expired stock twice last quarter. The reorder feature is brilliant.",
   },
 ];
@@ -109,7 +109,7 @@ const newHighlights = [
   {
     icon: Pill,
     title: "FEFO Pharmacy",
-    body: "Automatically sells the batch closest to expiry first — reducing waste and compliance risk without any manual effort.",
+    body: "Automatically sells the batch closest to expiry first, reducing waste and compliance risk without any manual effort.",
   },
   {
     icon: Bell,
@@ -124,17 +124,17 @@ const newHighlights = [
   {
     icon: Heart,
     title: "Vitals Per Visit",
-    body: "Record BP, pulse, temperature, weight, SpO₂, and height for every appointment — inline, in seconds.",
+    body: "Record BP, pulse, temperature, weight, SpO₂, and height for every appointment, inline and in seconds.",
   },
   {
     icon: AlertTriangle,
     title: "Allergy Banner",
-    body: "Patient allergies appear as a red banner at the top of their history page — impossible to miss before prescribing.",
+    body: "Patient allergies appear as a red banner at the top of their history page. Impossible to miss before prescribing.",
   },
   {
     icon: Printer,
     title: "Print Medical Records",
-    body: "One-click printable patient summary — demographics, visit history, diagnoses, and past prescriptions.",
+    body: "One-click printable patient summary with demographics, visit history, diagnoses, and past prescriptions.",
   },
 ];
 
@@ -235,7 +235,7 @@ export default function Landing() {
           </h1>
 
           <p className="text-lg text-gray-500 max-w-xl mx-auto mb-10 leading-relaxed">
-            BariQ brings your entire clinic onto one screen — queue, patients, prescriptions, pharmacy, and billing — so you can focus on care, not paperwork.
+            BariQ brings your entire clinic onto one screen: queue, patients, prescriptions, pharmacy, and billing. Focus on care, not paperwork.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-5">
@@ -283,7 +283,7 @@ export default function Landing() {
               New: Smart Pharmacy + Complete Patient Records
             </h2>
             <p className="text-teal-200 text-lg max-w-2xl mx-auto">
-              The features clinics asked for most — now live. No extra cost, no setup needed.
+              The features clinics asked for most, now live. No extra cost, no setup needed.
             </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -308,7 +308,7 @@ export default function Landing() {
               Everything a clinic actually needs
             </h2>
             <p className="text-gray-500 text-lg max-w-xl mx-auto">
-              Built from the ground up for Indian clinics — whether you run a single room or a multi-doctor practice.
+              Built from the ground up for Indian clinics, whether you run a single room or a multi-doctor practice.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -342,13 +342,13 @@ export default function Landing() {
                 Stop losing money on expired stock
               </h2>
               <p className="text-gray-500 text-base leading-relaxed mb-8">
-                BariQ's pharmacy automatically applies FEFO (First Expiry, First Out) — the closest-to-expiry batch is always sold first. Combined with live alerts and smart reorder suggestions, you'll never be caught off guard again.
+                BariQ's pharmacy automatically applies FEFO (First Expiry, First Out). The closest-to-expiry batch is always sold first. Combined with live alerts and smart reorder suggestions, you'll never be caught off guard again.
               </p>
               <div className="space-y-4">
                 {[
                   { icon: Bell, text: "Live alerts for expired, near-expiry (7 / 30 / 90 days), and low-stock medicines" },
-                  { icon: Package, text: "Suggested reorder quantities with supplier info — print a purchase order in one click" },
-                  { icon: Pill, text: "FEFO auto-selection in billing — no manual batch picking required" },
+                  { icon: Package, text: "Suggested reorder quantities with supplier info. Print a purchase order in one click." },
+                  { icon: Pill, text: "FEFO auto-selection in billing. No manual batch picking required." },
                   { icon: BarChart3, text: "Batch tracking, GST billing, and daily pharmacy revenue reports" },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex items-start gap-3">
@@ -404,7 +404,7 @@ export default function Landing() {
                 <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full">Male</span>
                 <span className="text-xs font-black text-red-600 bg-red-50 px-2 py-1 rounded-full">B+</span>
               </div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Vitals — Today's Visit</p>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Vitals · Today's Visit</p>
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="text-xs bg-red-50 text-red-600 px-2.5 py-1 rounded-full font-medium">🩸 130/85</span>
                 <span className="text-xs bg-pink-50 text-pink-600 px-2.5 py-1 rounded-full font-medium">❤️ 78 bpm</span>
@@ -439,11 +439,11 @@ export default function Landing() {
                 Everything a doctor needs at a glance
               </h2>
               <p className="text-gray-500 text-base leading-relaxed mb-8">
-                Every visit now captures vitals, diagnosis, and prescription in one place. Patient allergies are impossible to miss — they appear as a red banner before you prescribe anything.
+                Every visit now captures vitals, diagnosis, and prescription in one place. Patient allergies are impossible to miss. They appear as a red banner before you prescribe anything.
               </p>
               <div className="space-y-4">
                 {[
-                  { icon: AlertTriangle, text: "Allergy banner on every visit — never prescribe something a patient reacts to" },
+                  { icon: AlertTriangle, text: "Allergy banner on every visit. Never prescribe something a patient reacts to." },
                   { icon: Activity, text: "Record BP, pulse, SpO₂, temperature, weight, and height per appointment" },
                   { icon: FileText, text: "View, expand, print, or delete any past prescription in two clicks" },
                   { icon: Printer, text: "One-click printable medical summary with full visit history for referrals" },
@@ -466,7 +466,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-3">
-              500+ clinics trust BariQ
+              120+ clinics trust BariQ
             </h2>
             <p className="text-gray-500 text-lg">
               From small practices in Tier-2 cities to busy multi-doctor hospitals
@@ -499,7 +499,7 @@ export default function Landing() {
               Everything included. No hidden add-ons.
             </h2>
             <p className="text-gray-500 text-lg max-w-xl mx-auto">
-              Every BariQ clinic gets the complete platform — queue, pharmacy, patient records, prescriptions, billing, and analytics.
+              Every BariQ clinic gets the complete platform: queue, pharmacy, patient records, prescriptions, billing, and analytics.
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
@@ -525,8 +525,24 @@ export default function Landing() {
             Let's talk about what works for you
           </h2>
           <p className="text-gray-500 text-lg mb-10 leading-relaxed max-w-xl mx-auto">
-            We believe every clinic is different. Reach out and we'll put together a plan that fits your practice size and budget — no standard rate card, just a fair conversation.
+            We believe every clinic is different. Reach out and we'll put together a plan that fits your practice size and budget. No standard rate card, just a fair conversation.
           </p>
+
+          {/* Contact details */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 mb-8 text-sm text-gray-500">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-teal-600 shrink-0" />
+              <span>B56, Tilak Nagar, Indore, India</span>
+            </div>
+            <a href="tel:+919424575918" className="flex items-center gap-2 hover:text-teal-700 transition-colors">
+              <Phone className="w-4 h-4 text-teal-600 shrink-0" />
+              <span>+91 94245 75918</span>
+            </a>
+            <a href="mailto:business@tirthontech.com" className="flex items-center gap-2 hover:text-teal-700 transition-colors">
+              <Mail className="w-4 h-4 text-teal-600 shrink-0" />
+              <span>business@tirthontech.com</span>
+            </a>
+          </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto mb-8">
             <a href={WHATSAPP} target="_blank" rel="noopener noreferrer"
@@ -537,7 +553,7 @@ export default function Landing() {
                 <p className="text-teal-200 text-xs">Quick response · Mon–Sat</p>
               </div>
             </a>
-            <a href="mailto:akshatnahata05@gmail.com"
+            <a href="mailto:business@tirthontech.com"
               className="flex items-center justify-center gap-3 bg-white hover:bg-gray-50 text-gray-800 rounded-2xl px-6 py-4 font-semibold border border-gray-200 transition-colors">
               <Mail className="w-5 h-5 text-teal-700" />
               <div className="text-left">
@@ -552,7 +568,7 @@ export default function Landing() {
             <Link href="/signup" className="text-teal-700 font-semibold hover:underline">
               start your 7-day free trial
             </Link>{" "}
-            — no payment required, full platform access from day one.
+            No payment required, full platform access from day one.
           </p>
         </div>
       </section>
@@ -568,7 +584,7 @@ export default function Landing() {
               Ready to simplify your clinic?
             </h2>
             <p className="text-gray-500 mb-8 leading-relaxed">
-              Join 500+ clinics already using BariQ. Your first 7 days are completely free — no setup fees, no contracts, no credit card.
+              Join 120+ clinics already using BariQ. Your first 7 days are completely free. No setup fees, no contracts, no credit card.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
               <Link href="/signup">
@@ -626,14 +642,31 @@ export default function Landing() {
             {/* Contact */}
             <div>
               <p className="text-sm font-semibold text-gray-700 mb-3">Contact</p>
-              <div className="space-y-2">
+              <div className="space-y-2.5">
+                <div className="flex items-start gap-2 text-sm text-gray-400">
+                  <MapPin className="w-3.5 h-3.5 text-teal-600 shrink-0 mt-0.5" />
+                  <span>B56, Tilak Nagar, Indore, India</span>
+                </div>
+                <a href="tel:+919424575918" className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-700 transition-colors">
+                  <Phone className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                  <span>+91 94245 75918</span>
+                </a>
+                <a href="mailto:business@tirthontech.com" className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-700 transition-colors">
+                  <Mail className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                  <span>business@tirthontech.com</span>
+                </a>
                 <a href={WHATSAPP} target="_blank" rel="noopener noreferrer" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">WhatsApp Support</a>
-                <a href="mailto:akshatnahata05@gmail.com" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Email Us</a>
               </div>
             </div>
           </div>
           <div className="border-t border-gray-200 pt-6 flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-sm text-gray-400">© 2026 TirthonTech. Made with care for Indian clinics.</p>
+            <p className="text-sm text-gray-400">© 2026 BariQ. Made with care for Indian clinics.</p>
+            <p className="text-sm text-gray-400">
+              Built by{' '}
+              <a href="https://www.tirthontech.com" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline font-medium">
+                TirthonTech
+              </a>
+            </p>
             <div className="flex gap-6 text-sm text-gray-400">
               <a href="#" className="hover:text-gray-700 transition-colors">Privacy Policy</a>
               <a href="#" className="hover:text-gray-700 transition-colors">Terms of Use</a>

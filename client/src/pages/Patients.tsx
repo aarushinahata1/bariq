@@ -295,13 +295,25 @@ function CreatePatientDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     defaultValues: { name: "", phone: "", email: "", notes: "", source: "internal" }
   });
 
+  const watchedPhone = form.watch("phone");
+  const normalizedPhone = watchedPhone.replace(/\D/g, "").slice(-10);
+
+  const samePhonePatients = useMemo(() => {
+    if (normalizedPhone.length < 10 || !allPatients) return [];
+    return allPatients.filter(p => p.phone.replace(/\D/g, "").slice(-10) === normalizedPhone);
+  }, [normalizedPhone, allPatients]);
+
   const onSubmit = (data: InsertPatient) => {
-    const normalized = data.phone.replace(/\D/g, "");
-    const duplicate = allPatients?.find(p => p.phone.replace(/\D/g, "") === normalized);
-    if (duplicate) {
+    const normalized = data.phone.replace(/\D/g, "").slice(-10);
+    // Only block if exact name+phone duplicate (not family members)
+    const exactDuplicate = allPatients?.find(
+      p => p.phone.replace(/\D/g, "").slice(-10) === normalized &&
+           p.name.trim().toLowerCase() === data.name.trim().toLowerCase()
+    );
+    if (exactDuplicate) {
       toast({
-        title: "Duplicate phone number",
-        description: `${duplicate.name} is already registered with this number.`,
+        title: "Already registered",
+        description: `${exactDuplicate.name} is already in the system with this number.`,
         variant: "destructive",
       });
       return;
@@ -331,6 +343,38 @@ function CreatePatientDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            {/* Phone first */}
+            <FormField control={form.control} name="phone" render={({ field }) => (
+              <FormItem>
+                <FormLabel>Phone *</FormLabel>
+                <FormControl>
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <Input placeholder="10-digit mobile number" {...field} className="rounded-xl pl-9" />
+                  </div>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )} />
+
+            {/* Show existing patients with same phone */}
+            {samePhonePatients.length > 0 && (
+              <div className="rounded-xl bg-amber-50 border border-amber-100 p-3 space-y-1.5">
+                <p className="text-xs font-semibold text-amber-700">
+                  {samePhonePatients.length} patient{samePhonePatients.length > 1 ? "s" : ""} already use this number:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {samePhonePatients.map(p => (
+                    <span key={p.id} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-amber-200 text-xs font-medium text-slate-700">
+                      <span className="w-4 h-4 rounded-full bg-amber-200 text-amber-800 flex items-center justify-center text-[9px] font-black">{p.name.charAt(0)}</span>
+                      {p.name}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs text-amber-600">You can still add a family member with the same number.</p>
+              </div>
+            )}
+
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem>
                 <FormLabel>Full Name *</FormLabel>
@@ -339,13 +383,6 @@ function CreatePatientDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               </FormItem>
             )} />
             <div className="grid grid-cols-2 gap-4">
-              <FormField control={form.control} name="phone" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Phone *</FormLabel>
-                  <FormControl><Input placeholder="+91 98765 43210" {...field} className="rounded-xl" /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
               <FormField control={form.control} name="email" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Email</FormLabel>
@@ -353,26 +390,26 @@ function CreatePatientDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                   <FormMessage />
                 </FormItem>
               )} />
+              <FormField control={form.control} name="source" render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Source</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value || "internal"}>
+                    <FormControl>
+                      <SelectTrigger className="rounded-xl h-10">
+                        <SelectValue placeholder="Source" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="internal">Direct / Walk-in</SelectItem>
+                      <SelectItem value="online">Online</SelectItem>
+                      <SelectItem value="referral">Referral</SelectItem>
+                      <SelectItem value="social">Social Media</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )} />
             </div>
-            <FormField control={form.control} name="source" render={({ field }) => (
-              <FormItem>
-                <FormLabel>Patient Source</FormLabel>
-                <Select onValueChange={field.onChange} defaultValue={field.value || "internal"}>
-                  <FormControl>
-                    <SelectTrigger className="rounded-xl h-11">
-                      <SelectValue placeholder="How did they find us?" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    <SelectItem value="internal">Direct / Walk-in</SelectItem>
-                    <SelectItem value="online">Online / Website</SelectItem>
-                    <SelectItem value="referral">Referral</SelectItem>
-                    <SelectItem value="social">Social Media</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )} />
             <FormField control={form.control} name="notes" render={({ field }) => (
               <FormItem>
                 <FormLabel>Medical Notes</FormLabel>

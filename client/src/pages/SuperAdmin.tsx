@@ -24,7 +24,7 @@ import { format } from "date-fns";
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmtDate(d: string | null | undefined) {
-  if (!d) return "—";
+  if (!d) return "-";
   return format(new Date(d), "dd MMM yyyy");
 }
 
@@ -360,7 +360,7 @@ export default function SuperAdmin() {
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm text-gray-900 truncate">{p.clinicName}</p>
                     <p className="text-xs text-gray-500">
-                      {fmtAmount(p.amount)} · <span className="capitalize">{p.planType || "—"}</span>
+                      {fmtAmount(p.amount)} · <span className="capitalize">{p.planType || "-"}</span>
                       {p.utr && <span className="font-mono ml-1 text-gray-400">· {p.utr}</span>}
                     </p>
                   </div>

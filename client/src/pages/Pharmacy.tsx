@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
@@ -63,43 +64,81 @@ function rupees(paise: number) { return (paise / 100).toFixed(2); }
 function buildBillHtml(bill: PharmacyBill, clinicProfile?: Record<string, any>): string {
   const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const rows = (bill.items as CartItem[]).map(i =>
-    `<tr><td>${esc(i.name)}</td><td style="text-align:center">${i.qty} ${esc(i.unit)}</td><td style="text-align:right">₹${rupees(i.sellingPrice)}</td><td style="text-align:right">${i.gstPercent}%</td><td style="text-align:right">₹${rupees(i.total)}</td></tr>`
+    `<tr>
+      <td>${esc(i.name)}</td>
+      <td style="text-align:center">${i.qty} ${esc(i.unit)}</td>
+      <td style="text-align:right">₹${rupees(i.sellingPrice)}</td>
+      <td style="text-align:right">${i.gstPercent}%</td>
+      <td style="text-align:right;font-weight:600">₹${rupees(i.total)}</td>
+    </tr>`
   ).join("");
-  const cName = esc(clinicProfile?.name || "Pharmacy");
-  const cAddr = clinicProfile?.address ? `<div class="cs">${esc(clinicProfile.address)}</div>` : "";
-  const cPhone = clinicProfile?.phone ? `<div class="cs">Ph: ${esc(clinicProfile.phone)}</div>` : "";
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Bill #${bill.id}</title>
+  const cName = esc(clinicProfile?.clinicName || "Pharmacy");
+  const cAddr = clinicProfile?.address ? `<p class="clinic-detail">${esc(clinicProfile.address).replace(/\n/g, "<br>")}</p>` : "";
+  const cPhone = clinicProfile?.phone ? `<p class="clinic-detail">${esc(clinicProfile.phone)}</p>` : "";
+  const cTagline = clinicProfile?.tagline ? `<p class="clinic-sub">${esc(clinicProfile.tagline)}</p>` : "";
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Bill #${bill.id} – ${cName}</title>
 <style>
-body{font-family:sans-serif;max-width:480px;margin:0 auto;padding:20px;font-size:13px}
-.cn{font-size:18px;font-weight:bold;text-align:center;margin-bottom:2px}
-.cs{text-align:center;font-size:11px;color:#64748b;margin:1px 0}
-h3{text-align:center;font-size:12px;color:#475569;margin:10px 0 4px;letter-spacing:.5px}
-p{margin:2px 0}
-table{width:100%;border-collapse:collapse;margin-top:12px}
-th{background:#f1f5f9;padding:6px 8px;text-align:left;font-size:11px;font-weight:600}
-td{padding:5px 8px;border-bottom:1px solid #f1f5f9}
-.bold{font-weight:bold}.right{text-align:right}
-hr{border:none;border-top:1px dashed #cbd5e1;margin:10px 0}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{max-width:520px;margin:0 auto}
+.accent{height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)}
+.header{padding:18px 24px 14px;border-bottom:2px solid #e2e8f0}
+.clinic-name{font-size:20px;font-weight:900;color:#0f766e;letter-spacing:-.3px;margin-bottom:3px}
+.clinic-sub{font-size:11px;color:#64748b;font-style:italic;margin-top:2px}
+.clinic-detail{font-size:12px;color:#475569;line-height:1.5;margin-top:3px}
+.body{padding:12px 24px 20px}
+.doc-label{text-align:center;font-size:9px;font-weight:800;letter-spacing:.25em;color:#94a3b8;text-transform:uppercase;margin:12px 0 10px}
+.meta{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px}
+.meta p{font-size:12.5px;color:#1e293b;margin:2px 0}
+.meta .lbl{color:#64748b;font-size:12px}
+.divider{border:none;border-top:1px dashed #cbd5e1;margin:12px 0}
+table{width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12.5px}
+thead th{font-size:9px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.08em;padding:7px 8px;background:#0f766e;text-align:left}
+tbody td{padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+tbody tr:nth-child(even){background:#f8fafc}
+tbody tr:last-child td{border-bottom:none}
+.totals{width:100%;border-collapse:collapse;margin-top:4px}
+.totals td{padding:5px 8px;font-size:12.5px}
+.totals td:last-child{text-align:right}
+.totals .total-row td{font-weight:700;font-size:14px;color:#0f766e;border-top:2px solid #e2e8f0;padding-top:8px}
+.footer{padding:10px 24px 16px;text-align:center}
+.thank-you{font-size:12px;color:#475569;margin-bottom:6px}
+.branding{font-size:8px;color:#cbd5e1}
+@media print{.body{padding:8px 18px}.header{padding:12px 18px 10px}}
 </style></head><body>
-<div class="cn">${cName}</div>${cAddr}${cPhone}
-<h3>— PHARMACY RECEIPT —</h3><hr/>
-<p><strong>Bill No:</strong> #${bill.id}</p>
-<p><strong>Date:</strong> ${format(new Date(bill.createdAt), "dd MMM yyyy, h:mm a")}</p>
-<p><strong>Patient:</strong> ${esc(bill.patientName || "Walk-in")}</p>
-${bill.patientPhone ? `<p><strong>Phone:</strong> ${esc(bill.patientPhone)}</p>` : ""}
-<hr/>
-<table><thead><tr><th>Medicine</th><th style="text-align:center">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">GST</th><th style="text-align:right">Amt</th></tr></thead>
-<tbody>${rows}</tbody></table>
-<hr/>
-<table><tbody>
-<tr><td>Subtotal</td><td class="right">₹${rupees(bill.subtotal)}</td></tr>
-<tr><td>GST</td><td class="right">₹${rupees(bill.gstTotal)}</td></tr>
-${bill.discountAmount ? `<tr><td>Discount (${bill.discountPercent}%)</td><td class="right">-₹${rupees(bill.discountAmount)}</td></tr>` : ""}
-<tr class="bold"><td><strong>TOTAL</strong></td><td class="right"><strong>₹${rupees(bill.totalAmount)}</strong></td></tr>
-<tr><td>Payment</td><td class="right">${esc(bill.paymentMethod || "Cash")}</td></tr>
-</tbody></table>
-${bill.notes ? `<p style="margin-top:8px;font-size:11px;color:#475569"><em>${esc(bill.notes)}</em></p>` : ""}
-<p style="text-align:center;font-size:11px;color:#64748b;margin-top:14px">Thank you for choosing ${cName}!</p>
+<div class="page">
+  <div class="accent"></div>
+  <div class="header">
+    <p class="clinic-name">${cName}</p>
+    ${cTagline}${cAddr}${cPhone}
+  </div>
+  <div class="body">
+    <p class="doc-label">Pharmacy Receipt</p>
+    <div class="meta">
+      <p><span class="lbl">Bill No: </span><strong>#${bill.id}</strong></p>
+      <p><span class="lbl">Date: </span>${format(new Date(bill.createdAt), "dd MMM yyyy, h:mm a")}</p>
+      <p><span class="lbl">Patient: </span><strong>${esc(bill.patientName || "Walk-in")}</strong></p>
+      ${bill.patientPhone ? `<p><span class="lbl">Phone: </span>${esc(bill.patientPhone)}</p>` : ""}
+      <p><span class="lbl">Payment: </span>${esc(bill.paymentMethod || "Cash")}</p>
+    </div>
+    <table>
+      <thead><tr><th>Medicine</th><th style="text-align:center">Qty</th><th style="text-align:right">Rate</th><th style="text-align:right">GST</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <hr class="divider">
+    <table class="totals"><tbody>
+      <tr><td style="color:#64748b">Subtotal</td><td>₹${rupees(bill.subtotal)}</td></tr>
+      <tr><td style="color:#64748b">GST</td><td>₹${rupees(bill.gstTotal)}</td></tr>
+      ${bill.discountAmount ? `<tr><td style="color:#16a34a">Discount (${bill.discountPercent}%)</td><td style="color:#16a34a">− ₹${rupees(bill.discountAmount)}</td></tr>` : ""}
+      <tr class="total-row"><td>TOTAL</td><td>₹${rupees(bill.totalAmount)}</td></tr>
+    </tbody></table>
+    ${bill.notes ? `<p style="margin-top:10px;font-size:11px;color:#64748b;font-style:italic">${esc(bill.notes)}</p>` : ""}
+  </div>
+  <div class="footer">
+    <p class="thank-you">Thank you for visiting ${cName}!</p>
+    <p class="branding">Powered by BariQ</p>
+  </div>
+</div>
 <script>window.onload=()=>{window.print();}</script>
 </body></html>`;
 }
@@ -198,12 +237,13 @@ function RestockDialog({ medicine, open, onClose }: {
 
 // ── Medicine Form Dialog ────────────────────────────────────────────────────
 
-function MedicineDialog({ open, onClose, medicine }: {
-  open: boolean; onClose: () => void; medicine?: Medicine | null;
+function MedicineDialog({ open, onClose, medicine, prefill }: {
+  open: boolean; onClose: () => void; medicine?: Medicine | null; prefill?: Medicine | null;
 }) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const isEdit = !!medicine;
+  const isRestock = !isEdit && !!prefill;
   const empty = {
     name: "", genericName: "", category: "General", manufacturer: "", batchNo: "",
     expiryDate: "", costPrice: "", sellingPrice: "", stockQty: "", minStockQty: "10",
@@ -213,17 +253,32 @@ function MedicineDialog({ open, onClose, medicine }: {
 
   useEffect(() => {
     if (open) {
-      setForm(medicine ? {
-        name: medicine.name, genericName: medicine.genericName ?? "",
-        category: medicine.category, manufacturer: medicine.manufacturer ?? "",
-        batchNo: medicine.batchNo ?? "", expiryDate: medicine.expiryDate ?? "",
-        costPrice: String(medicine.costPrice / 100), sellingPrice: String(medicine.sellingPrice / 100),
-        stockQty: String(medicine.stockQty), minStockQty: String(medicine.minStockQty),
-        unit: medicine.unit, hsnCode: medicine.hsnCode ?? "", gstPercent: String(medicine.gstPercent),
-        supplierName: medicine.supplierName ?? "", reorderQty: medicine.reorderQty ? String(medicine.reorderQty) : "",
-      } : empty);
+      if (medicine) {
+        setForm({
+          name: medicine.name, genericName: medicine.genericName ?? "",
+          category: medicine.category, manufacturer: medicine.manufacturer ?? "",
+          batchNo: medicine.batchNo ?? "", expiryDate: medicine.expiryDate ?? "",
+          costPrice: String(medicine.costPrice / 100), sellingPrice: String(medicine.sellingPrice / 100),
+          stockQty: String(medicine.stockQty), minStockQty: String(medicine.minStockQty),
+          unit: medicine.unit, hsnCode: medicine.hsnCode ?? "", gstPercent: String(medicine.gstPercent),
+          supplierName: medicine.supplierName ?? "", reorderQty: medicine.reorderQty ? String(medicine.reorderQty) : "",
+        });
+      } else if (prefill) {
+        // New batch restock: copy all details except batch no, expiry, and stock qty
+        setForm({
+          name: prefill.name, genericName: prefill.genericName ?? "",
+          category: prefill.category, manufacturer: prefill.manufacturer ?? "",
+          batchNo: "", expiryDate: "",
+          costPrice: String(prefill.costPrice / 100), sellingPrice: String(prefill.sellingPrice / 100),
+          stockQty: "", minStockQty: String(prefill.minStockQty),
+          unit: prefill.unit, hsnCode: prefill.hsnCode ?? "", gstPercent: String(prefill.gstPercent),
+          supplierName: prefill.supplierName ?? "", reorderQty: prefill.reorderQty ? String(prefill.reorderQty) : "",
+        });
+      } else {
+        setForm(empty);
+      }
     }
-  }, [open, medicine]);
+  }, [open, medicine, prefill]);
 
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
 
@@ -265,12 +320,37 @@ function MedicineDialog({ open, onClose, medicine }: {
     </div>
   );
 
+  const highlightField = (label: string, key: string, opts?: { type?: string; required?: boolean; placeholder?: string }) => (
+    <div>
+      <Label className="text-xs font-semibold text-amber-700 mb-1 block flex items-center gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />{label} *
+      </Label>
+      <Input type={opts?.type ?? "text"} value={(form as any)[key]} onChange={e => set(key, e.target.value)}
+        placeholder={opts?.placeholder} className="rounded-xl h-10 border-amber-300 focus-visible:ring-amber-400" />
+    </div>
+  );
+
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="sm:max-w-[620px] rounded-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit Medicine" : "Add Medicine"}</DialogTitle>
+          <DialogTitle>
+            {isEdit ? "Edit Medicine" : isRestock ? `New Batch: ${prefill!.name}` : "Add Medicine"}
+          </DialogTitle>
         </DialogHeader>
+
+        {isRestock && (
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-amber-800">Adding new batch stock</p>
+              <p className="text-amber-700 text-xs mt-0.5">
+                Details are pre-filled from the existing entry. Enter the <strong>new batch number</strong>, <strong>expiry date</strong>, and <strong>quantity received</strong> for this shipment.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-3 pt-2">
           <div className="col-span-2">
             <Label className="text-xs font-semibold text-slate-600 mb-1 block">Medicine Name *</Label>
@@ -297,12 +377,12 @@ function MedicineDialog({ open, onClose, medicine }: {
             </Select>
           </div>
           {field("Manufacturer", "manufacturer", { placeholder: "e.g. Cipla" })}
-          {field("Batch No.", "batchNo", { placeholder: "e.g. BT2024001" })}
+          {isRestock ? highlightField("Batch No.", "batchNo", { placeholder: "e.g. BT2025001" }) : field("Batch No.", "batchNo", { placeholder: "e.g. BT2024001" })}
           {field("Cost Price (₹)", "costPrice", { type: "number", required: true, placeholder: "0.00" })}
           {field("Selling Price (₹)", "sellingPrice", { type: "number", required: true, placeholder: "0.00" })}
-          {field("Stock Qty", "stockQty", { type: "number", required: true })}
+          {isRestock ? highlightField("Stock Qty (New Batch)", "stockQty", { type: "number" }) : field("Stock Qty", "stockQty", { type: "number", required: true })}
           {field("Min Stock Alert", "minStockQty", { type: "number" })}
-          {field("Expiry Date", "expiryDate", { type: "date" })}
+          {isRestock ? highlightField("Expiry Date", "expiryDate", { type: "date" }) : field("Expiry Date", "expiryDate", { type: "date" })}
           {field("Supplier / Vendor", "supplierName", { placeholder: "e.g. Cipla Distributor" })}
           {field("Reorder Qty", "reorderQty", { type: "number", placeholder: "e.g. 100" })}
           <div>
@@ -319,10 +399,10 @@ function MedicineDialog({ open, onClose, medicine }: {
           <Button
             className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-700"
             onClick={() => save.mutate()}
-            disabled={save.isPending || !form.name.trim() || !form.sellingPrice}
+            disabled={save.isPending || !form.name.trim() || !form.sellingPrice || (isRestock && (!form.batchNo.trim() || !form.expiryDate || !form.stockQty))}
           >
             {save.isPending ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : null}
-            {isEdit ? "Save Changes" : "Add Medicine"}
+            {isEdit ? "Save Changes" : isRestock ? "Add New Batch" : "Add Medicine"}
           </Button>
         </div>
       </DialogContent>
@@ -517,7 +597,7 @@ function AlertsTab({ medicines, today, onRestock, onDelete, onGoToInventory }: {
         </button>
       </div>
       <Section
-        title="Expired — Remove from Shelf"
+        title="Expired: Remove from Shelf"
         items={expired}
         colorClass="bg-red-50 border-red-200 text-red-800"
         badgeClass="bg-red-100 text-red-700"
@@ -531,7 +611,7 @@ function AlertsTab({ medicines, today, onRestock, onDelete, onGoToInventory }: {
         icon={<AlertTriangle className="w-4 h-4 text-orange-500" />}
       />
       <Section
-        title="Expiring in 7–30 Days — Sell First (FEFO)"
+        title="Expiring in 7–30 Days: Sell First (FEFO)"
         items={warning}
         colorClass="bg-amber-50 border-amber-200 text-amber-800"
         badgeClass="bg-amber-100 text-amber-700"
@@ -545,7 +625,7 @@ function AlertsTab({ medicines, today, onRestock, onDelete, onGoToInventory }: {
         icon={<Clock className="w-4 h-4 text-yellow-500" />}
       />
       <Section
-        title="Low Stock — Below Minimum Level"
+        title="Low Stock: Below Minimum Level"
         items={lowStock}
         colorClass="bg-blue-50 border-blue-200 text-blue-800"
         badgeClass="bg-blue-100 text-blue-700"
@@ -560,40 +640,69 @@ function AlertsTab({ medicines, today, onRestock, onDelete, onGoToInventory }: {
 function buildReorderHtml(items: Medicine[], clinicProfile?: Record<string, any>): string {
   const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const today = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-  const cName = esc(clinicProfile?.name || "Pharmacy");
+  const cName = esc(clinicProfile?.clinicName || "Pharmacy");
+  const cAddr = clinicProfile?.address ? `<p class="clinic-detail">${esc(clinicProfile.address).replace(/\n/g, "<br>")}</p>` : "";
+  const cPhone = clinicProfile?.phone ? `<p class="clinic-detail">${esc(clinicProfile.phone)}</p>` : "";
+  const cTagline = clinicProfile?.tagline ? `<p class="clinic-sub">${esc(clinicProfile.tagline)}</p>` : "";
   const rows = items.map(m => {
     const suggested = m.reorderQty ?? Math.max(m.minStockQty * 2 - m.stockQty, m.minStockQty);
     return `<tr>
-      <td>${esc(m.name)}</td>
-      <td>${esc(m.genericName || "—")}</td>
+      <td><strong>${esc(m.name)}</strong>${m.genericName ? `<br><span style="font-size:10px;color:#64748b">${esc(m.genericName)}</span>` : ""}</td>
       <td>${esc(m.category)}</td>
       <td>${esc(m.batchNo || "—")}</td>
       <td>${m.stockQty} ${esc(m.unit)}</td>
       <td>${m.minStockQty}</td>
-      <td><strong>${suggested} ${esc(m.unit)}</strong></td>
+      <td style="font-weight:700;color:#0f766e">${suggested} ${esc(m.unit)}</td>
       <td>${esc(m.supplierName || "—")}</td>
     </tr>`;
   }).join("");
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Reorder List</title>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Reorder List – ${cName}</title>
 <style>
-body{font-family:sans-serif;padding:24px;font-size:12px}
-.cn{font-size:18px;font-weight:bold;text-align:center;margin-bottom:4px}
-.cs{text-align:center;font-size:11px;color:#64748b;margin-bottom:2px}
-h2{text-align:center;font-size:14px;color:#475569;margin:12px 0 4px;letter-spacing:.5px}
-table{width:100%;border-collapse:collapse;margin-top:12px}
-th{background:#f1f5f9;padding:6px 8px;text-align:left;font-size:10px;font-weight:600;border:1px solid #e2e8f0}
-td{padding:5px 8px;border:1px solid #e2e8f0;vertical-align:top}
-tr:nth-child(even){background:#f8fafc}
-.footer{text-align:center;font-size:10px;color:#94a3b8;margin-top:16px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',system-ui,Arial,sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{max-width:900px;margin:0 auto}
+.accent{height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding:18px 32px 14px;border-bottom:2px solid #e2e8f0}
+.clinic-name{font-size:20px;font-weight:900;color:#0f766e;letter-spacing:-.3px;margin-bottom:3px}
+.clinic-sub{font-size:11px;color:#64748b;font-style:italic;margin-top:2px}
+.clinic-detail{font-size:12px;color:#475569;line-height:1.5;margin-top:3px}
+.doc-info{text-align:right}
+.doc-title{font-size:14px;font-weight:800;color:#1e293b}
+.doc-date{font-size:12px;color:#64748b;margin-top:4px}
+.doc-count{font-size:11px;color:#94a3b8;margin-top:2px}
+.body{padding:16px 32px 24px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{font-size:9px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.08em;padding:8px 10px;background:#0f766e;text-align:left}
+tbody td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top}
+tbody tr:nth-child(even){background:#f8fafc}
+tbody tr:last-child td{border-bottom:none}
+.footer{padding:10px 32px 16px;text-align:center}
+.branding{font-size:8px;color:#cbd5e1}
+@media print{.body{padding:10px 24px}.header{padding:12px 24px 10px}}
 </style></head><body>
-<div class="cn">${cName}</div>
-<div class="cs">Purchase Order / Reorder List</div>
-<div class="cs">Date: ${today}</div>
-<table>
-  <thead><tr><th>Medicine</th><th>Generic</th><th>Category</th><th>Batch</th><th>In Stock</th><th>Min Level</th><th>Order Qty</th><th>Supplier</th></tr></thead>
-  <tbody>${rows}</tbody>
-</table>
-<div class="footer">${items.length} item(s) · Generated by ${cName} Pharmacy System</div>
+<div class="page">
+  <div class="accent"></div>
+  <div class="header">
+    <div>
+      <p class="clinic-name">${cName}</p>
+      ${cTagline}${cAddr}${cPhone}
+    </div>
+    <div class="doc-info">
+      <p class="doc-title">Purchase Order / Reorder List</p>
+      <p class="doc-date">Date: ${today}</p>
+      <p class="doc-count">${items.length} item${items.length !== 1 ? "s" : ""}</p>
+    </div>
+  </div>
+  <div class="body">
+    <table>
+      <thead><tr><th>Medicine</th><th>Category</th><th>Batch</th><th>In Stock</th><th>Min Level</th><th>Order Qty</th><th>Supplier</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>
+  <div class="footer">
+    <p class="branding">Powered by BariQ</p>
+  </div>
+</div>
 <script>window.onload=()=>window.print();</script>
 </body></html>`;
 }
@@ -731,7 +840,7 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
                       <span className="font-bold text-violet-700 text-sm">{suggested}</span>
                       <p className="text-[10px] text-slate-400">{m.unit}s</p>
                     </div>
-                    <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">—</span>}</div>
+                    <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">-</span>}</div>
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => onRestock(m)} title="Add stock" className="h-7 w-7 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors">
                         <PackagePlus className="w-3 h-3" />
@@ -756,7 +865,7 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
       {orderedItems.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-slate-800">Ordered — Awaiting Delivery</h3>
+            <h3 className="text-sm font-bold text-slate-800">Ordered: Awaiting Delivery</h3>
             <span className="text-xs bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full">{orderedItems.length} item{orderedItems.length > 1 ? "s" : ""}</span>
           </div>
           <div className="bg-white rounded-2xl border border-green-100 overflow-hidden">
@@ -788,7 +897,7 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
                       <p className="text-[10px] text-slate-400">{m.unit}s</p>
                     </div>
                     <div className="text-right text-sm text-slate-500">{m.minStockQty}</div>
-                    <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">—</span>}</div>
+                    <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">-</span>}</div>
                     <div className="text-xs text-slate-400">{orderedDate}</div>
                     <div className="flex items-center justify-end gap-1">
                       <button onClick={() => onRestock(m)} title="Stock received" className="h-7 w-7 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors">
@@ -809,7 +918,7 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
             </div>
           </div>
           <p className="text-xs text-slate-400 text-center">
-            Add stock via <PackagePlus className="inline w-3 h-3" /> when delivery arrives — it will automatically clear from this list
+            Add stock via <PackagePlus className="inline w-3 h-3" /> when delivery arrives. It will automatically clear from this list.
           </p>
         </div>
       )}
@@ -826,10 +935,29 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
 
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [patientMode, setPatientMode] = useState<"walkin" | "existing">("walkin");
-  const [patientName, setPatientName] = useState("");
-  const [patientPhone, setPatientPhone] = useState("");
-  const [selectedPatientId, setSelectedPatientId] = useState<string>("");
+  const [billingPhone, setBillingPhone] = useState("");
+  const [selectedBillingPatient, setSelectedBillingPatient] = useState<{ id: number; name: string } | null>(null);
+  const [billingNewName, setBillingNewName] = useState("");
+  const [billingAddingNew, setBillingAddingNew] = useState(false);
+
+  const billingPhoneDigits = billingPhone.replace(/\D/g, "").slice(-10);
+  const billingPhoneReady = billingPhoneDigits.length >= 10;
+
+  const billingMatches = useMemo(() => {
+    if (!billingPhoneReady) return [];
+    return (patients as any[]).filter(p =>
+      (p.phone || "").replace(/\D/g, "").slice(-10) === billingPhoneDigits
+    );
+  }, [billingPhoneDigits, billingPhoneReady, patients]);
+
+  useEffect(() => {
+    if (billingMatches.length === 1 && !billingAddingNew) {
+      setSelectedBillingPatient({ id: billingMatches[0].id, name: billingMatches[0].name });
+      setBillingNewName("");
+    } else if (billingMatches.length !== 1 || billingAddingNew) {
+      if (!billingAddingNew) setSelectedBillingPatient(null);
+    }
+  }, [billingMatches, billingAddingNew]);
   const [discountPercent, setDiscountPercent] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
@@ -901,9 +1029,9 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
         items: cart, subtotal, discountPercent, discountAmount, gstTotal, totalAmount,
         paymentMethod: paymentMethod.toLowerCase(), status: "paid",
         notes: notes.trim() || null,
-        ...(patientMode === "existing" && selectedPatientId
-          ? { patientId: Number(selectedPatientId) }
-          : { patientName: patientName.trim() || "Walk-in", patientPhone: patientPhone.trim() || null }),
+        ...(selectedBillingPatient
+          ? { patientId: selectedBillingPatient.id }
+          : { patientName: billingNewName.trim() || "Walk-in", patientPhone: billingPhone.trim() || null }),
       };
       const r = await fetch("/api/pharmacy/bills", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -919,7 +1047,7 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
       toast({ title: "Bill created" });
       const w = window.open("", "_blank");
       if (w) { w.document.write(buildBillHtml(bill, settings?.clinicProfile)); w.document.close(); }
-      setCart([]); setPatientName(""); setPatientPhone(""); setSelectedPatientId("");
+      setCart([]); setBillingPhone(""); setSelectedBillingPatient(null); setBillingNewName(""); setBillingAddingNew(false);
       setDiscountPercent(0); setNotes(""); setPaymentMethod("Cash");
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -999,10 +1127,24 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
                       <p className="font-semibold text-slate-800 text-sm truncate">{item.name}</p>
                       <p className="text-xs text-slate-400">₹{rupees(item.sellingPrice)}/{item.unit} · GST {item.gstPercent}%</p>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <button onClick={() => updateQty(item.medicineId, item.qty - 1)}
                         className="w-7 h-7 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center font-bold text-sm">−</button>
-                      <span className="w-8 text-center font-bold text-sm">{item.qty}</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max={maxStock}
+                        value={item.qty}
+                        onChange={e => {
+                          const v = parseInt(e.target.value);
+                          if (!isNaN(v) && v >= 1) updateQty(item.medicineId, v);
+                        }}
+                        onBlur={e => {
+                          const v = parseInt(e.target.value);
+                          if (isNaN(v) || v < 1) updateQty(item.medicineId, 1);
+                        }}
+                        className="w-12 h-7 text-center font-bold text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-400 bg-white"
+                      />
                       <button
                         onClick={() => updateQty(item.medicineId, item.qty + 1)}
                         disabled={item.qty >= maxStock}
@@ -1013,9 +1155,28 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
                       <p className="font-bold text-slate-900 text-sm">₹{rupees(item.total)}</p>
                       <p className="text-xs text-slate-400">incl. GST</p>
                     </div>
-                    <button onClick={() => updateQty(item.medicineId, 0)} className="text-slate-300 hover:text-red-500 transition-colors">
-                      <X className="w-4 h-4" />
-                    </button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <button className="text-slate-300 hover:text-red-500 transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="rounded-2xl">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Remove from cart?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Remove <span className="font-semibold text-slate-800">{item.name}</span> from the bill?
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={() => updateQty(item.medicineId, 0)}
+                            className="rounded-xl bg-red-600 hover:bg-red-700"
+                          >Remove</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 );
               })}
@@ -1028,42 +1189,51 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
       <div className="space-y-4">
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
           <h3 className="font-semibold text-slate-800">Patient</h3>
-          <div className="flex rounded-xl overflow-hidden border border-slate-200">
-            <button
-              onClick={() => setPatientMode("walkin")}
-              className={cn("flex-1 py-2 text-xs font-semibold transition-colors", patientMode === "walkin" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-50")}
-            >Walk-in</button>
-            <button
-              onClick={() => setPatientMode("existing")}
-              className={cn("flex-1 py-2 text-xs font-semibold transition-colors", patientMode === "existing" ? "bg-violet-600 text-white" : "text-slate-500 hover:bg-slate-50")}
-            >Existing Patient</button>
-          </div>
-
-          {patientMode === "walkin" ? (
-            <div className="space-y-2">
-              <Input placeholder="Patient name (optional)" value={patientName} onChange={e => setPatientName(e.target.value)} className="rounded-xl h-10" />
-              <Input placeholder="Phone (optional)" value={patientPhone} onChange={e => setPatientPhone(e.target.value)} className="rounded-xl h-10" />
+          <Input
+            placeholder="Phone number"
+            value={billingPhone}
+            onChange={e => { setBillingPhone(e.target.value); setBillingAddingNew(false); setSelectedBillingPatient(null); }}
+            className="rounded-xl h-10"
+          />
+          {billingPhoneReady && billingMatches.length > 0 && !billingAddingNew && (
+            <div className="flex flex-wrap gap-2">
+              {billingMatches.map((p: any) => (
+                <button
+                  key={p.id}
+                  onClick={() => { setSelectedBillingPatient({ id: p.id, name: p.name }); setBillingNewName(""); }}
+                  className={cn(
+                    "px-3 py-1.5 rounded-full text-sm font-medium border transition-all",
+                    selectedBillingPatient?.id === p.id
+                      ? "bg-violet-600 text-white border-violet-600"
+                      : "bg-white text-slate-700 border-slate-300 hover:border-violet-400"
+                  )}
+                >
+                  {p.name}
+                </button>
+              ))}
+              <button
+                onClick={() => { setBillingAddingNew(true); setSelectedBillingPatient(null); setBillingNewName(""); }}
+                className="px-3 py-1.5 rounded-full text-sm font-medium border border-dashed border-slate-300 text-slate-500 hover:border-violet-400 hover:text-violet-600 transition-all"
+              >
+                + Someone else
+              </button>
             </div>
-          ) : (
-            <div className="space-y-3">
-              <Select value={selectedPatientId} onValueChange={setSelectedPatientId}>
-                <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Select patient…" /></SelectTrigger>
-                <SelectContent>
-                  {(patients as any[]).map(p => (
-                    <SelectItem key={p.id} value={String(p.id)}>
-                      {p.name}{p.phone ? ` · ${p.phone}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {selectedPatientId && (
-                <RxImportSection
-                  patientId={Number(selectedPatientId)}
-                  medicines={medicines}
-                  onAddToCart={addToCart}
-                />
-              )}
-            </div>
+          )}
+          {billingPhoneReady && (billingMatches.length === 0 || billingAddingNew) && (
+            <Input
+              placeholder="Patient name (optional)"
+              value={billingNewName}
+              onChange={e => setBillingNewName(e.target.value)}
+              className="rounded-xl h-10"
+              autoFocus={billingAddingNew}
+            />
+          )}
+          {selectedBillingPatient && (
+            <RxImportSection
+              patientId={selectedBillingPatient.id}
+              medicines={medicines}
+              onAddToCart={addToCart}
+            />
           )}
         </div>
 
@@ -1131,8 +1301,7 @@ export default function Pharmacy() {
   const [inventorySortBy, setInventorySortBy] = useState<"name" | "expiry" | "stock">("name");
   const [billSearch, setBillSearch] = useState("");
   const [billDateFilter, setBillDateFilter] = useState<"all" | "today" | "week" | "month">("all");
-  const [medicineDialog, setMedicineDialog] = useState<{ open: boolean; medicine?: Medicine | null }>({ open: false });
-  const [restockDialog, setRestockDialog] = useState<{ open: boolean; medicine: Medicine | null }>({ open: false, medicine: null });
+  const [medicineDialog, setMedicineDialog] = useState<{ open: boolean; medicine?: Medicine | null; prefill?: Medicine | null }>({ open: false });
 
   const { data: settings } = useQuery<Record<string, any>>({ queryKey: ["/api/settings"] });
 
@@ -1261,9 +1430,9 @@ export default function Pharmacy() {
           <div className="space-y-6">
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
               {[
-                { label: "Total Medicines", value: stats?.totalMedicines ?? "—", icon: Pill, color: "bg-violet-100 text-violet-600", textColor: "text-violet-700" },
-                { label: "Low Stock", value: stats?.lowStockCount ?? "—", icon: AlertTriangle, color: "bg-red-100 text-red-600", textColor: "text-red-700" },
-                { label: "Expiring Soon", value: stats?.expiringSoonCount ?? "—", icon: Clock, color: "bg-amber-100 text-amber-600", textColor: "text-amber-700" },
+                { label: "Total Medicines", value: stats?.totalMedicines ?? "-", icon: Pill, color: "bg-violet-100 text-violet-600", textColor: "text-violet-700" },
+                { label: "Low Stock", value: stats?.lowStockCount ?? "-", icon: AlertTriangle, color: "bg-red-100 text-red-600", textColor: "text-red-700" },
+                { label: "Expiring Soon", value: stats?.expiringSoonCount ?? "-", icon: Clock, color: "bg-amber-100 text-amber-600", textColor: "text-amber-700" },
                 { label: "Today's Sales", value: `₹${rupees(stats?.todaySales ?? 0)}`, icon: IndianRupee, color: "bg-green-100 text-green-600", textColor: "text-green-700" },
                 { label: "Month Sales", value: `₹${rupees(stats?.monthSales ?? 0)}`, icon: TrendingUp, color: "bg-teal-100 text-teal-600", textColor: "text-teal-700" },
               ].map(s => {
@@ -1287,7 +1456,7 @@ export default function Pharmacy() {
                   <div className="flex items-center gap-2">
                     <AlertOctagon className="w-4 h-4 text-red-600" />
                     <p className="font-bold text-red-900 text-sm">
-                      {medicines.filter(m => m.expiryDate && m.expiryDate < today).length} Medicine(s) EXPIRED — Remove from shelf immediately
+                      {medicines.filter(m => m.expiryDate && m.expiryDate < today).length} Medicine(s) EXPIRED: Remove from shelf immediately
                     </p>
                   </div>
                   <button onClick={() => setTab("alerts")} className="text-xs text-red-700 font-semibold hover:text-red-900 flex items-center gap-1">
@@ -1353,7 +1522,7 @@ export default function Pharmacy() {
                           <p className="text-xs text-slate-400">{m.stockQty} {m.unit}s in stock</p>
                         </div>
                         <p className="text-sm font-bold text-amber-700">
-                          Exp: {m.expiryDate ? format(new Date(m.expiryDate), "dd MMM yyyy") : "—"}
+                          Exp: {m.expiryDate ? format(new Date(m.expiryDate), "dd MMM yyyy") : "-"}
                         </p>
                       </div>
                     ))}
@@ -1475,11 +1644,11 @@ export default function Pharmacy() {
                               </span>
                             ) : <span className="text-slate-300 text-xs">—</span>}
                           </td>
-                          <td className="px-4 py-3 text-xs text-slate-500">{m.supplierName || <span className="text-slate-300">—</span>}</td>
+                          <td className="px-4 py-3 text-xs text-slate-500">{m.supplierName || <span className="text-slate-300">-</span>}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-1">
                               <button
-                                onClick={() => setRestockDialog({ open: true, medicine: m })}
+                                onClick={() => setMedicineDialog({ open: true, prefill: m })}
                                 title="Add stock"
                                 className="w-8 h-8 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors"
                               >
@@ -1514,7 +1683,7 @@ export default function Pharmacy() {
           <AlertsTab
             medicines={medicines}
             today={today}
-            onRestock={m => setRestockDialog({ open: true, medicine: m })}
+            onRestock={m => setMedicineDialog({ open: true, prefill: m })}
             onDelete={id => deleteMedicine.mutate(id)}
             onGoToInventory={() => setTab("inventory")}
           />
@@ -1526,7 +1695,7 @@ export default function Pharmacy() {
             medicines={medicines}
             today={today}
             settings={settings}
-            onRestock={m => setRestockDialog({ open: true, medicine: m })}
+            onRestock={m => setMedicineDialog({ open: true, prefill: m })}
           />
         )}
 
@@ -1628,11 +1797,7 @@ export default function Pharmacy() {
         open={medicineDialog.open}
         onClose={() => setMedicineDialog({ open: false })}
         medicine={medicineDialog.medicine}
-      />
-      <RestockDialog
-        open={restockDialog.open}
-        medicine={restockDialog.medicine}
-        onClose={() => setRestockDialog({ open: false, medicine: null })}
+        prefill={medicineDialog.prefill}
       />
     </Layout>
   );

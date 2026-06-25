@@ -23,7 +23,6 @@ import { z } from "zod";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useCreatePatient } from "@/hooks/use-patients";
-import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRole } from "@/hooks/use-role";
 
@@ -209,6 +208,11 @@ export default function Appointments() {
   const updateAppointment = useUpdateAppointment();
   const deleteAppointment = useDeleteAppointment();
   const { data: doctors } = useDoctors();
+  const { data: settings } = useQuery<Record<string, any>>({
+    queryKey: ["/api/settings"],
+    queryFn: () => fetch("/api/settings", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
+  });
+  const clinicProfile = settings?.clinicProfile;
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<any>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
@@ -559,9 +563,13 @@ export default function Appointments() {
                             <button
                               onClick={() => {
                                 const esc = (s: string) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+                                const cName = esc(clinicProfile?.clinicName || "Clinic");
+                                const cAddr = clinicProfile?.address ? `<p style="font-size:12px;color:#475569;margin-top:3px;line-height:1.5">${esc(clinicProfile.address).replace(/\n/g,"<br>")}</p>` : "";
+                                const cPhone = clinicProfile?.phone ? `<p style="font-size:12px;color:#475569;margin-top:2px">${esc(clinicProfile.phone)}</p>` : "";
+                                const cTagline = clinicProfile?.tagline ? `<p style="font-size:11px;color:#64748b;font-style:italic;margin-top:2px">${esc(clinicProfile.tagline)}</p>` : "";
                                 const w = window.open('', '_blank');
                                 if (!w) return;
-                                w.document.write(`<html><head><title>Receipt - ${esc(apt.patient.name)}</title></head><body style="font-family:sans-serif;padding:40px;max-width:400px;margin:0 auto"><h1 style="color:#2563eb;font-size:18px">BariQ RECEIPT</h1><hr><p><strong>Patient:</strong> ${esc(apt.patient.name)}</p><p><strong>Doctor:</strong> Dr. ${esc(apt.doctor.name)}</p><p><strong>Date:</strong> ${esc(format(new Date(apt.bill.billingDate), "PPpp"))}</p><p><strong>Amount:</strong> ₹${esc(String((apt.bill.amount / 100).toFixed(0)))}</p><p><strong>Status:</strong> Paid</p><hr><p style="text-align:center;font-size:12px;color:#64748b">Thank you for your visit!</p><script>window.onload=()=>{window.print();window.close()}<\/script></body></html>`);
+                                w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt – ${esc(apt.patient.name)}</title></head><body style="margin:0;font-family:'Segoe UI',sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact"><div style="max-width:480px;margin:0 auto"><div style="height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)"></div><div style="padding:18px 24px 14px;border-bottom:2px solid #e2e8f0"><p style="font-size:20px;font-weight:900;color:#0f766e;margin-bottom:3px">${cName}</p>${cTagline}${cAddr}${cPhone}</div><div style="padding:14px 24px 20px"><p style="text-align:center;font-size:9px;font-weight:800;letter-spacing:.25em;color:#94a3b8;text-transform:uppercase;margin-bottom:12px">Appointment Receipt</p><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px"><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Patient: </span><strong>${esc(apt.patient.name)}</strong></p><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Doctor: </span>Dr. ${esc(apt.doctor.name)}</p><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Date: </span>${esc(format(new Date(apt.bill.billingDate), "dd MMM yyyy, h:mm a"))}</p></div><div style="display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;margin-bottom:16px"><div><p style="font-size:12px;font-weight:600;color:#15803d">Amount Paid</p></div><div style="text-align:right"><p style="font-size:26px;font-weight:900;color:#15803d">₹${esc(String((apt.bill.amount / 100).toFixed(0)))}</p><span style="font-size:9px;font-weight:700;background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:20px;text-transform:uppercase">✓ Paid</span></div></div></div><div style="text-align:center;padding:0 24px 16px"><p style="font-size:12px;color:#475569;margin-bottom:6px">Thank you for your visit!</p><p style="font-size:8px;color:#cbd5e1">Powered by BariQ</p></div></div><script>window.onload=()=>{window.print();}<\/script></body></html>`);
                                 w.document.close();
                               }}
                               className="text-teal-700 hover:text-teal-800"
@@ -694,46 +702,56 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   const createPatient = useCreatePatient();
   const { data: doctors } = useDoctors();
   const { data: patients } = usePatients();
-  const [isNewPatient, setIsNewPatient] = useState(false);
   const [isQuickCheck, setIsQuickCheck] = useState(false);
 
-  const phoneValidation = z.string().min(1, "Phone is required").refine(v => {
-    const digits = v.replace(/\D/g, "");
-    return (digits.length === 10 && /^[6-9]/.test(digits)) ||
-           (digits.length === 12 && digits.startsWith("91") && /^[6-9]/.test(digits.slice(2)));
-  }, "Enter a valid 10-digit mobile number");
+  // Phone-first patient resolution state
+  const [phoneInput, setPhoneInput] = useState("");
+  const [selectedPatientId, setSelectedPatientId] = useState<number | null>(null);
+  const [newPatientName, setNewPatientName] = useState("");
+  const [addingNew, setAddingNew] = useState(false); // true when user picks "Someone else"
 
-  const formSchema = useMemo(() => {
-    let base = appointmentFormSchema.extend({
-      patientName: z.string().optional(),
-      patientPhone: z.string().optional(),
-      patientEmail: z.string().optional(),
-    });
-    if (isNewPatient) {
-      base = base.extend({
-        patientId: z.any().optional(),
-        patientName: z.string().min(1, "Name is required"),
-        patientPhone: phoneValidation,
-      }) as unknown as typeof base;
+  const normalizePhone = (v: string) => v.replace(/\D/g, "");
+
+  const matchedPatients = useMemo(() => {
+    const digits = normalizePhone(phoneInput);
+    if (digits.length < 10 || !patients) return [];
+    return patients.filter(p => normalizePhone(p.phone || "") === digits || normalizePhone(p.phone || "").endsWith(digits));
+  }, [phoneInput, patients]);
+
+  // Auto-select when exactly one match and user hasn't manually switched to "new"
+  useEffect(() => {
+    if (matchedPatients.length === 1 && !addingNew) {
+      setSelectedPatientId(matchedPatients[0].id);
+      setNewPatientName("");
+    } else if (matchedPatients.length === 0) {
+      setSelectedPatientId(null);
+      if (!addingNew) setAddingNew(false);
     }
-    return base.superRefine((data, ctx) => {
-      if (data.status !== "checked_in" && !data.slot) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Time slot is required", path: ["slot"] });
-      }
-    });
-  }, [isNewPatient]);
+  }, [matchedPatients]);
+
+  const isNewPatient = selectedPatientId === null && (addingNew || matchedPatients.length === 0) && normalizePhone(phoneInput).length >= 10;
+
+  const appointmentOnlySchema = useMemo(() => z.object({
+    doctorId: z.string().min(1, "Doctor is required"),
+    date: z.string().min(1, "Date is required"),
+    slot: z.string().optional(),
+    status: z.enum(["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"]),
+    reason: z.string().optional(),
+    notes: z.string().optional(),
+  }).superRefine((data, ctx) => {
+    if (data.status !== "checked_in" && !data.slot) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Time slot is required", path: ["slot"] });
+    }
+  }), []);
 
   const form = useForm<any>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(appointmentOnlySchema),
     defaultValues: {
       status: "booked",
       reason: "",
       notes: "",
       date: format(new Date(), "yyyy-MM-dd"),
       slot: "",
-      patientName: "",
-      patientPhone: "",
-      patientEmail: "",
     }
   });
 
@@ -741,7 +759,6 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   const watchedDate = form.watch("date");
   const watchedStatus = form.watch("status");
 
-  // Generate available time slots based on selected doctor and date
   const availableSlots = useMemo(() => {
     if (!watchedDoctorId || !watchedDate || !doctors) return [];
     const doctor = doctors.find(d => d.id === watchedDoctorId);
@@ -774,21 +791,32 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
     refetchInterval: showPreview ? 10000 : false,
   });
 
+  const resetPatientState = () => {
+    setPhoneInput("");
+    setSelectedPatientId(null);
+    setNewPatientName("");
+    setAddingNew(false);
+  };
+
   const onSubmit = async (data: any) => {
     try {
-      let patientId = data.patientId;
+      const digits = normalizePhone(phoneInput);
+      if (digits.length < 10) {
+        toast({ title: "Error", description: "Enter a valid phone number", variant: "destructive" });
+        return;
+      }
 
-      if (isNewPatient) {
-        if (!data.patientName || !data.patientPhone) {
-          toast({ title: "Error", description: "Patient name and phone are required", variant: "destructive" });
+      let patientId = selectedPatientId;
+
+      if (!patientId) {
+        if (!newPatientName.trim()) {
+          toast({ title: "Error", description: "Enter the patient's name", variant: "destructive" });
           return;
         }
-        
         try {
           const newPatient = await createPatient.mutateAsync({
-            name: data.patientName,
-            phone: data.patientPhone,
-            email: data.patientEmail || undefined,
+            name: newPatientName.trim(),
+            phone: digits.length === 10 ? digits : digits.slice(-10),
             status: "active",
             source: "internal"
           });
@@ -797,11 +825,6 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
           toast({ title: "Error", description: "Patient creation failed: " + patientErr.message, variant: "destructive" });
           return;
         }
-      }
-
-      if (!patientId && !isNewPatient) {
-        toast({ title: "Error", description: "Please select a patient", variant: "destructive" });
-        return;
       }
 
       let appointmentDate: Date;
@@ -822,21 +845,19 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
       }
 
-      const appointmentData = {
+      createAppointment.mutate({
         ...data,
         patientId: Number(patientId),
         date: appointmentDate.toISOString(),
         status: finalStatus,
         reason: finalReason,
         isQuickCheck: isQuickCheck
-      };
-      
-      createAppointment.mutate(appointmentData as any, {
+      } as any, {
         onSuccess: () => {
           toast({ title: "Success", description: finalStatus === 'checked_in' ? "Emergency entry created." : "Appointment scheduled successfully." });
           onOpenChange(false);
           form.reset();
-          setIsNewPatient(false);
+          resetPatientState();
           setIsQuickCheck(false);
         },
         onError: (err) => {
@@ -844,12 +865,15 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         }
       });
     } catch (err: any) {
-      toast({ title: "Error", description: "Failed to create patient: " + err.message, variant: "destructive" });
+      toast({ title: "Error", description: "Failed to book appointment: " + err.message, variant: "destructive" });
     }
   };
 
+  const phoneDigits = normalizePhone(phoneInput);
+  const phoneReady = phoneDigits.length >= 10;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) { form.reset(); resetPatientState(); setIsQuickCheck(false); } }}>
       <DialogTrigger asChild>
         <Button size="lg" className="rounded-xl bg-teal-600 hover:bg-teal-700 shadow-lg shadow-teal-600/20">
           <Plus className="w-5 h-5 mr-2" /> Book Appointment
@@ -861,13 +885,6 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         </DialogHeader>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-xl border border-slate-100 mb-2">
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-teal-700" />
-                <span className="text-sm font-medium">New Patient?</span>
-              </div>
-              <Switch checked={isNewPatient} onCheckedChange={setIsNewPatient} />
-            </div>
 
             <div className="flex items-center gap-3 bg-amber-50 p-3 rounded-xl border border-amber-100">
               <Checkbox
@@ -875,10 +892,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                 checked={isQuickCheck}
                 onCheckedChange={(checked) => setIsQuickCheck(checked as boolean)}
               />
-              <label
-                htmlFor="quickCheck"
-                className="text-sm font-medium text-amber-900 cursor-pointer flex-1"
-              >
+              <label htmlFor="quickCheck" className="text-sm font-medium text-amber-900 cursor-pointer flex-1">
                 Walk-in Quick Check (No Queue Position)
               </label>
             </div>
@@ -890,21 +904,13 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                 <FormItem className="space-y-3">
                   <FormLabel>Priority</FormLabel>
                   <FormControl>
-                    <RadioGroup
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                      className="flex gap-4"
-                    >
+                    <RadioGroup onValueChange={field.onChange} defaultValue={field.value} className="flex gap-4">
                       <FormItem className="flex items-center space-x-2 space-y-0">
-                        <FormControl>
-                          <RadioGroupItem value="booked" />
-                        </FormControl>
+                        <FormControl><RadioGroupItem value="booked" /></FormControl>
                         <FormLabel className="font-normal">Regular</FormLabel>
                       </FormItem>
                       <FormItem className="flex items-center space-x-2 space-y-0">
-                        <FormControl>
-                          <RadioGroupItem value="checked_in" className="text-red-600 border-red-600" />
-                        </FormControl>
+                        <FormControl><RadioGroupItem value="checked_in" className="text-red-600 border-red-600" /></FormControl>
                         <FormLabel className="font-normal text-red-600 font-bold">Emergency</FormLabel>
                       </FormItem>
                     </RadioGroup>
@@ -914,84 +920,109 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
               )}
             />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {isNewPatient ? (
-                <>
-                  <FormField
-                    control={form.control}
-                    name="patientName"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Patient Name</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Full Name" {...field} className="rounded-xl h-11" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
+            {/* Phone-first patient lookup */}
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-slate-700">Phone Number</label>
+                <div className="relative mt-1.5">
+                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Enter phone number"
+                    value={phoneInput}
+                    onChange={(e) => {
+                      setPhoneInput(e.target.value);
+                      setSelectedPatientId(null);
+                      setAddingNew(false);
+                      setNewPatientName("");
+                    }}
+                    className="pl-9 rounded-xl h-11"
+                    maxLength={13}
                   />
-                  <FormField
-                    control={form.control}
-                    name="patientPhone"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Phone Number</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Phone Number" {...field} className="rounded-xl h-11" />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </>
-              ) : (
-                <FormField
-                  control={form.control}
-                  name="patientId"
-                  render={({ field }) => (
-                    <FormItem className="md:col-span-1">
-                      <FormLabel>Patient</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value ? String(field.value) : ""}>
-                        <FormControl>
-                          <SelectTrigger className="rounded-xl h-11">
-                            <SelectValue placeholder="Select Patient" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {patients?.map(p => (
-                            <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                </div>
+              </div>
+
+              {phoneReady && matchedPatients.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-500 font-medium">
+                    {matchedPatients.length === 1 ? "Found in system:" : `${matchedPatients.length} patients with this number:`}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {matchedPatients.map(p => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => { setSelectedPatientId(p.id); setAddingNew(false); setNewPatientName(""); }}
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium border transition-all ${
+                          selectedPatientId === p.id
+                            ? "bg-teal-600 text-white border-teal-600 shadow-sm"
+                            : "bg-white text-slate-700 border-slate-200 hover:border-teal-400"
+                        }`}
+                      >
+                        <span className="w-5 h-5 rounded-full bg-current/10 flex items-center justify-center text-xs font-bold opacity-80">
+                          {p.name.charAt(0)}
+                        </span>
+                        {p.name}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => { setAddingNew(true); setSelectedPatientId(null); setNewPatientName(""); }}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-medium border transition-all ${
+                        addingNew
+                          ? "bg-slate-700 text-white border-slate-700"
+                          : "bg-white text-slate-500 border-slate-200 border-dashed hover:border-slate-400"
+                      }`}
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Someone else
+                    </button>
+                  </div>
+                </div>
               )}
-              <FormField
-                control={form.control}
-                name="doctorId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Doctor</FormLabel>
-                    <Select onValueChange={field.onChange} defaultValue={field.value}>
-                      <FormControl>
-                        <SelectTrigger className="rounded-xl h-11">
-                          <SelectValue placeholder="Select Doctor" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {doctors?.map(d => (
-                          <SelectItem key={d.id} value={d.id}>Dr. {d.name}{d.doctorProfile?.specialization ? ` · ${d.doctorProfile.specialization}` : ""}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+
+              {phoneReady && isNewPatient && (
+                <div>
+                  <label className="text-sm font-medium text-slate-700">Patient Name</label>
+                  <Input
+                    placeholder="Full name"
+                    value={newPatientName}
+                    onChange={(e) => setNewPatientName(e.target.value)}
+                    className="mt-1.5 rounded-xl h-11"
+                    autoFocus
+                  />
+                  {matchedPatients.length === 0 && (
+                    <p className="text-xs text-slate-400 mt-1">New patient — will be added to the system</p>
+                  )}
+                </div>
+              )}
+
+              {!phoneReady && (
+                <p className="text-xs text-slate-400">Enter phone number to look up or register patient</p>
+              )}
             </div>
-            
+
+            <FormField
+              control={form.control}
+              name="doctorId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Doctor</FormLabel>
+                  <Select onValueChange={field.onChange} defaultValue={field.value}>
+                    <FormControl>
+                      <SelectTrigger className="rounded-xl h-11">
+                        <SelectValue placeholder="Select Doctor" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {doctors?.map(d => (
+                        <SelectItem key={d.id} value={d.id}>Dr. {d.name}{d.doctorProfile?.specialization ? ` · ${d.doctorProfile.specialization}` : ""}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             {watchedStatus !== "checked_in" && (
               <div className="grid grid-cols-2 gap-4">
                 <FormField
@@ -1022,9 +1053,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                         <SelectContent>
                           {availableSlots.length === 0 ? (
                             <div className="px-2 py-4 text-center text-sm text-slate-500">
-                              {watchedDoctorId && watchedDate
-                                ? "No availability for this day"
-                                : "Select doctor and date first"}
+                              {watchedDoctorId && watchedDate ? "No availability for this day" : "Select doctor and date first"}
                             </div>
                           ) : (
                             availableSlots.map(slot => (
@@ -1050,7 +1079,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                   <p className="text-sm font-semibold text-teal-900">
                     Patient will get token #{queuePreview.nextQueueNumber}
                     {queuePreview.nextQueueNumber === 1
-                      ? " — first in queue!"
+                      ? " · first in queue!"
                       : ` · ${queuePreview.nextQueueNumber - 1} patient${queuePreview.nextQueueNumber - 1 === 1 ? "" : "s"} ahead`}
                   </p>
                 </div>

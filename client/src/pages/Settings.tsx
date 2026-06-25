@@ -18,7 +18,7 @@ import QRCode from "react-qr-code";
 type Tab = "clinic" | "billing" | "whatsapp" | "sms" | "staff";
 
 const WHATSAPP_PROVIDERS = [
-  { value: "web", label: "WhatsApp Web (Free — scan QR)" },
+  { value: "web", label: "WhatsApp Web (Free, scan QR)" },
   { value: "meta", label: "Meta (WhatsApp Business API)" },
   { value: "twilio", label: "Twilio" },
   { value: "gupshup", label: "Gupshup" },
@@ -813,7 +813,7 @@ export default function Settings() {
               </div>
 
               <div className="pt-2 border-t border-slate-100">
-                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">Doctor Details — for Prescriptions</p>
+                <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-4">Doctor Details for Prescriptions</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label className="text-sm font-medium text-slate-700 mb-1.5 block">Doctor Name</Label>
@@ -922,7 +922,7 @@ export default function Settings() {
                   <div className="flex items-center justify-between py-3">
                     <span className="text-sm text-slate-500">Member Since</span>
                     <span className="text-sm text-slate-900">
-                      {clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "—"}
+                      {clinic.createdAt ? new Date(clinic.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) : "-"}
                     </span>
                   </div>
                 </div>
@@ -973,7 +973,7 @@ export default function Settings() {
 
                     {/* Step 1 — UPI */}
                     <div className="bg-teal-50 border border-teal-100 rounded-xl p-4 space-y-2">
-                      <p className="text-xs font-semibold text-slate-700">Step 1 — Pay via UPI</p>
+                      <p className="text-xs font-semibold text-slate-700">Step 1: Pay via UPI</p>
                       <div className="flex items-center gap-3 bg-white rounded-lg border border-teal-200 px-4 py-3">
                         <span className="font-mono font-semibold text-slate-900 flex-1 text-sm">{UPI_ID}</span>
                         <button
@@ -990,7 +990,7 @@ export default function Settings() {
 
                     {/* Step 2 — UTR */}
                     <div className="space-y-2">
-                      <Label className="text-xs font-semibold text-slate-700">Step 2 — Enter UTR / Reference Number</Label>
+                      <Label className="text-xs font-semibold text-slate-700">Step 2: Enter UTR / Reference Number</Label>
                       <Input
                         value={utr}
                         onChange={e => setUtr(e.target.value)}
@@ -1040,7 +1040,7 @@ export default function Settings() {
                           ₹{(p.amount / 100).toLocaleString("en-IN")}
                           {p.planType && <span className="ml-2 text-xs font-normal text-slate-500 capitalize">· {p.planType}</span>}
                         </p>
-                        <p className="text-xs text-slate-400 mt-0.5 font-mono">UTR: {p.utr || "—"}</p>
+                        <p className="text-xs text-slate-400 mt-0.5 font-mono">UTR: {p.utr || "-"}</p>
                         {p.notes && <p className="text-xs text-red-500 mt-0.5">{p.notes}</p>}
                       </div>
                       <div className="text-right flex-shrink-0">
@@ -1300,7 +1300,7 @@ export default function Settings() {
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex gap-3 text-sm text-amber-800">
           <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-500" />
           <p>
-            API keys are stored securely and are write-only — existing keys are never returned in full.
+            API keys are stored securely and are write-only. Existing keys are never returned in full.
             Actual message sending will be triggered from Queue Management and the CRM module once configured.
           </p>
         </div>

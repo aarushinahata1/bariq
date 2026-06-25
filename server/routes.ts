@@ -568,6 +568,132 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ── DOCTOR CONSOLE ────────────────────────────────────────────────────────
+  // GET /api/doctor-console/:doctorId — aggregated view for the doctor's active console
+  // Returns current in_progress patient (full detail) + today's queue overview
+
+  app.get("/api/doctor-console/:doctorId", requireAuth, async (req, res) => {
+    try {
+      const { doctorId } = req.params;
+      const clinicId = req.session.clinicId!;
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+
+      // Fetch doctor info
+      const [doctorRow] = await db.select().from(users)
+        .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
+        .where(and(eq(users.id, doctorId), eq(users.clinicId, clinicId)));
+      if (!doctorRow) return res.status(404).json({ message: "Doctor not found" });
+
+      // Fetch today's full queue for this doctor
+      const todayQueue = await db.select().from(appointments)
+        .leftJoin(patients, and(eq(patients.id, appointments.patientId), eq(patients.clinicId, clinicId)))
+        .where(and(
+          eq(appointments.doctorId, doctorId),
+          eq(appointments.clinicId, clinicId),
+          gte(appointments.date, today),
+          lte(appointments.date, endOfDay),
+        ))
+        .orderBy(appointments.queuePosition);
+
+      // Current patient is the first in_progress appointment
+      const currentRow = todayQueue.find(r => r.appointments.status === "in_progress");
+
+      let currentAppointment: any = null;
+      if (currentRow) {
+        const appt = currentRow.appointments;
+        const patient = currentRow.patients;
+
+        // Fetch prescription for this appointment
+        const [prescription] = await db.select().from(prescriptions)
+          .where(and(eq(prescriptions.appointmentId, appt.id), eq(prescriptions.clinicId, clinicId)));
+
+        // Past encounters: appointments joined with prescriptions (left join so visits without Rx still appear)
+        const pastEncounterRows = await db.select({
+          appointmentId: appointments.id,
+          date: appointments.date,
+          status: appointments.status,
+          reason: appointments.reason,
+          vitals: appointments.vitals,
+          prescriptionId: prescriptions.id,
+          chiefComplaints: prescriptions.chiefComplaints,
+          diagnosis: prescriptions.diagnosis,
+          medications: prescriptions.medications,
+          rxNotes: prescriptions.notes,
+          prescriptionCreatedAt: prescriptions.createdAt,
+        }).from(appointments)
+          .leftJoin(prescriptions, and(
+            eq(prescriptions.appointmentId, appointments.id),
+            eq(prescriptions.clinicId, clinicId),
+          ))
+          .where(and(
+            eq(appointments.patientId, appt.patientId),
+            eq(appointments.clinicId, clinicId),
+            sql`${appointments.id} != ${appt.id}`,
+            sql`${appointments.status} IN ('completed', 'in_progress')`,
+          ))
+          .orderBy(desc(appointments.date))
+          .limit(15);
+
+        currentAppointment = {
+          id: appt.id,
+          queueNumber: appt.queueNumber,
+          queueToken: appt.queueToken,
+          reason: appt.reason,
+          notes: appt.notes,
+          consultationStartTime: appt.consultationStartTime,
+          checkInTime: appt.checkInTime,
+          vitals: appt.vitals,
+          status: appt.status,
+          patient: patient ? {
+            id: patient.id,
+            name: patient.name,
+            phone: patient.phone,
+            email: patient.email,
+            dateOfBirth: patient.dateOfBirth,
+            gender: patient.gender,
+            bloodGroup: patient.bloodGroup,
+            allergies: patient.allergies,
+            address: patient.address,
+          } : null,
+          prescription: prescription || null,
+          pastEncounters: pastEncounterRows,
+          pastVisitsCount: pastEncounterRows.length,
+        };
+      }
+
+      // Queue overview (all statuses for today)
+      const queueOverview = todayQueue.map(r => ({
+        id: r.appointments.id,
+        queueNumber: r.appointments.queueNumber,
+        queuePosition: r.appointments.queuePosition,
+        status: r.appointments.status,
+        patientName: r.patients?.name || "Patient",
+        checkInTime: r.appointments.checkInTime,
+        consultationStartTime: r.appointments.consultationStartTime,
+      }));
+
+      const waitingCount = todayQueue.filter(r =>
+        r.appointments.status === "booked" || r.appointments.status === "checked_in"
+      ).length;
+
+      res.json({
+        doctor: {
+          id: doctorRow.users.id,
+          name: doctorRow.users.name || `${doctorRow.users.firstName || ""} ${doctorRow.users.lastName || ""}`.trim(),
+          specialization: doctorRow.doctor_profiles?.specialization,
+          avgConsultationTime: doctorRow.doctor_profiles?.avgConsultationTime,
+        },
+        currentAppointment,
+        queue: queueOverview,
+        waitingCount,
+      });
+    } catch (err) {
+      console.error("[doctor-console]", err);
+      res.status(500).json({ message: "Failed to fetch doctor console data" });
+    }
+  });
+
   // ── BILLING ───────────────────────────────────────────────────────────────
 
   app.get("/api/bills", requireAuth, async (req, res) => {
@@ -1023,11 +1149,41 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // GET /api/kiosk/:token/lookup?phone=... — returns existing patient names for this phone (no auth, names only)
+  app.get("/api/kiosk/:token/lookup", async (req, res) => {
+    try {
+      const { token } = req.params;
+      const phone = req.query.phone as string;
+      if (!phone) return res.json({ patients: [] });
+      const digits = phone.replace(/\D/g, "").slice(-10);
+      if (digits.length < 10) return res.json({ patients: [] });
+
+      const [tokenRow] = await db.select().from(clinicSettings)
+        .where(and(
+          eq(clinicSettings.key, "registrationToken"),
+          sql`${clinicSettings.value}::text = ${JSON.stringify(token)}`
+        ));
+      if (!tokenRow) return res.json({ patients: [] });
+
+      const matches = await db.select({ id: patients.id, name: patients.name })
+        .from(patients)
+        .where(and(
+          eq(patients.clinicId, tokenRow.clinicId),
+          sql`RIGHT(REGEXP_REPLACE(${patients.phone}, '[^0-9]', '', 'g'), 10) = ${digits}`
+        ));
+
+      res.json({ patients: matches.map(p => ({ id: p.id, name: p.name })) });
+    } catch (err) {
+      console.error(err);
+      res.json({ patients: [] });
+    }
+  });
+
   // POST /api/kiosk/:token  — register patient + create appointment (no auth)
   app.post("/api/kiosk/:token", async (req, res) => {
     try {
       const { token } = req.params;
-      const { name, phone, doctorId, reason, slotStart, date: dateParam } = req.body;
+      const { name, phone, doctorId, reason, slotStart, date: dateParam, patientId: existingPatientId } = req.body;
 
       if (!name?.trim() || !phone || !doctorId) {
         return res.status(400).json({ message: "Name, phone number, and doctor selection are required" });
@@ -1104,12 +1260,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         await tx.execute(sql`SELECT pg_advisory_xact_lock(${clinicId}::int, hashtext(${doctorId})::int)`);
 
         // Find or create patient
-        const [existingPatient] = await tx.select().from(patients)
-          .where(and(
-            eq(patients.clinicId, clinicId),
-            sql`RIGHT(REGEXP_REPLACE(${patients.phone}, '[^0-9]', '', 'g'), 10) = ${last10}`
-          ));
-        let patient = existingPatient;
+        // If caller passed a specific patientId (from phone-lookup selection), use that directly
+        let patient: typeof patients.$inferSelect | undefined;
+        if (existingPatientId) {
+          const [byId] = await tx.select().from(patients)
+            .where(and(eq(patients.clinicId, clinicId), eq(patients.id, Number(existingPatientId))));
+          patient = byId;
+        }
+        if (!patient) {
+          const [byPhone] = await tx.select().from(patients)
+            .where(and(
+              eq(patients.clinicId, clinicId),
+              sql`RIGHT(REGEXP_REPLACE(${patients.phone}, '[^0-9]', '', 'g'), 10) = ${last10}`
+            ));
+          patient = byPhone;
+        }
         if (!patient) {
           const [created] = await tx.insert(patients)
             .values({ clinicId, name: name.trim(), phone: last10, source: "walk_in", status: "lead", funnelStage: "new" })

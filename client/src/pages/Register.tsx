@@ -72,6 +72,10 @@ export default function Register() {
   const [reason, setReason] = useState("");
   const [result, setResult] = useState<RegistrationResult | null>(null);
 
+  // Phone-first patient lookup
+  const [selectedExistingId, setSelectedExistingId] = useState<number | null>(null);
+  const [addingNew, setAddingNew] = useState(false);
+
   const dateOptions = buildDateOptions();
 
   const { data: info, isLoading, error } = useQuery<KioskInfo>({
@@ -84,6 +88,22 @@ export default function Register() {
     enabled: !!token,
     retry: false,
   });
+
+  const phoneDigits = phone.replace(/\D/g, "").slice(-10);
+  const phoneReady = phoneDigits.length >= 10;
+
+  const { data: lookupData } = useQuery<{ patients: { id: number; name: string }[] }>({
+    queryKey: ["kiosk-lookup", token, phoneDigits],
+    queryFn: async () => {
+      const res = await fetch(`/api/kiosk/${token}/lookup?phone=${phoneDigits}`);
+      if (!res.ok) return { patients: [] };
+      return res.json();
+    },
+    enabled: !!token && phoneReady,
+    staleTime: 30000,
+  });
+
+  const lookedUpPatients = lookupData?.patients ?? [];
 
   const { data: queuePreview } = useQuery<{ nextQueueNumber: number }>({
     queryKey: ["kiosk-preview", token, selectedDoctorId, selectedDate],
@@ -136,6 +156,7 @@ export default function Register() {
           reason: reason.trim() || null,
           slotStart: selectedSlot || undefined,
           date: selectedDate,
+          ...(selectedExistingId ? { patientId: selectedExistingId } : {}),
         }),
       });
       if (!res.ok) {
@@ -152,9 +173,9 @@ export default function Register() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const digits = phone.replace(/\D/g, "");
-    if (digits.length < 10) return;
+    if (!phoneReady) return;
     if (!selectedDoctorId) return;
+    if (!name.trim()) return;
     registerMutation.mutate();
   };
 
@@ -292,6 +313,7 @@ export default function Register() {
                 setName(""); setPhone(""); setReason(""); setResult(null);
                 setSelectedDate(todayStr());
                 setSelectedDoctorId(""); setSelectedSlot("");
+                setSelectedExistingId(null); setAddingNew(false);
               }}
               className="w-full py-3 text-sm text-slate-400 hover:text-slate-600 transition-colors"
             >
@@ -301,7 +323,7 @@ export default function Register() {
         </main>
 
         <footer className="pb-8 text-center">
-          <p className="text-slate-400 text-xs">Powered by <span className="font-semibold text-slate-500">BariQ</span> — Your Turn, Simplified</p>
+          <p className="text-slate-400 text-xs">Powered by <span className="font-semibold text-slate-500">BariQ</span> · Your Turn, Simplified</p>
         </footer>
       </div>
     );
@@ -479,23 +501,7 @@ export default function Register() {
               );
             })()}
 
-            {/* Name */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Full Name *</label>
-              <div className="relative">
-                <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Rahul Sharma"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3.5 rounded-2xl border-2 border-slate-200 bg-white text-slate-900 text-sm font-medium placeholder:text-slate-300 focus:outline-none focus:border-teal-400 transition-colors"
-                />
-              </div>
-            </div>
-
-            {/* Phone */}
+            {/* Phone (first) */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Mobile Number *</label>
               <div className="relative">
@@ -505,15 +511,103 @@ export default function Register() {
                   required
                   placeholder="10-digit mobile number"
                   value={phone}
-                  onChange={e => setPhone(e.target.value.replace(/[^\d\s\-+]/g, ""))}
+                  onChange={e => {
+                    setPhone(e.target.value.replace(/[^\d\s\-+]/g, ""));
+                    setSelectedExistingId(null);
+                    setAddingNew(false);
+                    setName("");
+                  }}
                   className="w-full pl-10 pr-4 py-3.5 rounded-2xl border-2 border-slate-200 bg-white text-slate-900 text-sm font-medium placeholder:text-slate-300 focus:outline-none focus:border-teal-400 transition-colors"
                   maxLength={13}
                 />
               </div>
-              {phone && phone.replace(/\D/g, "").length < 10 && (
+              {phone && !phoneReady && (
                 <p className="text-xs text-red-500 pl-1">Please enter a valid 10-digit number</p>
               )}
             </div>
+
+            {/* Patient name resolution (shown once phone is ready) */}
+            {phoneReady && lookedUpPatients.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  {lookedUpPatients.length === 1 ? "Is this you?" : "Who is registering?"}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {lookedUpPatients.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => { setSelectedExistingId(p.id); setAddingNew(false); setName(p.name); }}
+                      className={cn(
+                        "flex items-center gap-2 px-4 py-2.5 rounded-2xl border-2 text-sm font-semibold transition-all",
+                        selectedExistingId === p.id
+                          ? "border-teal-500 bg-teal-50 text-teal-800"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-teal-300"
+                      )}
+                    >
+                      <span className={cn(
+                        "w-6 h-6 rounded-full flex items-center justify-center text-xs font-black",
+                        selectedExistingId === p.id ? "bg-teal-500 text-white" : "bg-slate-100 text-slate-500"
+                      )}>
+                        {p.name.charAt(0)}
+                      </span>
+                      {p.name}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => { setAddingNew(true); setSelectedExistingId(null); setName(""); }}
+                    className={cn(
+                      "flex items-center gap-1.5 px-4 py-2.5 rounded-2xl border-2 text-sm font-semibold transition-all",
+                      addingNew
+                        ? "border-slate-600 bg-slate-700 text-white"
+                        : "border-dashed border-slate-300 bg-white text-slate-500 hover:border-slate-400"
+                    )}
+                  >
+                    <User className="w-3.5 h-3.5" /> Someone else
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Name field — shown when no existing match, or user picks "someone else" */}
+            {phoneReady && (lookedUpPatients.length === 0 || addingNew) && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Full Name *</label>
+                <div className="relative">
+                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    placeholder="e.g. Rahul Sharma"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    className="w-full pl-10 pr-4 py-3.5 rounded-2xl border-2 border-slate-200 bg-white text-slate-900 text-sm font-medium placeholder:text-slate-300 focus:outline-none focus:border-teal-400 transition-colors"
+                  />
+                </div>
+                {lookedUpPatients.length === 0 && (
+                  <p className="text-xs text-slate-400 pl-1">New patient — we'll register you</p>
+                )}
+              </div>
+            )}
+
+            {/* If existing patient selected, show their name as read-only confirmation */}
+            {phoneReady && selectedExistingId && !addingNew && (
+              <div className="flex items-center gap-3 p-3.5 rounded-2xl bg-teal-50 border border-teal-100">
+                <div className="w-9 h-9 rounded-xl bg-teal-500 text-white flex items-center justify-center font-black text-sm shrink-0">
+                  {name.charAt(0)}
+                </div>
+                <div>
+                  <p className="text-xs text-teal-600 font-semibold uppercase tracking-wider">Registering as</p>
+                  <p className="font-bold text-teal-900">{name}</p>
+                </div>
+              </div>
+            )}
+
+            {!phoneReady && (
+              <p className="text-xs text-slate-400 text-center py-2">Enter your mobile number to continue</p>
+            )}
 
             {/* Reason (optional) */}
             <div className="space-y-1.5">
@@ -563,8 +657,8 @@ export default function Register() {
               type="submit"
               disabled={
                 registerMutation.isPending ||
+                !phoneReady ||
                 !name.trim() ||
-                phone.replace(/\D/g, "").length < 10 ||
                 !selectedDoctorId ||
                 selectedDoctorSlots.length === 0 ||
                 (selectedDoctorSlots.length > 1 && !selectedSlot)
@@ -590,7 +684,7 @@ export default function Register() {
       </main>
 
       <footer className="pb-8 text-center">
-        <p className="text-slate-400 text-xs">Powered by <span className="font-semibold text-slate-500">BariQ</span> — Your Turn, Simplified</p>
+        <p className="text-slate-400 text-xs">Powered by <span className="font-semibold text-slate-500">BariQ</span> · Your Turn, Simplified</p>
       </footer>
     </div>
   );

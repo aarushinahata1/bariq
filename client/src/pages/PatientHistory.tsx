@@ -74,54 +74,99 @@ function generateTimeSlots(availability: any, dayOfWeek: string): string[] {
   return (availability[dayOfWeek].slots || []).map((s: any) => `${s.start}-${s.end}`);
 }
 
-function buildPrescriptionHtml(rx: any, patient: any, apt: any): string {
+function buildPrescriptionHtml(rx: any, patient: any, apt: any, clinicProfile?: any): string {
+  const esc = (s: unknown) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const meds: any[] = rx.medications || [];
   const rows = meds.map(m => `<tr>
-    <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;font-weight:600">${m.name || ""}</td>
-    <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9">${m.dosage || ""}</td>
-    <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9">${m.frequency || ""}</td>
-    <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9">${m.duration || ""}</td>
-    <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9">${m.timing || ""}</td>
-    <td style="padding:6px 8px;border-bottom:1px solid #f1f5f9;color:#64748b">${m.instructions || ""}</td>
+    <td style="padding:9px 10px;border-bottom:1px solid #f1f5f9;font-weight:600">${esc(m.name || "")}</td>
+    <td style="padding:9px 10px;border-bottom:1px solid #f1f5f9">${esc(m.dosage || "")}</td>
+    <td style="padding:9px 10px;border-bottom:1px solid #f1f5f9">${esc(m.frequency || "")}</td>
+    <td style="padding:9px 10px;border-bottom:1px solid #f1f5f9">${esc(m.duration || "")}</td>
+    <td style="padding:9px 10px;border-bottom:1px solid #f1f5f9">${esc(m.timing || "")}</td>
+    <td style="padding:9px 10px;border-bottom:1px solid #f1f5f9;color:#64748b">${esc(m.instructions || "")}</td>
   </tr>`).join("");
+
+  const clinicName = esc(clinicProfile?.clinicName || "");
+  const cTagline = clinicProfile?.tagline ? `<p style="font-size:11px;color:#64748b;font-style:italic;margin-top:2px">${esc(clinicProfile.tagline)}</p>` : "";
+  const cAddr = clinicProfile?.address ? `<p style="font-size:12px;color:#475569;line-height:1.5;margin-top:3px">${esc(clinicProfile.address).replace(/\n/g,"<br>")}</p>` : "";
+  const cPhone = clinicProfile?.phone ? `<p style="font-size:12px;color:#475569;margin-top:3px">${esc(clinicProfile.phone)}</p>` : "";
+  const doctorName = esc(apt.doctor?.name || "");
+  const quals = clinicProfile?.qualifications ? esc(clinicProfile.qualifications) : "";
+  const regNo = clinicProfile?.registrationNo ? `Reg. No. ${esc(clinicProfile.registrationNo)}` : "";
 
   const dobLine = patient.dateOfBirth
     ? `<div class="field"><label>Age</label><span>${differenceInYears(new Date(), new Date(patient.dateOfBirth))} yrs</span></div>`
     : "";
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prescription</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:13px;color:#1e293b;padding:32px}
-h1{font-size:20px;font-weight:900;color:#0f766e;margin-bottom:2px}.sub{color:#64748b;font-size:12px;margin-bottom:20px}
-hr{border:none;border-top:2px solid #e2e8f0;margin-bottom:20px}
-.row{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:16px}
-.field{min-width:130px}.field label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;display:block;margin-bottom:2px}.field span{font-weight:700}
-.allergy{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:16px;color:#dc2626;font-weight:700}
-table{width:100%;border-collapse:collapse;margin-top:12px}
-th{background:#f8fafc;padding:7px 8px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;border-bottom:2px solid #e2e8f0}
-.sig{margin-top:48px;text-align:right;border-top:1px dashed #cbd5e1;padding-top:16px}
-@media print{button{display:none}}</style></head><body>
-<h1>Medical Prescription</h1>
-<p class="sub">${format(new Date(apt.date), "MMMM dd, yyyy")}</p>
-<hr>
-<div class="row">
-  <div class="field"><label>Patient</label><span>${patient.name}</span></div>
-  <div class="field"><label>Phone</label><span>${patient.phone}</span></div>
-  ${dobLine}
-  ${patient.gender ? `<div class="field"><label>Gender</label><span>${patient.gender}</span></div>` : ""}
-  ${patient.bloodGroup ? `<div class="field"><label>Blood Group</label><span>${patient.bloodGroup}</span></div>` : ""}
-  <div class="field"><label>Doctor</label><span>Dr. ${apt.doctor?.name || "—"}</span></div>
-</div>
-${patient.allergies ? `<div class="allergy">⚠ ALLERGIES: ${patient.allergies}</div>` : ""}
-${rx.chiefComplaints ? `<p style="margin-bottom:6px"><b>Chief Complaints:</b> ${rx.chiefComplaints}</p>` : ""}
-${rx.diagnosis ? `<p style="margin-bottom:6px"><b>Diagnosis:</b> ${rx.diagnosis}</p>` : ""}
-<table>
-  <thead><tr><th>Medicine</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Timing</th><th>Instructions</th></tr></thead>
-  <tbody>${rows}</tbody>
-</table>
-${rx.notes ? `<p style="margin-top:14px;color:#64748b;font-style:italic">${rx.notes}</p>` : ""}
-<div class="sig">
-  <p style="font-size:14px;font-weight:700">Dr. ${apt.doctor?.name || ""}</p>
-  <p style="font-size:11px;color:#94a3b8">Digital Prescription</p>
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Prescription – ${esc(patient.name)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#1e293b;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{max-width:760px;margin:0 auto}
+.accent{height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding:18px 36px 14px;border-bottom:2px solid #e2e8f0}
+.clinic-name{font-size:21px;font-weight:900;color:#0f766e;letter-spacing:-.3px;margin-bottom:4px}
+.dr-col{text-align:right}
+.dr-name{font-size:16px;font-weight:800;color:#0f172a}
+.dr-sub{font-size:11px;color:#64748b;margin-top:3px}
+.body{padding:16px 36px 28px}
+.doc-label{text-align:center;font-size:9px;font-weight:800;letter-spacing:.25em;color:#94a3b8;text-transform:uppercase;margin-bottom:14px}
+.info-row{display:flex;gap:24px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;margin-bottom:16px}
+.field{min-width:130px}.field label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;display:block;margin-bottom:2px}.field span{font-weight:700;font-size:13px;color:#0f172a}
+.allergy{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:14px;color:#dc2626;font-weight:700;font-size:13px}
+.rp{font-size:34px;font-style:italic;font-weight:900;color:#0d9488;margin-bottom:10px;line-height:1}
+table{width:100%;border-collapse:collapse}
+th{background:#0f766e;color:#fff;padding:8px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.08em}
+tr:nth-child(even){background:#f8fafc}
+td{padding:8px 10px;border-bottom:1px solid #f1f5f9;font-size:13px}
+.notes{margin-top:14px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;color:#78350f;font-style:italic}
+.bottom-row{display:flex;justify-content:space-between;align-items:flex-end;padding-top:16px;border-top:1px dashed #e2e8f0;margin-top:28px}
+.branding{font-size:8px;color:#cbd5e1}
+.sig{text-align:center;min-width:180px}
+.sig-line{border-top:1.5px solid #94a3b8;margin-bottom:7px;height:40px}
+.sig-name{font-size:13px;font-weight:700;color:#0f172a}
+.sig-sub{font-size:10px;color:#64748b;margin-top:2px}
+@media print{button{display:none}.body{padding:10px 24px}.header{padding:12px 24px 10px}}
+</style></head><body>
+<div class="page">
+  <div class="accent"></div>
+  <div class="header">
+    <div>
+      ${clinicName ? `<p class="clinic-name">${clinicName}</p>${cTagline}${cAddr}${cPhone}` : `<p class="clinic-name">Medical Prescription</p>`}
+    </div>
+    <div class="dr-col">
+      ${doctorName ? `<p class="dr-name">Dr. ${doctorName}</p>` : ""}
+      ${quals ? `<p class="dr-sub">${quals}</p>` : ""}
+      ${regNo ? `<p class="dr-sub">${regNo}</p>` : ""}
+    </div>
+  </div>
+  <div class="body">
+    <p class="doc-label">Medical Prescription · ${format(new Date(apt.date), "dd MMMM yyyy")}</p>
+    <div class="info-row">
+      <div class="field"><label>Patient</label><span>${esc(patient.name)}</span></div>
+      <div class="field"><label>Phone</label><span>${esc(patient.phone)}</span></div>
+      ${dobLine}
+      ${patient.gender ? `<div class="field"><label>Gender</label><span>${esc(patient.gender)}</span></div>` : ""}
+      ${patient.bloodGroup ? `<div class="field"><label>Blood Group</label><span>${esc(patient.bloodGroup)}</span></div>` : ""}
+    </div>
+    ${patient.allergies ? `<div class="allergy">⚠ ALLERGIES: ${esc(patient.allergies)}</div>` : ""}
+    ${rx.chiefComplaints ? `<p style="margin-bottom:8px;font-size:13px"><b>Chief Complaints:</b> ${esc(rx.chiefComplaints)}</p>` : ""}
+    ${rx.diagnosis ? `<p style="margin-bottom:12px;font-size:13px;background:#dbeafe;border:1px solid #bfdbfe;border-radius:8px;padding:8px 12px;font-weight:700;color:#1d4ed8"><b>Diagnosis:</b> ${esc(rx.diagnosis)}</p>` : ""}
+    <p class="rp">&#8478;</p>
+    <table>
+      <thead><tr><th>Medicine</th><th>Dose</th><th>Frequency</th><th>Duration</th><th>Timing</th><th>Instructions</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${rx.notes ? `<div class="notes">${esc(rx.notes)}</div>` : ""}
+    <div class="bottom-row">
+      <span class="branding">Powered by BariQ</span>
+      <div class="sig">
+        <div class="sig-line"></div>
+        <p class="sig-name">Dr. ${doctorName || "-"}</p>
+        ${quals ? `<p class="sig-sub">${quals}</p>` : `<p class="sig-sub">Digital Prescription</p>`}
+      </div>
+    </div>
+  </div>
 </div>
 <script>window.onload=()=>window.print();</script>
 </body></html>`;
@@ -131,65 +176,99 @@ function buildSummaryHtml(
   patient: any,
   appointments: any[],
   prescriptionsByAppt: Map<number, any[]>,
-  bills: any[]
+  bills: any[],
+  clinicProfile?: any
 ): string {
+  const esc = (s: unknown) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
   const totalSpent = bills.filter(b => b.status === "paid").reduce((a, b) => a + b.amount, 0);
-  const lastVisit = appointments[0] ? format(new Date(appointments[0].date), "MMM dd, yyyy") : "—";
+  const lastVisit = appointments[0] ? format(new Date(appointments[0].date), "MMM dd, yyyy") : "-";
   const age = calcAge(patient.dateOfBirth);
+
+  const clinicName = esc(clinicProfile?.clinicName || "");
+  const cTagline = clinicProfile?.tagline ? `<p style="font-size:11px;color:#64748b;font-style:italic;margin-top:2px">${esc(clinicProfile.tagline)}</p>` : "";
+  const cAddr = clinicProfile?.address ? `<p style="font-size:12px;color:#475569;line-height:1.5;margin-top:3px">${esc(clinicProfile.address).replace(/\n/g,"<br>")}</p>` : "";
+  const cPhone = clinicProfile?.phone ? `<p style="font-size:12px;color:#475569;margin-top:3px">${esc(clinicProfile.phone)}</p>` : "";
 
   const visitRows = appointments.map(apt => {
     const rx = prescriptionsByAppt.get(apt.id)?.[0];
     const v = apt.vitals || {};
     return `<tr>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9">${format(new Date(apt.date), "dd MMM yyyy")}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9">Dr. ${apt.doctor?.name || "—"}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9">${apt.reason || "—"}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9">${STATUS_LABELS[apt.status] || apt.status}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9">${rx?.diagnosis || "—"}</td>
-      <td style="padding:7px 8px;border-bottom:1px solid #f1f5f9">${v.bp || "—"} ${v.pulse ? `/ ${v.pulse} bpm` : ""}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">${format(new Date(apt.date), "dd MMM yyyy")}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">Dr. ${esc(apt.doctor?.name || "-")}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">${esc(apt.reason || "-")}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">${esc(STATUS_LABELS[apt.status] || apt.status)}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">${esc(rx?.diagnosis || "-")}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #f1f5f9">${esc(v.bp || "-")} ${v.pulse ? `/ ${v.pulse} bpm` : ""}</td>
     </tr>`;
   }).join("");
 
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Patient Summary - ${patient.name}</title>
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:13px;color:#1e293b;padding:32px}
-h1{font-size:22px;font-weight:900;color:#0f766e;margin-bottom:4px}
-h2{font-size:14px;font-weight:800;margin:24px 0 12px;color:#334155;border-bottom:2px solid #e2e8f0;padding-bottom:6px}
-.sub{color:#64748b;font-size:12px;margin-bottom:20px}hr{border:none;border-top:2px solid #e2e8f0;margin-bottom:20px}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:12px}
-.field label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;display:block;margin-bottom:2px}.field span{font-weight:700;font-size:13px}
-.stat-row{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:20px}
-.stat{background:#f8fafc;border-radius:10px;padding:12px 18px}
-.stat .val{font-size:22px;font-weight:900;color:#0f766e}.stat .lbl{font-size:10px;text-transform:uppercase;color:#94a3b8;letter-spacing:.08em}
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Patient Summary – ${esc(patient.name)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',Arial,sans-serif;font-size:13px;color:#1e293b;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.page{max-width:900px;margin:0 auto}
+.accent{height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)}
+.header{display:flex;justify-content:space-between;align-items:flex-start;padding:18px 36px 14px;border-bottom:2px solid #e2e8f0}
+.clinic-name{font-size:21px;font-weight:900;color:#0f766e;letter-spacing:-.3px;margin-bottom:4px}
+.doc-info{text-align:right}
+.doc-title{font-size:14px;font-weight:800;color:#1e293b}
+.doc-date{font-size:12px;color:#64748b;margin-top:4px}
+.body{padding:16px 36px 28px}
+.section-title{font-size:12px;font-weight:800;color:#334155;text-transform:uppercase;letter-spacing:.08em;border-bottom:2px solid #e2e8f0;padding-bottom:6px;margin:20px 0 12px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px}
+.field label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#94a3b8;display:block;margin-bottom:2px}.field span{font-weight:700;font-size:13px;color:#0f172a}
+.allergy{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:16px;color:#dc2626;font-weight:700;font-size:13px}
+.stat-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px}
+.stat{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px 18px}
+.stat .val{font-size:20px;font-weight:900;color:#0f766e}.stat .lbl{font-size:10px;text-transform:uppercase;color:#94a3b8;letter-spacing:.08em;margin-top:2px}
 table{width:100%;border-collapse:collapse}
-th{background:#f8fafc;padding:7px 8px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;border-bottom:2px solid #e2e8f0}
-.allergy{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin-bottom:16px;color:#dc2626;font-weight:700}
-@media print{button{display:none}}</style></head><body>
-<h1>Patient Medical Record</h1>
-<p class="sub">Generated on ${format(new Date(), "MMMM dd, yyyy")}</p>
-<hr>
-${patient.allergies ? `<div class="allergy">⚠ KNOWN ALLERGIES: ${patient.allergies}</div>` : ""}
-<h2>Patient Profile</h2>
-<div class="grid">
-  <div class="field"><label>Full Name</label><span>${patient.name}</span></div>
-  <div class="field"><label>Phone</label><span>${patient.phone}</span></div>
-  ${patient.email ? `<div class="field"><label>Email</label><span>${patient.email}</span></div>` : ""}
-  ${patient.dateOfBirth ? `<div class="field"><label>Date of Birth</label><span>${format(new Date(patient.dateOfBirth), "MMM dd, yyyy")} (${age})</span></div>` : ""}
-  ${patient.gender ? `<div class="field"><label>Gender</label><span>${patient.gender}</span></div>` : ""}
-  ${patient.bloodGroup ? `<div class="field"><label>Blood Group</label><span>${patient.bloodGroup}</span></div>` : ""}
-  ${patient.address ? `<div class="field"><label>Address</label><span>${patient.address}</span></div>` : ""}
+thead th{background:#0f766e;color:#fff;padding:8px 10px;text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.08em}
+tbody tr:nth-child(even){background:#f8fafc}
+tbody td{padding:7px 10px;border-bottom:1px solid #f1f5f9;font-size:12.5px}
+.footer{padding:10px 36px 16px;text-align:center}
+.branding{font-size:8px;color:#cbd5e1}
+@media print{button{display:none}.body{padding:10px 24px}.header{padding:12px 24px 10px}}
+</style></head><body>
+<div class="page">
+  <div class="accent"></div>
+  <div class="header">
+    <div>
+      ${clinicName ? `<p class="clinic-name">${clinicName}</p>${cTagline}${cAddr}${cPhone}` : `<p class="clinic-name">Patient Medical Record</p>`}
+    </div>
+    <div class="doc-info">
+      <p class="doc-title">Patient Medical Record</p>
+      <p class="doc-date">Generated on ${format(new Date(), "dd MMMM yyyy")}</p>
+    </div>
+  </div>
+  <div class="body">
+    ${patient.allergies ? `<div class="allergy">⚠ KNOWN ALLERGIES: ${esc(patient.allergies)}</div>` : ""}
+    <p class="section-title">Patient Profile</p>
+    <div class="grid">
+      <div class="field"><label>Full Name</label><span>${esc(patient.name)}</span></div>
+      <div class="field"><label>Phone</label><span>${esc(patient.phone)}</span></div>
+      ${patient.email ? `<div class="field"><label>Email</label><span>${esc(patient.email)}</span></div>` : ""}
+      ${patient.dateOfBirth ? `<div class="field"><label>Date of Birth</label><span>${format(new Date(patient.dateOfBirth), "MMM dd, yyyy")} (${age})</span></div>` : ""}
+      ${patient.gender ? `<div class="field"><label>Gender</label><span>${esc(patient.gender)}</span></div>` : ""}
+      ${patient.bloodGroup ? `<div class="field"><label>Blood Group</label><span>${esc(patient.bloodGroup)}</span></div>` : ""}
+      ${patient.address ? `<div class="field"><label>Address</label><span>${esc(patient.address)}</span></div>` : ""}
+    </div>
+    ${patient.notes ? `<p style="color:#475569;margin-bottom:12px;font-size:13px"><b>Clinical Notes:</b> ${esc(patient.notes)}</p>` : ""}
+    <p class="section-title">Visit Summary</p>
+    <div class="stat-row">
+      <div class="stat"><div class="val">${appointments.length}</div><div class="lbl">Total Visits</div></div>
+      <div class="stat"><div class="val">${lastVisit}</div><div class="lbl">Last Visit</div></div>
+      <div class="stat"><div class="val">₹${(totalSpent / 100).toFixed(0)}</div><div class="lbl">Total Spent</div></div>
+    </div>
+    <p class="section-title">Visit History</p>
+    <table>
+      <thead><tr><th>Date</th><th>Doctor</th><th>Reason</th><th>Status</th><th>Diagnosis</th><th>BP / Pulse</th></tr></thead>
+      <tbody>${visitRows}</tbody>
+    </table>
+  </div>
+  <div class="footer">
+    <p class="branding">Powered by BariQ</p>
+  </div>
 </div>
-${patient.notes ? `<p style="color:#475569;margin-top:8px"><b>Clinical Notes:</b> ${patient.notes}</p>` : ""}
-<h2>Visit Summary</h2>
-<div class="stat-row">
-  <div class="stat"><div class="val">${appointments.length}</div><div class="lbl">Total Visits</div></div>
-  <div class="stat"><div class="val">${lastVisit}</div><div class="lbl">Last Visit</div></div>
-  <div class="stat"><div class="val">₹${(totalSpent / 100).toFixed(0)}</div><div class="lbl">Total Spent</div></div>
-</div>
-<h2>Visit History</h2>
-<table>
-  <thead><tr><th>Date</th><th>Doctor</th><th>Reason</th><th>Status</th><th>Diagnosis</th><th>BP / Pulse</th></tr></thead>
-  <tbody>${visitRows}</tbody>
-</table>
 <script>window.onload=()=>window.print();</script>
 </body></html>`;
 }
@@ -338,11 +417,12 @@ function VitalsEditor({ vitals, onSave, onCancel }: {
 
 // ── PrescriptionCard ──────────────────────────────────────────────────────────
 
-function PrescriptionCard({ rx, patient, apt, onDeleted }: {
+function PrescriptionCard({ rx, patient, apt, onDeleted, clinicProfile }: {
   rx: any;
   patient: any;
   apt: any;
   onDeleted: () => void;
+  clinicProfile?: any;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -350,7 +430,7 @@ function PrescriptionCard({ rx, patient, apt, onDeleted }: {
   const meds: any[] = rx.medications || [];
 
   const handlePrint = () => {
-    const html = buildPrescriptionHtml(rx, patient, apt);
+    const html = buildPrescriptionHtml(rx, patient, apt, clinicProfile);
     const w = window.open("", "_blank");
     if (w) { w.document.write(html); w.document.close(); }
   };
@@ -446,6 +526,11 @@ export default function PatientHistory() {
 
   const { data: patient, isLoading } = usePatient(patientId);
   const { data: patientAppointments } = useAppointments({ patientId }, { refetchInterval: false });
+  const { data: settings } = useQuery<Record<string, any>>({
+    queryKey: ["/api/settings"],
+    queryFn: () => fetch("/api/settings", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
+  });
+  const clinicProfile = settings?.clinicProfile;
   const updatePatient = useUpdatePatient();
   const deletePatient = useDeletePatient();
   const { toast } = useToast();
@@ -601,7 +686,7 @@ export default function PatientHistory() {
   };
 
   const handlePrintSummary = () => {
-    const html = buildSummaryHtml(patient, allAppointments, prescriptionsByAppt, bills || []);
+    const html = buildSummaryHtml(patient, allAppointments, prescriptionsByAppt, bills || [], clinicProfile);
     const w = window.open("", "_blank");
     if (w) { w.document.write(html); w.document.close(); }
   };
@@ -776,7 +861,7 @@ export default function PatientHistory() {
               { label: "Total Visits", value: String(totalVisits), icon: Activity, color: "text-teal-700 bg-teal-50" },
               { label: "Completed", value: String(completedVisits), icon: Check, color: "text-green-600 bg-green-50" },
               { label: "Total Spent", value: `₹${(totalSpent / 100).toFixed(0)}`, icon: Receipt, color: "text-purple-600 bg-purple-50" },
-              { label: "Last Visit", value: lastVisit ? format(new Date(lastVisit), "MMM d") : "—", icon: Calendar, color: "text-blue-600 bg-blue-50" },
+              { label: "Last Visit", value: lastVisit ? format(new Date(lastVisit), "MMM d") : "-", icon: Calendar, color: "text-blue-600 bg-blue-50" },
             ] as const).map(stat => (
               <div key={stat.label} className="bg-white rounded-2xl border border-slate-100 p-3 text-center shadow-sm">
                 <div className={cn("w-8 h-8 rounded-xl flex items-center justify-center mx-auto mb-2", stat.color)}>
@@ -941,6 +1026,7 @@ export default function PatientHistory() {
                             rx={rx}
                             patient={patient}
                             apt={apt}
+                            clinicProfile={clinicProfile}
                             onDeleted={() => queryClient.invalidateQueries({ queryKey: ["/api/prescriptions", { patientId }] })}
                           />
                         ))}

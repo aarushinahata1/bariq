@@ -46,7 +46,7 @@ export default function PaymentWall() {
   });
 
   const submit = useMutation({
-    mutationFn: (body: { amount: number; utr: string; planType: string }) =>
+    mutationFn: (body: { utr: string; planType: string }) =>
       apiRequest("POST", "/api/payments", body).then(r => r.json()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/payments"] });
@@ -75,7 +75,7 @@ export default function PaymentWall() {
       return;
     }
     const plan = PLANS.find(p => p.key === selectedPlan)!;
-    submit.mutate({ amount: plan.price, utr: trimmed, planType: plan.key });
+    submit.mutate({ utr: trimmed, planType: plan.key });
   }
 
   if (isLoading) return (
@@ -210,7 +210,7 @@ export default function PaymentWall() {
                 {/* UPI payment */}
                 <div className="bg-teal-50 border border-teal-100 rounded-xl p-5">
                   <p className="text-sm font-semibold text-gray-700 mb-3">
-                    Step 1 — Pay the agreed amount to this UPI ID
+                    Step 1: Pay the agreed amount to this UPI ID
                   </p>
                   <div className="flex items-center gap-3 bg-white rounded-lg border border-teal-200 px-4 py-3">
                     <span className="font-mono font-semibold text-gray-900 flex-1 text-sm">{UPI_ID}</span>
@@ -231,7 +231,7 @@ export default function PaymentWall() {
                 {/* UTR input */}
                 <div>
                   <p className="text-sm font-semibold text-gray-700 mb-2">
-                    Step 2 — Enter UTR / Reference Number
+                    Step 2: Enter UTR / Reference Number
                   </p>
                   <Input
                     value={utr}
@@ -240,7 +240,7 @@ export default function PaymentWall() {
                     className="font-mono h-11"
                   />
                   <p className="text-xs text-gray-400 mt-1.5">
-                    Find this in your UPI app under transaction details — usually labeled UTR, Ref No, or Transaction ID.
+                    Find this in your UPI app under transaction details, usually labeled UTR, Ref No, or Transaction ID.
                   </p>
                 </div>
 

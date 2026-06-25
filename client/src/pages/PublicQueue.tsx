@@ -254,7 +254,7 @@ export default function PublicQueue() {
       {/* Footer */}
       <footer className="px-8 py-4 border-t border-slate-800/60 text-center">
         <p className="text-slate-700 text-xs">
-          Powered by <span className="text-slate-500 font-semibold">BariQ</span> — Your Turn, Simplified
+          Powered by <span className="text-slate-500 font-semibold">BariQ</span> · Your Turn, Simplified
         </p>
       </footer>
     </div>

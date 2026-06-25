@@ -12,6 +12,7 @@ import {
   ChevronDown,
   LogOut,
   Pill,
+  MonitorSmartphone,
 } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
 import { Role, ROLE_CONFIGS } from "@/lib/roles";
@@ -37,14 +38,15 @@ const ROLE_COLORS: Record<Role, string> = {
 };
 
 const ALL_MENU_ITEMS = [
-  { label: "Dashboard",       icon: LayoutDashboard, href: "/dashboard" },
-  { label: "CRM & Marketing", icon: MessageSquare,   href: "/crm" },
-  { label: "Queue Management",icon: Clock,            href: "/queue" },
-  { label: "Appointments",    icon: Calendar,         href: "/appointments" },
-  { label: "Patients",        icon: Users,            href: "/patients" },
-  { label: "Doctors",         icon: Stethoscope,      href: "/doctors" },
-  { label: "Pharmacy",        icon: Pill,             href: "/pharmacy" },
-  { label: "Settings",        icon: Settings,         href: "/settings" },
+  { label: "Dashboard",       icon: LayoutDashboard,   href: "/dashboard" },
+  { label: "Doctor Console",  icon: MonitorSmartphone, href: "/doctor-console" },
+  { label: "CRM & Marketing", icon: MessageSquare,     href: "/crm" },
+  { label: "Queue Management",icon: Clock,              href: "/queue" },
+  { label: "Appointments",    icon: Calendar,           href: "/appointments" },
+  { label: "Patients",        icon: Users,              href: "/patients" },
+  { label: "Doctors",         icon: Stethoscope,        href: "/doctors" },
+  { label: "Pharmacy",        icon: Pill,               href: "/pharmacy" },
+  { label: "Settings",        icon: Settings,           href: "/settings" },
 ];
 
 export function Sidebar({ onNavigate }: SidebarProps) {
