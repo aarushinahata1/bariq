@@ -13,33 +13,9 @@ import { cn } from "@/lib/utils";
 const UPI_ID = "akshatnahata05@okibl";
 
 const PLANS = [
-  {
-    key: "monthly",
-    label: "Monthly",
-    price: 4999,
-    display: "₹4,999",
-    per: "/month",
-    note: "Cancel anytime",
-    highlight: false,
-  },
-  {
-    key: "quarterly",
-    label: "Quarterly",
-    price: 12999,
-    display: "₹12,999",
-    per: "/quarter",
-    note: "Save ₹1,998 vs monthly",
-    highlight: true,
-  },
-  {
-    key: "annual",
-    label: "Annual",
-    price: 49999,
-    display: "₹49,999",
-    per: "/year",
-    note: "Save ₹9,989 vs monthly",
-    highlight: false,
-  },
+  { key: "monthly",   label: "Monthly",   duration: "1 month",   highlight: false },
+  { key: "quarterly", label: "Quarterly", duration: "3 months",  highlight: true  },
+  { key: "annual",    label: "Annual",    duration: "12 months", highlight: false },
 ] as const;
 
 type PlanKey = "monthly" | "quarterly" | "annual";
@@ -182,7 +158,11 @@ export default function PaymentWall() {
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="p-6 border-b border-gray-100">
                 <h2 className="text-xl font-bold text-gray-900">Activate Your Account</h2>
-                <p className="text-gray-500 text-sm mt-1">Choose a plan, pay via UPI, then enter your UTR to request access.</p>
+                <p className="text-gray-500 text-sm mt-1">
+                  Contact us on{" "}
+                  <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 font-medium hover:underline">WhatsApp</a>
+                  {" "}to get your custom price, pay via UPI, then submit your UTR below.
+                </p>
               </div>
 
               <form onSubmit={handleSubmit} className="p-6 space-y-6">
@@ -220,9 +200,8 @@ export default function PaymentWall() {
                           </span>
                         )}
                         <p className="font-bold text-gray-900 text-sm">{plan.label}</p>
-                        <p className="text-xl font-extrabold text-gray-900 mt-1">{plan.display}</p>
-                        <p className="text-xs text-gray-400">{plan.per}</p>
-                        <p className="text-[10px] text-teal-600 font-medium mt-1">{plan.note}</p>
+                        <p className="text-sm text-gray-500 mt-1">{plan.duration}</p>
+                        <p className="text-[10px] text-teal-600 font-medium mt-1">Contact for price</p>
                       </button>
                     ))}
                   </div>
@@ -231,9 +210,7 @@ export default function PaymentWall() {
                 {/* UPI payment */}
                 <div className="bg-teal-50 border border-teal-100 rounded-xl p-5">
                   <p className="text-sm font-semibold text-gray-700 mb-3">
-                    Step 1 — Pay{" "}
-                    <span className="text-teal-700">{PLANS.find(p => p.key === selectedPlan)?.display}</span>{" "}
-                    to this UPI ID
+                    Step 1 — Pay the agreed amount to this UPI ID
                   </p>
                   <div className="flex items-center gap-3 bg-white rounded-lg border border-teal-200 px-4 py-3">
                     <span className="font-mono font-semibold text-gray-900 flex-1 text-sm">{UPI_ID}</span>

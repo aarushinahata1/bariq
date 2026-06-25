@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import {
   Activity, Clock, Users, FileText, BarChart3, Shield,
   Star, CheckCircle, ArrowRight, Stethoscope, Zap, MessageCircle,
-  Pill, Package, Bell, Heart, Printer, AlertTriangle,
+  Pill, Package, Bell, Heart, Printer, AlertTriangle, Menu, X, Phone, Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+const WHATSAPP = "https://wa.me/91942457591";
 
 const stats = [
   { value: "500+", label: "Clinics" },
@@ -102,33 +105,6 @@ const planIncludes = [
   "Unlimited Staff Accounts",
 ];
 
-const plans = [
-  {
-    name: "Monthly",
-    price: "₹4,999",
-    per: "/month",
-    note: "Pay month to month, cancel anytime",
-    highlight: false,
-    badge: null,
-  },
-  {
-    name: "Quarterly",
-    price: "₹12,999",
-    per: "/quarter",
-    note: "3 months — save ₹1,998 vs monthly",
-    highlight: true,
-    badge: "Save ₹1,998",
-  },
-  {
-    name: "Annual",
-    price: "₹49,999",
-    per: "/year",
-    note: "12 months — save ₹9,989 vs monthly",
-    highlight: false,
-    badge: "Best Value",
-  },
-];
-
 const newHighlights = [
   {
     icon: Pill,
@@ -162,20 +138,43 @@ const newHighlights = [
   },
 ];
 
+const navLinks = [
+  { label: "Features", href: "#features" },
+  { label: "Pharmacy", href: "#pharmacy" },
+  { label: "Patient Records", href: "#records" },
+  { label: "Testimonials", href: "#testimonials" },
+  { label: "Contact", href: "#contact" },
+];
+
 export default function Landing() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+
   return (
     <div className="min-h-screen font-sans" style={{ backgroundColor: "#f0f0ea", color: "#111" }}>
 
       {/* ── Nav ──────────────────────────────────────────────────── */}
       <nav className="sticky top-0 z-50 border-b border-gray-200 bg-[#f0f0ea]/95 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 bg-teal-700 rounded-lg flex items-center justify-center flex-shrink-0">
+          {/* Logo */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <div className="w-8 h-8 bg-teal-700 rounded-lg flex items-center justify-center">
               <Stethoscope className="w-4 h-4 text-white" />
             </div>
             <span className="text-lg font-bold text-gray-900">BariQ</span>
           </div>
-          <div className="flex items-center gap-3">
+
+          {/* Desktop nav links */}
+          <div className="hidden md:flex items-center gap-1">
+            {navLinks.map(l => (
+              <a key={l.label} href={l.href}
+                className="text-sm text-gray-600 hover:text-gray-900 font-medium px-3 py-2 rounded-lg hover:bg-gray-100 transition-colors">
+                {l.label}
+              </a>
+            ))}
+          </div>
+
+          {/* Desktop CTA */}
+          <div className="hidden md:flex items-center gap-2">
             <Link href="/login">
               <button className="text-sm text-gray-600 hover:text-gray-900 font-medium px-3 py-2 transition-colors">
                 Sign In
@@ -183,12 +182,42 @@ export default function Landing() {
             </Link>
             <Link href="/signup">
               <Button className="bg-teal-700 hover:bg-teal-800 text-white px-5 h-9 text-sm font-semibold rounded-lg">
-                Sign Up Free
+                Get Started
                 <ArrowRight className="ml-1.5 w-3.5 h-3.5" />
               </Button>
             </Link>
           </div>
+
+          {/* Mobile hamburger */}
+          <button className="md:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors"
+            onClick={() => setMobileOpen(v => !v)}>
+            {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
         </div>
+
+        {/* Mobile menu */}
+        {mobileOpen && (
+          <div className="md:hidden border-t border-gray-200 bg-[#f0f0ea] px-6 py-4 space-y-1">
+            {navLinks.map(l => (
+              <a key={l.label} href={l.href} onClick={() => setMobileOpen(false)}
+                className="block text-sm text-gray-700 font-medium px-3 py-2.5 rounded-lg hover:bg-gray-100 transition-colors">
+                {l.label}
+              </a>
+            ))}
+            <div className="border-t border-gray-200 pt-3 mt-3 flex flex-col gap-2">
+              <Link href="/login" onClick={() => setMobileOpen(false)}>
+                <button className="w-full text-sm text-gray-700 font-medium px-3 py-2.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 transition-colors">
+                  Sign In
+                </button>
+              </Link>
+              <Link href="/signup" onClick={() => setMobileOpen(false)}>
+                <Button className="w-full bg-teal-700 hover:bg-teal-800 text-white h-10 text-sm font-semibold rounded-lg">
+                  Get Started Free
+                </Button>
+              </Link>
+            </div>
+          </div>
+        )}
       </nav>
 
       {/* ── Hero ─────────────────────────────────────────────────── */}
@@ -212,19 +241,19 @@ export default function Landing() {
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-5">
             <Link href="/signup">
               <Button size="lg" className="bg-teal-700 hover:bg-teal-800 text-white px-8 h-12 rounded-xl font-semibold text-base shadow-md">
-                Sign Up Now — 7 Day Free Trial
+                Start Free Trial
                 <ArrowRight className="ml-2 w-4 h-4" />
               </Button>
             </Link>
-            <Link href="/login">
-              <Button size="lg" variant="outline" className="h-12 px-8 rounded-xl border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold text-base">
-                See a Live Demo
+            <a href={WHATSAPP} target="_blank" rel="noopener noreferrer">
+              <Button size="lg" variant="outline" className="h-12 px-8 rounded-xl border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold text-base gap-2">
+                <MessageCircle className="w-4 h-4" /> Talk to Us
               </Button>
-            </Link>
+            </a>
           </div>
 
           <p className="text-sm text-gray-400">
-            No credit card needed · 7-day free trial · cancel anytime
+            7-day free trial · no credit card required · full access from day one
             <span className="mx-3 text-gray-300">|</span>
             <Link href="/login" className="text-teal-700 hover:underline font-medium">
               Already have an account? Sign In →
@@ -272,7 +301,7 @@ export default function Landing() {
       </section>
 
       {/* ── Features ─────────────────────────────────────────────── */}
-      <section className="py-20 px-6">
+      <section id="features" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
@@ -302,7 +331,7 @@ export default function Landing() {
       </section>
 
       {/* ── Pharmacy deep-dive ────────────────────────────────────── */}
-      <section className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+      <section id="pharmacy" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div>
@@ -358,12 +387,11 @@ export default function Landing() {
       </section>
 
       {/* ── Patient Records deep-dive ─────────────────────────────── */}
-      <section className="py-20 px-6">
+      <section id="records" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 order-2 lg:order-1">
               <p className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4">Visit Record Preview</p>
-              {/* Allergy banner */}
               <div className="flex items-start gap-3 p-3 rounded-xl bg-red-50 border border-red-200 mb-4">
                 <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
                 <div>
@@ -371,13 +399,11 @@ export default function Landing() {
                   <p className="text-red-600 text-xs">Penicillin, Sulfa drugs</p>
                 </div>
               </div>
-              {/* Patient badges */}
               <div className="flex items-center gap-2 flex-wrap mb-4">
                 <span className="text-xs font-bold text-slate-600 bg-slate-100 px-2 py-1 rounded-full">42 yrs</span>
                 <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-1 rounded-full">Male</span>
                 <span className="text-xs font-black text-red-600 bg-red-50 px-2 py-1 rounded-full">B+</span>
               </div>
-              {/* Vitals chips */}
               <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Vitals — Today's Visit</p>
               <div className="flex flex-wrap gap-2 mb-4">
                 <span className="text-xs bg-red-50 text-red-600 px-2.5 py-1 rounded-full font-medium">🩸 130/85</span>
@@ -386,7 +412,6 @@ export default function Landing() {
                 <span className="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-full font-medium">⚖️ 72 kg</span>
                 <span className="text-xs bg-cyan-50 text-cyan-600 px-2.5 py-1 rounded-full font-medium">💨 97%</span>
               </div>
-              {/* Mini prescription */}
               <div className="p-3 rounded-xl bg-purple-50 border border-purple-100 mb-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-[10px] font-bold uppercase text-purple-600">Prescription · 3 meds</span>
@@ -437,7 +462,7 @@ export default function Landing() {
       </section>
 
       {/* ── Testimonials ─────────────────────────────────────────── */}
-      <section className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+      <section id="testimonials" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-3">
@@ -466,21 +491,18 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Pricing ──────────────────────────────────────────────── */}
+      {/* ── What's Included ──────────────────────────────────────── */}
       <section className="py-20 px-6">
         <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-14">
+          <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
-              One plan. All features. No limits.
+              Everything included. No hidden add-ons.
             </h2>
-            <p className="text-gray-500 text-lg">
-              Every plan includes the complete BariQ suite — queue, pharmacy, patient records, prescriptions, billing, and analytics.
+            <p className="text-gray-500 text-lg max-w-xl mx-auto">
+              Every BariQ clinic gets the complete platform — queue, pharmacy, patient records, prescriptions, billing, and analytics.
             </p>
           </div>
-
-          {/* What's included */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 mb-8">
-            <p className="text-center text-sm font-semibold text-gray-700 mb-6">Everything included in every plan:</p>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-3">
               {planIncludes.map((item) => (
                 <div key={item} className="flex items-center gap-2 text-sm text-gray-600">
@@ -490,46 +512,47 @@ export default function Landing() {
               ))}
             </div>
           </div>
+        </div>
+      </section>
 
-          {/* Plan cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {plans.map((plan) => (
-              <div
-                key={plan.name}
-                className={`relative bg-white rounded-2xl border p-8 shadow-sm flex flex-col ${
-                  plan.highlight ? "border-teal-700 shadow-md ring-1 ring-teal-700" : "border-gray-100"
-                }`}
-              >
-                {plan.badge && (
-                  <div className={`absolute -top-3.5 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-bold text-white ${
-                    plan.highlight ? "bg-teal-700" : "bg-teal-600"
-                  }`}>
-                    {plan.badge}
-                  </div>
-                )}
-                <p className="font-bold text-gray-900 text-lg mb-1">{plan.name}</p>
-                <div className="flex items-baseline gap-1 mb-1">
-                  <span className="text-4xl font-extrabold text-gray-900">{plan.price}</span>
-                  <span className="text-gray-500 text-sm">{plan.per}</span>
-                </div>
-                <p className="text-gray-400 text-sm mb-8">{plan.note}</p>
-                <Link href="/signup" className="mt-auto">
-                  <Button
-                    className={`w-full h-11 rounded-xl font-semibold ${
-                      plan.highlight
-                        ? "bg-teal-700 hover:bg-teal-800 text-white"
-                        : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-                    }`}
-                  >
-                    Start Free Trial
-                  </Button>
-                </Link>
+      {/* ── Contact / Pricing CTA ─────────────────────────────────── */}
+      <section id="contact" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+        <div className="max-w-3xl mx-auto text-center">
+          <div className="inline-flex items-center gap-2 bg-teal-50 border border-teal-100 text-teal-700 px-4 py-1.5 rounded-full text-sm font-semibold mb-6">
+            <Phone className="w-3.5 h-3.5" /> Custom Pricing for Every Clinic
+          </div>
+          <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
+            Let's talk about what works for you
+          </h2>
+          <p className="text-gray-500 text-lg mb-10 leading-relaxed max-w-xl mx-auto">
+            We believe every clinic is different. Reach out and we'll put together a plan that fits your practice size and budget — no standard rate card, just a fair conversation.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto mb-8">
+            <a href={WHATSAPP} target="_blank" rel="noopener noreferrer"
+              className="flex items-center justify-center gap-3 bg-teal-700 hover:bg-teal-800 text-white rounded-2xl px-6 py-4 font-semibold transition-colors shadow-md">
+              <MessageCircle className="w-5 h-5" />
+              <div className="text-left">
+                <p className="text-sm font-bold">WhatsApp Us</p>
+                <p className="text-teal-200 text-xs">Quick response · Mon–Sat</p>
               </div>
-            ))}
+            </a>
+            <a href="mailto:akshatnahata05@gmail.com"
+              className="flex items-center justify-center gap-3 bg-white hover:bg-gray-50 text-gray-800 rounded-2xl px-6 py-4 font-semibold border border-gray-200 transition-colors">
+              <Mail className="w-5 h-5 text-teal-700" />
+              <div className="text-left">
+                <p className="text-sm font-bold">Email Us</p>
+                <p className="text-gray-400 text-xs">We reply within 24 hrs</p>
+              </div>
+            </a>
           </div>
 
-          <p className="text-center text-sm text-gray-400 mt-6">
-            All plans start with a <span className="font-semibold text-gray-600">7-day free trial</span> — no credit card required. Starting at ₹4,999/month after trial.
+          <p className="text-sm text-gray-400">
+            Or{" "}
+            <Link href="/signup" className="text-teal-700 font-semibold hover:underline">
+              start your 7-day free trial
+            </Link>{" "}
+            — no payment required, full platform access from day one.
           </p>
         </div>
       </section>
@@ -545,40 +568,83 @@ export default function Landing() {
               Ready to simplify your clinic?
             </h2>
             <p className="text-gray-500 mb-8 leading-relaxed">
-              Join 500+ clinics already using BariQ. Your first 7 days are completely free — no setup fees, no contracts.
+              Join 500+ clinics already using BariQ. Your first 7 days are completely free — no setup fees, no contracts, no credit card.
             </p>
-            <Link href="/signup">
-              <Button size="lg" className="bg-teal-700 hover:bg-teal-800 text-white px-10 h-12 rounded-xl font-semibold text-base">
-                Sign Up Free
-                <ArrowRight className="ml-2 w-4 h-4" />
-              </Button>
-            </Link>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Link href="/signup">
+                <Button size="lg" className="bg-teal-700 hover:bg-teal-800 text-white px-10 h-12 rounded-xl font-semibold text-base">
+                  Start Free Trial
+                  <ArrowRight className="ml-2 w-4 h-4" />
+                </Button>
+              </Link>
+              <a href={WHATSAPP} target="_blank" rel="noopener noreferrer">
+                <Button size="lg" variant="outline" className="h-12 px-8 rounded-xl border-gray-300 bg-white text-gray-700 hover:bg-gray-50 font-semibold text-base gap-2">
+                  <MessageCircle className="w-4 h-4" /> Contact for Pricing
+                </Button>
+              </a>
+            </div>
           </div>
         </div>
       </section>
 
       {/* ── Footer ───────────────────────────────────────────────── */}
-      <footer className="border-t border-gray-200 px-6 py-8">
-        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2.5">
-            <div className="w-7 h-7 bg-teal-700 rounded-lg flex items-center justify-center">
-              <Stethoscope className="w-3.5 h-3.5 text-white" />
+      <footer className="border-t border-gray-200 px-6 py-10">
+        <div className="max-w-6xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
+            {/* Brand */}
+            <div>
+              <div className="flex items-center gap-2.5 mb-3">
+                <div className="w-7 h-7 bg-teal-700 rounded-lg flex items-center justify-center">
+                  <Stethoscope className="w-3.5 h-3.5 text-white" />
+                </div>
+                <span className="font-bold text-gray-900">BariQ</span>
+              </div>
+              <p className="text-sm text-gray-400 leading-relaxed">India's smartest clinic management platform. Built for doctors, by people who care about healthcare.</p>
             </div>
-            <span className="font-bold text-gray-900">BariQ</span>
-            <span className="text-gray-400 text-sm ml-1">India's Smartest Clinic Platform</span>
+            {/* Product */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Product</p>
+              <div className="space-y-2">
+                {[
+                  { label: "Features", href: "#features" },
+                  { label: "Pharmacy", href: "#pharmacy" },
+                  { label: "Patient Records", href: "#records" },
+                  { label: "Testimonials", href: "#testimonials" },
+                ].map(l => (
+                  <a key={l.label} href={l.href} className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">{l.label}</a>
+                ))}
+              </div>
+            </div>
+            {/* Account */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Account</p>
+              <div className="space-y-2">
+                <Link href="/signup" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Sign Up Free</Link>
+                <Link href="/login" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Sign In</Link>
+              </div>
+            </div>
+            {/* Contact */}
+            <div>
+              <p className="text-sm font-semibold text-gray-700 mb-3">Contact</p>
+              <div className="space-y-2">
+                <a href={WHATSAPP} target="_blank" rel="noopener noreferrer" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">WhatsApp Support</a>
+                <a href="mailto:akshatnahata05@gmail.com" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Email Us</a>
+              </div>
+            </div>
           </div>
-          <p className="text-sm text-gray-400">© 2026 TirthonTech. Made with care for Indian clinics.</p>
-          <div className="flex gap-6 text-sm text-gray-400">
-            <a href="#" className="hover:text-gray-700 transition-colors">Privacy</a>
-            <a href="#" className="hover:text-gray-700 transition-colors">Terms</a>
-            <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="hover:text-gray-700 transition-colors">Support</a>
+          <div className="border-t border-gray-200 pt-6 flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className="text-sm text-gray-400">© 2026 TirthonTech. Made with care for Indian clinics.</p>
+            <div className="flex gap-6 text-sm text-gray-400">
+              <a href="#" className="hover:text-gray-700 transition-colors">Privacy Policy</a>
+              <a href="#" className="hover:text-gray-700 transition-colors">Terms of Use</a>
+            </div>
           </div>
         </div>
       </footer>
 
       {/* ── Floating WhatsApp bubble ──────────────────────────────── */}
       <a
-        href="https://wa.me/91942457591"
+        href={WHATSAPP}
         target="_blank"
         rel="noopener noreferrer"
         className="fixed bottom-6 right-6 w-14 h-14 bg-teal-700 hover:bg-teal-800 text-white rounded-full flex items-center justify-center shadow-lg transition-colors z-50"

@@ -36,7 +36,7 @@ interface Medicine {
   manufacturer?: string; batchNo?: string; expiryDate?: string;
   costPrice: number; sellingPrice: number; stockQty: number; minStockQty: number;
   unit: string; hsnCode?: string; gstPercent: number; isActive: boolean;
-  supplierName?: string; reorderQty?: number; createdAt?: string;
+  supplierName?: string; reorderQty?: number; reorderedAt?: string | null; createdAt?: string;
 }
 
 interface CartItem {
@@ -126,6 +126,12 @@ function RestockDialog({ medicine, open, onClose }: {
         credentials: "include",
       });
       if (!r.ok) throw new Error("Failed to update stock");
+      // clear reordered flag since stock has arrived
+      if (medicine.reorderedAt) {
+        await fetch(`/api/pharmacy/medicines/${medicine.id}/reorder`, {
+          method: "PATCH", credentials: "include",
+        });
+      }
       return r.json();
     },
     onSuccess: () => {
@@ -596,10 +602,23 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
   medicines: Medicine[]; today: string; settings?: Record<string, any>;
   onRestock: (m: Medicine) => void;
 }) {
-  const [orderedIds, setOrderedIds] = useState<Set<number>>(new Set());
+  const qc = useQueryClient();
+  const { toast } = useToast();
   const [sortBy, setSortBy] = useState<"stock" | "expiry" | "name">("stock");
 
   const in30 = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+
+  const toggleReorder = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`/api/pharmacy/medicines/${id}/reorder`, {
+        method: "PATCH", credentials: "include",
+      });
+      if (!r.ok) throw new Error("Failed");
+      return r.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/pharmacy/medicines"] }),
+    onError: () => toast({ title: "Error", description: "Could not update reorder status", variant: "destructive" }),
+  });
 
   const needsReorder = useMemo(() => {
     const list = medicines.filter(m =>
@@ -618,16 +637,14 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
     return [...list].sort((a, b) => a.name.localeCompare(b.name));
   }, [medicines, sortBy, in30]);
 
-  const pendingItems = needsReorder.filter(m => !orderedIds.has(m.id));
-  const doneItems = needsReorder.filter(m => orderedIds.has(m.id));
+  // orderedItems: all medicines with reorderedAt set (persisted in DB)
+  const orderedItems = useMemo(() =>
+    medicines.filter(m => m.isActive && m.reorderedAt).sort((a, b) => a.name.localeCompare(b.name)),
+    [medicines]
+  );
 
-  function toggleOrdered(id: number) {
-    setOrderedIds(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
+  // pendingItems: need reorder AND not yet marked as ordered
+  const pendingItems = needsReorder.filter(m => !m.reorderedAt);
 
   function printReorderList() {
     const toPrint = pendingItems.length > 0 ? pendingItems : needsReorder;
@@ -635,7 +652,9 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
     if (w) { w.document.write(buildReorderHtml(toPrint, settings?.clinicProfile)); w.document.close(); }
   }
 
-  if (needsReorder.length === 0) {
+  const hasAnything = needsReorder.length > 0 || orderedItems.length > 0;
+
+  if (!hasAnything) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
@@ -648,104 +667,150 @@ function ReorderTab({ medicines, today, settings, onRestock }: {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <p className="text-sm text-slate-600">
-            <span className="font-bold text-slate-900">{pendingItems.length}</span> to order
-            {doneItems.length > 0 && <span className="text-green-600 ml-2">· {doneItems.length} marked ordered</span>}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
-            {(["stock", "expiry", "name"] as const).map(s => (
-              <button key={s} onClick={() => setSortBy(s)}
-                className={cn("px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all",
-                  sortBy === s ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
-              >{s === "stock" ? "Low Stock" : s === "expiry" ? "Expiry" : "Name"}</button>
-            ))}
+    <div className="space-y-6">
+      {/* ── Needs Ordering section ── */}
+      {needsReorder.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-slate-800">Needs Ordering</h3>
+              <span className="text-xs bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded-full">{pendingItems.length} pending</span>
+              {orderedItems.length > 0 && <span className="text-xs bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full">{orderedItems.length} ordered</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 bg-slate-100 rounded-xl p-1">
+                {(["stock", "expiry", "name"] as const).map(s => (
+                  <button key={s} onClick={() => setSortBy(s)}
+                    className={cn("px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all",
+                      sortBy === s ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+                  >{s === "stock" ? "Low Stock" : s === "expiry" ? "Expiry" : "Name"}</button>
+                ))}
+              </div>
+              <Button size="sm" variant="outline" onClick={printReorderList} className="rounded-xl h-9 gap-1.5">
+                <Printer className="w-3.5 h-3.5" /> Print Order
+              </Button>
+            </div>
           </div>
-          <Button size="sm" variant="outline" onClick={printReorderList} className="rounded-xl h-9 gap-1.5">
-            <Printer className="w-3.5 h-3.5" /> Print Order
-          </Button>
-        </div>
-      </div>
 
-      {/* Pending items */}
-      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-        <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide px-4 py-2.5 bg-slate-50 border-b border-slate-100"
-          style={{ gridTemplateColumns: "1fr 80px 80px 100px 120px 100px" }}>
-          <span>Medicine</span>
-          <span className="text-right">In Stock</span>
-          <span className="text-right">Min Level</span>
-          <span className="text-right">Order Qty</span>
-          <span>Supplier</span>
-          <span className="text-right">Action</span>
-        </div>
-        <div className="divide-y divide-slate-50">
-          {pendingItems.length === 0 ? (
-            <p className="text-center text-slate-400 text-sm py-8">All items marked as ordered</p>
-          ) : pendingItems.map(m => {
-            const isLow = m.stockQty <= m.minStockQty;
-            const isExpiring = m.expiryDate && m.expiryDate <= in30;
-            const isExpired = m.expiryDate && m.expiryDate < today;
-            const suggested = m.reorderQty ?? Math.max(m.minStockQty * 2 - m.stockQty, m.minStockQty);
-            return (
-              <div key={m.id} className="grid items-center px-4 py-3 hover:bg-slate-50 transition-colors"
-                style={{ gridTemplateColumns: "1fr 80px 80px 100px 120px 100px" }}>
-                <div>
-                  <p className="font-semibold text-slate-900 text-sm">{m.name}</p>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    {m.batchNo && <span className="text-[10px] text-slate-400">Batch: {m.batchNo}</span>}
-                    {isExpired && <span className="text-[10px] bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded-full">EXPIRED</span>}
-                    {!isExpired && isExpiring && <span className="text-[10px] bg-amber-100 text-amber-600 font-bold px-1.5 py-0.5 rounded-full">Exp {format(new Date(m.expiryDate!), "dd MMM")}</span>}
-                    {isLow && !isExpired && <span className="text-[10px] bg-red-50 text-red-500 font-semibold px-1.5 py-0.5 rounded-full">Low Stock</span>}
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+            <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide px-4 py-2.5 bg-slate-50 border-b border-slate-100"
+              style={{ gridTemplateColumns: "1fr 80px 80px 100px 120px 110px" }}>
+              <span>Medicine</span>
+              <span className="text-right">In Stock</span>
+              <span className="text-right">Min Level</span>
+              <span className="text-right">Order Qty</span>
+              <span>Supplier</span>
+              <span className="text-right">Action</span>
+            </div>
+            <div className="divide-y divide-slate-50">
+              {pendingItems.length === 0 ? (
+                <p className="text-center text-slate-400 text-sm py-8">All items marked as ordered</p>
+              ) : pendingItems.map(m => {
+                const isLow = m.stockQty <= m.minStockQty;
+                const isExpiring = m.expiryDate && m.expiryDate <= in30;
+                const isExpired = m.expiryDate && m.expiryDate < today;
+                const suggested = m.reorderQty ?? Math.max(m.minStockQty * 2 - m.stockQty, m.minStockQty);
+                return (
+                  <div key={m.id} className="grid items-center px-4 py-3 hover:bg-slate-50 transition-colors"
+                    style={{ gridTemplateColumns: "1fr 80px 80px 100px 120px 110px" }}>
+                    <div>
+                      <p className="font-semibold text-slate-900 text-sm">{m.name}</p>
+                      <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                        {m.batchNo && <span className="text-[10px] text-slate-400">Batch: {m.batchNo}</span>}
+                        {isExpired && <span className="text-[10px] bg-red-100 text-red-600 font-bold px-1.5 py-0.5 rounded-full">EXPIRED</span>}
+                        {!isExpired && isExpiring && <span className="text-[10px] bg-amber-100 text-amber-600 font-bold px-1.5 py-0.5 rounded-full">Exp {format(new Date(m.expiryDate!), "dd MMM")}</span>}
+                        {isLow && !isExpired && <span className="text-[10px] bg-red-50 text-red-500 font-semibold px-1.5 py-0.5 rounded-full">Low Stock</span>}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <span className={cn("font-bold text-sm", isLow ? "text-red-600" : "text-slate-700")}>{m.stockQty}</span>
+                      <p className="text-[10px] text-slate-400">{m.unit}s</p>
+                    </div>
+                    <div className="text-right text-sm text-slate-500">{m.minStockQty}</div>
+                    <div className="text-right">
+                      <span className="font-bold text-violet-700 text-sm">{suggested}</span>
+                      <p className="text-[10px] text-slate-400">{m.unit}s</p>
+                    </div>
+                    <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">—</span>}</div>
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => onRestock(m)} title="Add stock" className="h-7 w-7 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors">
+                        <PackagePlus className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => toggleReorder.mutate(m.id)}
+                        disabled={toggleReorder.isPending}
+                        className="h-7 px-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-green-100 hover:text-green-700 transition-colors whitespace-nowrap"
+                      >
+                        Mark Ordered
+                      </button>
+                    </div>
                   </div>
-                </div>
-                <div className="text-right">
-                  <span className={cn("font-bold text-sm", isLow ? "text-red-600" : "text-slate-700")}>{m.stockQty}</span>
-                  <p className="text-[10px] text-slate-400">{m.unit}s</p>
-                </div>
-                <div className="text-right text-sm text-slate-500">{m.minStockQty}</div>
-                <div className="text-right">
-                  <span className="font-bold text-violet-700 text-sm">{suggested}</span>
-                  <p className="text-[10px] text-slate-400">{m.unit}s</p>
-                </div>
-                <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">—</span>}</div>
-                <div className="flex items-center justify-end gap-1">
-                  <button onClick={() => onRestock(m)} title="Add stock" className="h-7 w-7 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors">
-                    <PackagePlus className="w-3 h-3" />
-                  </button>
-                  <button
-                    onClick={() => toggleOrdered(m.id)}
-                    className="h-7 px-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-green-100 hover:text-green-700 transition-colors whitespace-nowrap"
-                  >
-                    Mark Ordered
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Ordered items */}
-      {doneItems.length > 0 && (
-        <div className="bg-green-50 border border-green-100 rounded-2xl p-4">
-          <p className="text-sm font-semibold text-green-800 mb-2 flex items-center gap-2">
-            <CheckCircle className="w-4 h-4 text-green-500" /> Ordered ({doneItems.length})
-          </p>
-          <div className="space-y-1.5">
-            {doneItems.map(m => (
-              <div key={m.id} className="flex items-center justify-between bg-white rounded-xl px-3 py-2 border border-green-100">
-                <div>
-                  <p className="text-sm font-semibold text-slate-700 line-through opacity-60">{m.name}</p>
-                  {m.supplierName && <p className="text-xs text-slate-400">{m.supplierName}</p>}
-                </div>
-                <button onClick={() => toggleOrdered(m.id)} className="text-xs text-slate-400 hover:text-slate-600">Undo</button>
-              </div>
-            ))}
+                );
+              })}
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Ordered items (persistent, from DB) ── */}
+      {orderedItems.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold text-slate-800">Ordered — Awaiting Delivery</h3>
+            <span className="text-xs bg-green-100 text-green-700 font-bold px-2 py-0.5 rounded-full">{orderedItems.length} item{orderedItems.length > 1 ? "s" : ""}</span>
+          </div>
+          <div className="bg-white rounded-2xl border border-green-100 overflow-hidden">
+            <div className="grid text-xs font-semibold text-slate-500 uppercase tracking-wide px-4 py-2.5 bg-green-50 border-b border-green-100"
+              style={{ gridTemplateColumns: "1fr 80px 80px 120px 120px 80px" }}>
+              <span>Medicine</span>
+              <span className="text-right">In Stock</span>
+              <span className="text-right">Min Level</span>
+              <span>Supplier</span>
+              <span>Ordered On</span>
+              <span className="text-right">Action</span>
+            </div>
+            <div className="divide-y divide-green-50">
+              {orderedItems.map(m => {
+                const isLow = m.stockQty <= m.minStockQty;
+                const orderedDate = m.reorderedAt ? format(new Date(m.reorderedAt), "dd MMM, hh:mm a") : "";
+                return (
+                  <div key={m.id} className="grid items-center px-4 py-3 hover:bg-green-50/50 transition-colors"
+                    style={{ gridTemplateColumns: "1fr 80px 80px 120px 120px 80px" }}>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                        <p className="font-semibold text-slate-700 text-sm">{m.name}</p>
+                      </div>
+                      {m.genericName && <p className="text-[10px] text-slate-400 ml-5">{m.genericName}</p>}
+                    </div>
+                    <div className="text-right">
+                      <span className={cn("font-bold text-sm", isLow ? "text-red-500" : "text-slate-700")}>{m.stockQty}</span>
+                      <p className="text-[10px] text-slate-400">{m.unit}s</p>
+                    </div>
+                    <div className="text-right text-sm text-slate-500">{m.minStockQty}</div>
+                    <div className="text-sm text-slate-500 truncate pr-2">{m.supplierName || <span className="text-slate-300">—</span>}</div>
+                    <div className="text-xs text-slate-400">{orderedDate}</div>
+                    <div className="flex items-center justify-end gap-1">
+                      <button onClick={() => onRestock(m)} title="Stock received" className="h-7 w-7 rounded-lg text-slate-400 hover:text-green-600 hover:bg-green-50 flex items-center justify-center transition-colors">
+                        <PackagePlus className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={() => toggleReorder.mutate(m.id)}
+                        disabled={toggleReorder.isPending}
+                        className="h-7 px-2 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+                        title="Undo mark ordered"
+                      >
+                        Undo
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 text-center">
+            Add stock via <PackagePlus className="inline w-3 h-3" /> when delivery arrives — it will automatically clear from this list
+          </p>
         </div>
       )}
     </div>

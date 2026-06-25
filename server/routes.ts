@@ -1279,6 +1279,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // PATCH /api/pharmacy/medicines/:id/reorder — toggle reorderedAt timestamp
+  app.patch("/api/pharmacy/medicines/:id/reorder", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const id = Number(req.params.id);
+      const [existing] = await db.select({ reorderedAt: medicines.reorderedAt })
+        .from(medicines).where(and(eq(medicines.id, id), eq(medicines.clinicId, clinicId)));
+      if (!existing) return res.status(404).json({ message: "Medicine not found" });
+      const newVal = existing.reorderedAt ? null : new Date();
+      await db.update(medicines).set({ reorderedAt: newVal })
+        .where(and(eq(medicines.id, id), eq(medicines.clinicId, clinicId)));
+      res.json({ reorderedAt: newVal });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to toggle reorder status" });
+    }
+  });
+
   // DELETE /api/pharmacy/medicines/:id (soft delete)
   app.delete("/api/pharmacy/medicines/:id", requireAuth, async (req, res) => {
     try {

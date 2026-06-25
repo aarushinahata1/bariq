@@ -72,8 +72,8 @@ export default function Signup() {
           </div>
           <div className="mt-10 bg-teal-50 border border-teal-100 rounded-2xl p-5">
             <p className="text-teal-800 font-semibold text-sm mb-1">After your trial</p>
-            <p className="text-teal-700 text-2xl font-bold">₹1,499<span className="text-base font-normal text-teal-600">/month</span></p>
-            <p className="text-teal-600 text-xs mt-1">Cancel anytime. No contracts.</p>
+            <p className="text-teal-700 text-base font-semibold">Contact us for pricing</p>
+            <p className="text-teal-600 text-xs mt-1">Custom plans · no contracts · cancel anytime.</p>
           </div>
         </div>
 
