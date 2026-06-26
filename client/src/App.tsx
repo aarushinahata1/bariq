@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Loading } from "@/components/ui/loading";
 import { RoleProvider } from "@/hooks/use-role";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
+import { Layout } from "@/components/Layout";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -94,19 +95,27 @@ function Router() {
   return (
     <RoleProvider>
       <Switch>
+        {/* Full-screen pages — no sidebar layout */}
         <Route path="/queue/:doctorId" component={PublicQueue} />
         <Route path="/patient-queue/:token" component={PatientQueue} />
-        <Route path="/dashboard" component={Dashboard} />
-        <Route path="/patients" component={Patients} />
-        <Route path="/patients/:id" component={PatientHistory} />
-        <Route path="/crm" component={CRM} />
-        <Route path="/appointments" component={Appointments} />
-        <Route path="/doctors" component={Doctors} />
-        <Route path="/queue" component={Queue} />
-        <Route path="/settings" component={Settings} />
-        <Route path="/pharmacy" component={Pharmacy} />
-        <Route path="/doctor-console" component={DoctorConsole} />
-        <Route><Redirect to="/dashboard" /></Route>
+        {/* All app pages share a single persistent Layout */}
+        <Route>
+          <Layout>
+            <Switch>
+              <Route path="/dashboard" component={Dashboard} />
+              <Route path="/patients" component={Patients} />
+              <Route path="/patients/:id" component={PatientHistory} />
+              <Route path="/crm" component={CRM} />
+              <Route path="/appointments" component={Appointments} />
+              <Route path="/doctors" component={Doctors} />
+              <Route path="/queue" component={Queue} />
+              <Route path="/settings" component={Settings} />
+              <Route path="/pharmacy" component={Pharmacy} />
+              <Route path="/doctor-console" component={DoctorConsole} />
+              <Route><Redirect to="/dashboard" /></Route>
+            </Switch>
+          </Layout>
+        </Route>
       </Switch>
     </RoleProvider>
   );

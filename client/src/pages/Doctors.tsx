@@ -1,5 +1,4 @@
-﻿import { Layout } from "@/components/Layout";
-import { PageHeader } from "@/components/ui/PageHeader";
+﻿import { PageHeader } from "@/components/ui/PageHeader";
 import { useDoctors, useCreateDoctor, useNotifyDelay, useUpdateDoctorProfile, useDeleteDoctor } from "@/hooks/use-doctors";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -149,13 +148,13 @@ export default function Doctors() {
     });
   };
 
-  if (isLoading) return <Layout><Loading /></Layout>;
+  if (isLoading) return <Loading />;
 
   // Filter to show only doctors from user list if mixed
   const doctorList = doctors?.filter(u => u.role === 'doctor');
 
   return (
-    <Layout>
+    <>
       <PageHeader
         title="Medical Staff"
         description="Manage doctors and their availability."
@@ -385,7 +384,7 @@ export default function Doctors() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Layout>
+    </>
   );
 }
 

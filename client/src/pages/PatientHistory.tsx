@@ -1,4 +1,3 @@
-import { Layout } from "@/components/Layout";
 import { usePatient, useUpdatePatient, useDeletePatient } from "@/hooks/use-patients";
 import { useAppointments, useCreateAppointment } from "@/hooks/use-appointments";
 import { useDoctors } from "@/hooks/use-doctors";
@@ -662,14 +661,14 @@ export default function PatientHistory() {
   const ef = (key: keyof typeof EMPTY_EDIT) => (e: { target: { value: string } }) =>
     setEditData(d => ({ ...d, [key]: e.target.value }));
 
-  if (isLoading) return <Layout><Loading /></Layout>;
-  if (!patient) return <Layout><div className="p-8 text-slate-500">Patient not found.</div></Layout>;
+  if (isLoading) return <Loading />;
+  if (!patient) return <div className="p-8 text-slate-500">Patient not found.</div>;
 
   const pt = patient as any;
   const age = calcAge(pt.dateOfBirth);
 
   return (
-    <Layout>
+    <>
       <div className="mb-5">
         <Button variant="ghost" onClick={() => setLocation("/patients")} className="text-slate-500 hover:text-slate-900 -ml-2">
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to Patients
@@ -1089,6 +1088,6 @@ export default function PatientHistory() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Layout>
+    </>
   );
 }

@@ -1,5 +1,4 @@
-﻿import { Layout } from "@/components/Layout";
-import { PageHeader } from "@/components/ui/PageHeader";
+﻿import { PageHeader } from "@/components/ui/PageHeader";
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { api } from "@shared/routes";
@@ -107,10 +106,10 @@ export default function CRM() {
     });
   }, [patients, funnelFilter]);
 
-  if (isLoading) return <Layout><Loading /></Layout>;
+  if (isLoading) return <Loading />;
 
   return (
-    <Layout>
+    <>
       <PageHeader 
         title="CRM & Marketing" 
         description="Engage with your patients through bulk WhatsApp and SMS campaigns."
@@ -361,6 +360,6 @@ export default function CRM() {
           </Card>
         </div>
       </div>
-    </Layout>
+    </>
   );
 }

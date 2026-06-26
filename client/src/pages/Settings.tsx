@@ -1,6 +1,5 @@
 ﻿import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Layout } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -712,7 +711,7 @@ export default function Settings() {
   ];
 
   return (
-    <Layout>
+    <>
       <div className="p-6 max-w-3xl mx-auto space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
@@ -1305,6 +1304,6 @@ export default function Settings() {
           </p>
         </div>
       </div>
-    </Layout>
+    </>
   );
 }

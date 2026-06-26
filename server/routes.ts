@@ -8,7 +8,7 @@ import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
 import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt } from "drizzle-orm";
+import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { setupAuth, requireAuth, requireSuperAdmin } from "./auth";
 import { nanoid } from "nanoid";
@@ -258,6 +258,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           return row!;
         });
       }
+      if (appt?.doctorId) broadcastQueueUpdate(appt.doctorId);
       res.status(201).json(appt);
     } catch (err: any) {
       if (err?.code === "DUPLICATE_APPOINTMENT") return res.status(409).json({ message: "This patient already has an active appointment with this doctor on this date." });
@@ -308,7 +309,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.delete("/api/appointments/:id", requireAuth, async (req, res) => {
     try {
-      await storage(req).deleteAppointment(Number(req.params.id));
+      const id = Number(req.params.id);
+      const clinicId = req.session.clinicId!;
+      const [existing] = await db.select({ doctorId: appointments.doctorId })
+        .from(appointments)
+        .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)));
+      await storage(req).deleteAppointment(id);
+      if (existing?.doctorId) broadcastQueueUpdate(existing.doctorId);
       res.json({ success: true });
     } catch (err) {
       res.status(400).json({ message: "Failed to delete appointment" });
@@ -336,7 +343,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lte(appointments.date, targetEnd),
       ));
 
-      res.json({ nextQueueNumber: (maxRow?.maxNum ?? 0) + 1 });
+      const [activeRow] = await db.select({
+        activeCount: sql<number>`COUNT(*)::int`,
+      }).from(appointments).where(and(
+        eq(appointments.clinicId, clinicId),
+        eq(appointments.doctorId, doctorId),
+        gte(appointments.date, targetStart),
+        lte(appointments.date, targetEnd),
+        inArray(appointments.status, ["booked", "checked_in"]),
+      ));
+
+      res.json({
+        nextQueueNumber: (maxRow?.maxNum ?? 0) + 1,
+        activeAhead: activeRow?.activeCount ?? 0,
+      });
     } catch (err) {
       res.status(500).json({ message: "Failed to get queue preview" });
     }
@@ -426,6 +446,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             doctorName: doctor.name || doctor.firstName || "Doctor",
             position: -1,
             aheadCount: -1,
+            queueNumber: appt.queueNumber,
             queuePosition: appt.queuePosition,
           };
         }
@@ -459,6 +480,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           position: isDone ? 0 : aheadCount + 1,
           aheadCount: isDone ? 0 : aheadCount,
           status: appt.status,
+          queueNumber: appt.queueNumber,
           queuePosition: appt.queuePosition,
         };
       });
@@ -1131,7 +1153,21 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         lte(appointments.date, targetEnd),
       ));
 
-      res.json({ nextQueueNumber: (maxRow?.maxNum ?? 0) + 1 });
+      // Count only patients still actively waiting — this is the real "ahead of you" number
+      const [activeRow] = await db.select({
+        activeCount: sql<number>`COUNT(*)::int`,
+      }).from(appointments).where(and(
+        eq(appointments.clinicId, clinicId),
+        eq(appointments.doctorId, doctorId),
+        gte(appointments.date, targetStart),
+        lte(appointments.date, targetEnd),
+        inArray(appointments.status, ["booked", "checked_in"]),
+      ));
+
+      res.json({
+        nextQueueNumber: (maxRow?.maxNum ?? 0) + 1,
+        activeAhead: activeRow?.activeCount ?? 0,
+      });
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: "Failed to get queue preview" });
@@ -1292,6 +1328,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           alreadyRegistered: true,
           patientName: result.patient.name,
           doctorName,
+          queueNumber: result.appt.queueNumber,
           queuePosition: result.appt.queuePosition,
           queueToken: result.appt.queueToken,
           queueUrl: `${req.protocol}://${req.get("host")}/patient-queue/${result.appt.queueToken}`,
@@ -1304,6 +1341,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         alreadyRegistered: false,
         patientName: result.patient.name,
         doctorName,
+        queueNumber: result.appt.queueNumber,
         queuePosition: result.appt.queuePosition,
         queueToken: result.appt.queueToken,
         queueUrl: `${req.protocol}://${req.get("host")}/patient-queue/${result.appt.queueToken}`,

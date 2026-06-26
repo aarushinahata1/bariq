@@ -1,5 +1,4 @@
-﻿import { Layout } from "@/components/Layout";
-import { PageHeader } from "@/components/ui/PageHeader";
+﻿import { PageHeader } from "@/components/ui/PageHeader";
 import { usePatients, useCreatePatient, useDeletePatient } from "@/hooks/use-patients";
 import { useState, useMemo, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -84,10 +83,10 @@ export default function Patients() {
     };
   }, [patients]);
 
-  if (isLoading && !patients) return <Layout><Loading /></Layout>;
+  if (isLoading && !patients) return <Loading />;
 
   return (
-    <Layout>
+    <>
       <PageHeader
         title="Patient Directory"
         description="Manage patient records and medical profiles."
@@ -281,7 +280,7 @@ export default function Patients() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Layout>
+    </>
   );
 }
 

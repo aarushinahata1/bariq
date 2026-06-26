@@ -129,7 +129,7 @@ export default function PublicQueue() {
               </p>
               {currentPatient ? (
                 <div className="text-7xl font-black tracking-tighter text-white leading-none">
-                  #{currentPatient.queuePosition}
+                  #{currentPatient.queueNumber ?? currentPatient.queuePosition}
                 </div>
               ) : (
                 <div>
@@ -141,7 +141,7 @@ export default function PublicQueue() {
             <div className="px-8 pb-8 pt-3">
               <p className="text-teal-100/80 text-sm font-medium">
                 {currentPatient
-                  ? `Token #${currentPatient.queuePosition} · Please proceed`
+                  ? `Token #${currentPatient.queueNumber ?? currentPatient.queuePosition} · Please proceed`
                   : "Waiting for next patient"}
               </p>
             </div>
@@ -202,7 +202,7 @@ export default function PublicQueue() {
                         isFirst ? "bg-amber-600 text-white" :
                         "bg-slate-800 text-slate-400"
                       )}>
-                        {apt.queuePosition ?? idx + 1}
+                        {apt.queueNumber ?? apt.queuePosition ?? idx + 1}
                       </div>
                       <div>
                         <p className={cn(
@@ -211,7 +211,7 @@ export default function PublicQueue() {
                           isFirst ? "text-amber-300" :
                           "text-slate-200"
                         )}>
-                          Token #{apt.queuePosition ?? idx + 1}
+                          Token #{apt.queueNumber ?? apt.queuePosition ?? idx + 1}
                         </p>
                         <p className="text-slate-600 text-sm">
                           Est. wait: ~{(idx + 1) * avgConsultTime} min

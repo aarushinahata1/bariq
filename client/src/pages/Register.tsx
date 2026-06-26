@@ -29,6 +29,7 @@ type RegistrationResult = {
   alreadyRegistered: boolean;
   patientName: string;
   doctorName: string;
+  queueNumber: number | null;
   queuePosition: number | null;
   queueToken: string | null;
   queueUrl: string;
@@ -93,7 +94,7 @@ export default function Register() {
 
   const lookedUpPatients = lookupData?.patients ?? [];
 
-  const { data: queuePreview } = useQuery<{ nextQueueNumber: number }>({
+  const { data: queuePreview } = useQuery<{ nextQueueNumber: number; activeAhead: number }>({
     queryKey: ["kiosk-preview", token, selectedDoctorId, selectedDate],
     queryFn: async () => {
       const res = await fetch(`/api/kiosk/${token}/queue-preview?doctorId=${selectedDoctorId}&date=${selectedDate}`);
@@ -248,7 +249,7 @@ export default function Register() {
                 </div>
                 <p className="text-teal-100/80 text-[10px] uppercase tracking-[0.2em] font-bold mb-2">You're Registered!</p>
                 <div className="text-7xl font-black text-white leading-none tracking-tighter mb-1">
-                  #{result.queuePosition}
+                  #{result.queueNumber ?? result.queuePosition}
                 </div>
                 <p className="text-teal-100/70 text-sm font-semibold">Your token number</p>
 
@@ -589,9 +590,9 @@ export default function Register() {
                   <p className="text-[10px] font-bold uppercase tracking-widest text-teal-200">Your Token Number</p>
                   <p className="font-bold text-base">You will get token #{queuePreview.nextQueueNumber}</p>
                   <p className="text-xs text-teal-200 mt-0.5">
-                    {queuePreview.nextQueueNumber === 1
+                    {queuePreview.activeAhead === 0
                       ? "You'll be first in queue!"
-                      : `${queuePreview.nextQueueNumber - 1} patient${queuePreview.nextQueueNumber - 1 === 1 ? "" : "s"} ahead of you`}
+                      : `${queuePreview.activeAhead} patient${queuePreview.activeAhead === 1 ? "" : "s"} ahead of you`}
                   </p>
                 </div>
               </div>

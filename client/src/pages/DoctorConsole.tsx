@@ -1,4 +1,3 @@
-import { Layout } from "@/components/Layout";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { MedicineNameAutocomplete } from "@/components/MedicineNameAutocomplete";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -525,7 +524,7 @@ export default function DoctorConsole() {
   };
 
   // Console data
-  const { data: consoleData, isLoading, refetch } = useQuery<ConsoleData>({
+  const { data: consoleData, isLoading, isFetching } = useQuery<ConsoleData>({
     queryKey: ["/api/doctor-console", selectedDoctorId],
     queryFn: async () => {
       const res = await fetch(`/api/doctor-console/${selectedDoctorId}`, { credentials: "include" });
@@ -615,7 +614,7 @@ export default function DoctorConsole() {
     },
     onSuccess: () => {
       toast({ title: "Prescription saved" });
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
     },
     onError: (e: any) => {
       toast({ title: "Error", description: e.message, variant: "destructive" });
@@ -631,7 +630,7 @@ export default function DoctorConsole() {
     }
     await updateAppointment.mutateAsync({ id: appt.id, updates: { status: "completed" } });
     toast({ title: "Consultation completed", description: "Patient marked as done." });
-    refetch();
+    queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
   };
 
   const printPrescription = () => {
@@ -675,7 +674,7 @@ export default function DoctorConsole() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <Layout>
+    <>
       <PageHeader
         title="Doctor Console"
         description="Live view of current patient — updates automatically when receptionist sends the next patient"
@@ -704,10 +703,11 @@ export default function DoctorConsole() {
         </Select>
         {selectedDoctorId && (
           <button
-            onClick={() => refetch()}
-            className="ml-auto flex items-center gap-1.5 text-xs text-teal-600 hover:text-teal-700 transition-colors"
+            onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] })}
+            disabled={isFetching}
+            className="ml-auto flex items-center gap-1.5 text-xs text-teal-600 hover:text-teal-700 disabled:opacity-50 transition-colors"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className={cn("w-3.5 h-3.5", isFetching && "animate-spin")} />
             Refresh
           </button>
         )}
@@ -1038,7 +1038,7 @@ export default function DoctorConsole() {
           </div>
         </div>
       )}
-    </Layout>
+    </>
   );
 }
 

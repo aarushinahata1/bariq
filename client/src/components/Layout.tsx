@@ -2,8 +2,10 @@ import { ReactNode, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Loader2, Menu, X } from "lucide-react";
 import { Button } from "./ui/button";
+import { useLocation } from "wouter";
 
 export function Layout({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   return (
@@ -36,8 +38,8 @@ export function Layout({ children }: { children: ReactNode }) {
         />
       )}
 
-      <main className="flex-1 p-4 md:p-8 md:ml-64 overflow-y-auto animate-in w-full max-w-full">
-        <div className="max-w-7xl mx-auto space-y-6 md:space-y-8">
+      <main className="flex-1 p-4 md:p-8 md:ml-64 overflow-y-auto w-full max-w-full">
+        <div key={location} className="max-w-7xl mx-auto space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-200">
           {children}
         </div>
       </main>

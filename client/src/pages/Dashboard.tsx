@@ -1,4 +1,3 @@
-import { Layout } from "@/components/Layout";
 import { StatCard } from "@/components/StatCard";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@shared/routes";
@@ -17,10 +16,10 @@ export default function Dashboard() {
     refetchInterval: 60000,
   });
 
-  if (isLoading) return <Layout><Loading /></Layout>;
+  if (isLoading) return <Loading />;
 
   return (
-    <Layout>
+    <>
       <PageHeader 
         title="Clinic Overview" 
         description="Real-time performance and patient flow analytics."
@@ -179,6 +178,6 @@ export default function Dashboard() {
           )}
         </div>
       </div>
-    </Layout>
+    </>
   );
 }

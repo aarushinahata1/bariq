@@ -113,10 +113,10 @@ function StatusCard({ data }: { data: any }) {
             <div className="relative bg-white/5 backdrop-blur-sm border border-white/10 rounded-3xl p-8 text-center overflow-hidden">
               <div className="absolute inset-0 bg-gradient-to-b from-teal-500/10 to-transparent pointer-events-none rounded-3xl" />
               <p className="text-white/40 text-[10px] uppercase tracking-[0.25em] font-bold mb-3">
-                Your Queue Position
+                Your Token Number
               </p>
               <div className="text-[88px] font-black text-white leading-none mb-2 tracking-tighter">
-                #{data.position}
+                #{data.queueNumber ?? data.queuePosition}
               </div>
               <p className="text-teal-300 text-sm font-medium">
                 {aheadCount === 0
@@ -146,7 +146,7 @@ function StatusCard({ data }: { data: any }) {
             {isCompleted ? "Consulted" :
              isWithDoctor ? "In Consultation" :
              isNext ? "Get Ready" :
-             `Token #${data.queuePosition}`}
+             `Token #${data.queueNumber ?? data.queuePosition}`}
           </div>
 
           {/* Live indicator */}

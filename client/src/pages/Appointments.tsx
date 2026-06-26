@@ -1,5 +1,4 @@
-﻿import { Layout } from "@/components/Layout";
-import { PageHeader } from "@/components/ui/PageHeader";
+﻿import { PageHeader } from "@/components/ui/PageHeader";
 import { useAppointments, useCreateAppointment, useUpdateAppointment, useDeleteAppointment } from "@/hooks/use-appointments";
 import { useDoctors } from "@/hooks/use-doctors";
 import { usePatients } from "@/hooks/use-patients";
@@ -142,7 +141,7 @@ export default function Appointments() {
   const [patientSearch, setPatientSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
 
-  if (isLoading) return <Layout><Loading /></Layout>;
+  if (isLoading) return <Loading />;
 
   const filteredAppointments = (appointments as any[])?.filter(apt => {
     const aptDate = new Date(apt.date);
@@ -159,7 +158,7 @@ export default function Appointments() {
   });
 
   return (
-    <Layout>
+    <>
       <PageHeader
         title="Appointments"
         description="Schedule and manage patient visits."
@@ -612,7 +611,7 @@ export default function Appointments() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Layout>
+    </>
   );
 }
 
@@ -675,7 +674,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
 
   const showPreview = !!watchedDoctorId && !!watchedDate && watchedStatus !== "checked_in" && !isQuickCheck;
 
-  const { data: queuePreview } = useQuery<{ nextQueueNumber: number }>({
+  const { data: queuePreview } = useQuery<{ nextQueueNumber: number; activeAhead: number }>({
     queryKey: ["/api/appointments/queue-preview", watchedDoctorId, watchedDate],
     queryFn: async () => {
       const r = await fetch(`/api/appointments/queue-preview?doctorId=${watchedDoctorId}&date=${watchedDate}`, { credentials: "include" });
@@ -939,9 +938,9 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
                   <p className="text-xs font-bold text-teal-700 uppercase tracking-wider">Expected Token</p>
                   <p className="text-sm font-semibold text-teal-900">
                     Patient will get token #{queuePreview.nextQueueNumber}
-                    {queuePreview.nextQueueNumber === 1
+                    {queuePreview.activeAhead === 0
                       ? " · first in queue!"
-                      : ` · ${queuePreview.nextQueueNumber - 1} patient${queuePreview.nextQueueNumber - 1 === 1 ? "" : "s"} ahead`}
+                      : ` · ${queuePreview.activeAhead} patient${queuePreview.activeAhead === 1 ? "" : "s"} ahead`}
                   </p>
                 </div>
               </div>

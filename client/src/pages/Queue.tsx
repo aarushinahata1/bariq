@@ -1,4 +1,3 @@
-import { Layout } from "@/components/Layout";
 import { MedicineNameAutocomplete } from "@/components/MedicineNameAutocomplete";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { useAppointments, useUpdateAppointment } from "@/hooks/use-appointments";
@@ -810,12 +809,14 @@ export default function Queue() {
     }
   }, [doctors, selectedDoctor]);
 
-  // SSE: live queue updates when doctor marks patient as consulted
+  // SSE: live queue updates when doctor marks patient as consulted.
+  // Skip invalidation if a drag-reorder is in-flight to avoid overwriting the local state.
   useEffect(() => {
     if (!selectedDoctor) return;
     const es = new EventSource(`/api/sse/doctor/${selectedDoctor}`);
     es.onmessage = (e) => {
       if (e.data === "connected") return;
+      if (reorderTimeoutRef.current || isPersistingRef.current) return;
       queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
     };
     return () => es.close();
@@ -944,11 +945,11 @@ export default function Queue() {
     setNoShowTarget(null);
   };
 
-  if (isDoctorsLoading || (isLoading && !appointments)) return <Layout><Loading /></Layout>;
+  if (isDoctorsLoading || (isLoading && !appointments)) return <Loading />;
 
   if (!doctors?.length) {
     return (
-      <Layout>
+      <>
         <div className="flex flex-col gap-6">
           <PageHeader title="Queue Management" description="Live queue for the current week" />
           <div className="text-center py-16 bg-white rounded-2xl border border-slate-100">
@@ -956,12 +957,12 @@ export default function Queue() {
             <p className="text-slate-500">No doctors available. Please add doctors first.</p>
           </div>
         </div>
-      </Layout>
+      </>
     );
   }
 
   return (
-    <Layout>
+    <>
       <div className="flex flex-col gap-6">
         <PageHeader
           title="Queue Management"
@@ -1032,8 +1033,8 @@ export default function Queue() {
             </div>
           </div>
         ) : (
-          <AnimatePresence mode="popLayout">
-            <Reorder.Group axis="y" values={queueItems} onReorder={handleReorder} className="space-y-3">
+          <Reorder.Group axis="y" values={queueItems} onReorder={handleReorder} className="space-y-3">
+            <AnimatePresence>
               {queueItems.map((apt, idx) => (
                 <Reorder.Item
                   key={apt.id}
@@ -1193,8 +1194,8 @@ export default function Queue() {
                   </div>
                 </Reorder.Item>
               ))}
-            </Reorder.Group>
-          </AnimatePresence>
+            </AnimatePresence>
+          </Reorder.Group>
         )}
 
         {/* No Show Confirmation */}
@@ -1321,6 +1322,6 @@ export default function Queue() {
           </DialogContent>
         </Dialog>
       </div>
-    </Layout>
+    </>
   );
 }
