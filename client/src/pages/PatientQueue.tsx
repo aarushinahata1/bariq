@@ -1,6 +1,6 @@
 import { useParams } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { Loader2, CheckCircle, Stethoscope, Bell, Clock, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -168,8 +168,9 @@ function StatusCard({ data }: { data: any }) {
 
 export default function PatientQueue() {
   const { token } = useParams();
+  const queryClient = useQueryClient();
 
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ["queue", token],
     queryFn: async () => {
       const res = await fetch(`/api/queue/${token}`);
@@ -179,22 +180,23 @@ export default function PatientQueue() {
       }
       return res.json();
     },
-    refetchInterval: 5000,
+    refetchInterval: 10000,
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
 
-  // SSE: get pushed updates immediately when queue changes instead of waiting for the 5s poll
+  // SSE: get pushed updates immediately when queue changes
   const doctorId = data?.doctorId;
-  const esRef = useRef<EventSource | null>(null);
   useEffect(() => {
     if (!doctorId) return;
     const es = new EventSource(`/api/sse/doctor/${doctorId}`);
-    esRef.current = es;
-    es.onmessage = () => refetch();
-    return () => { es.close(); esRef.current = null; };
-  }, [doctorId, refetch]);
+    es.onmessage = (e) => {
+      if (e.data === "connected") return;
+      queryClient.invalidateQueries({ queryKey: ["queue", token] });
+    };
+    return () => es.close();
+  }, [doctorId, token, queryClient]);
 
   if (isLoading) {
     return (

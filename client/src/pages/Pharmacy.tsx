@@ -552,13 +552,31 @@ function AlertsTab({ medicines, today, onRestock, onDelete, onGoToInventory }: {
           >
             <PackagePlus className="w-3 h-3" /> Restock
           </button>
-          <button
-            onClick={() => onDelete(m.id)}
-            title="Remove from inventory"
-            className="h-7 w-7 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-colors"
-          >
-            <Trash2 className="w-3 h-3" />
-          </button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <button
+                title="Remove from inventory"
+                className="h-7 w-7 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 flex items-center justify-center transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </AlertDialogTrigger>
+            <AlertDialogContent className="rounded-2xl">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Remove from inventory?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete <span className="font-semibold text-slate-800">{m.name}</span> from the inventory. This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => onDelete(m.id)}
+                  className="rounded-xl bg-red-600 hover:bg-red-700"
+                >Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
     );
@@ -935,29 +953,40 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
 
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [patientMode, setPatientMode] = useState<"registered" | "walkin">("registered");
   const [billingPhone, setBillingPhone] = useState("");
   const [selectedBillingPatient, setSelectedBillingPatient] = useState<{ id: number; name: string } | null>(null);
   const [billingNewName, setBillingNewName] = useState("");
   const [billingAddingNew, setBillingAddingNew] = useState(false);
+  const [walkinName, setWalkinName] = useState("");
+  const [walkinPhone, setWalkinPhone] = useState("");
 
   const billingPhoneDigits = billingPhone.replace(/\D/g, "").slice(-10);
   const billingPhoneReady = billingPhoneDigits.length >= 10;
 
   const billingMatches = useMemo(() => {
-    if (!billingPhoneReady) return [];
+    if (!billingPhoneReady || patientMode === "walkin") return [];
     return (patients as any[]).filter(p =>
       (p.phone || "").replace(/\D/g, "").slice(-10) === billingPhoneDigits
     );
-  }, [billingPhoneDigits, billingPhoneReady, patients]);
+  }, [billingPhoneDigits, billingPhoneReady, patients, patientMode]);
 
   useEffect(() => {
+    if (patientMode === "walkin") { setSelectedBillingPatient(null); return; }
     if (billingMatches.length === 1 && !billingAddingNew) {
       setSelectedBillingPatient({ id: billingMatches[0].id, name: billingMatches[0].name });
       setBillingNewName("");
     } else if (billingMatches.length !== 1 || billingAddingNew) {
       if (!billingAddingNew) setSelectedBillingPatient(null);
     }
-  }, [billingMatches, billingAddingNew]);
+  }, [billingMatches, billingAddingNew, patientMode]);
+
+  function switchMode(mode: "registered" | "walkin") {
+    setPatientMode(mode);
+    setBillingPhone(""); setSelectedBillingPatient(null);
+    setBillingNewName(""); setBillingAddingNew(false);
+    setWalkinName(""); setWalkinPhone("");
+  }
   const [discountPercent, setDiscountPercent] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [notes, setNotes] = useState("");
@@ -1029,9 +1058,11 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
         items: cart, subtotal, discountPercent, discountAmount, gstTotal, totalAmount,
         paymentMethod: paymentMethod.toLowerCase(), status: "paid",
         notes: notes.trim() || null,
-        ...(selectedBillingPatient
-          ? { patientId: selectedBillingPatient.id }
-          : { patientName: billingNewName.trim() || "Walk-in", patientPhone: billingPhone.trim() || null }),
+        ...(patientMode === "walkin"
+          ? { patientName: walkinName.trim() || "Walk-in", patientPhone: walkinPhone.trim() || null }
+          : selectedBillingPatient
+            ? { patientId: selectedBillingPatient.id }
+            : { patientName: billingNewName.trim() || "Walk-in", patientPhone: billingPhone.trim() || null }),
       };
       const r = await fetch("/api/pharmacy/bills", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -1048,6 +1079,7 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
       const w = window.open("", "_blank");
       if (w) { w.document.write(buildBillHtml(bill, settings?.clinicProfile)); w.document.close(); }
       setCart([]); setBillingPhone(""); setSelectedBillingPatient(null); setBillingNewName(""); setBillingAddingNew(false);
+      setWalkinName(""); setWalkinPhone("");
       setDiscountPercent(0); setNotes(""); setPaymentMethod("Cash");
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -1188,52 +1220,98 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
       {/* Right: Patient + Summary */}
       <div className="space-y-4">
         <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
-          <h3 className="font-semibold text-slate-800">Patient</h3>
-          <Input
-            placeholder="Phone number"
-            value={billingPhone}
-            onChange={e => { setBillingPhone(e.target.value); setBillingAddingNew(false); setSelectedBillingPatient(null); }}
-            className="rounded-xl h-10"
-          />
-          {billingPhoneReady && billingMatches.length > 0 && !billingAddingNew && (
-            <div className="flex flex-wrap gap-2">
-              {billingMatches.map((p: any) => (
-                <button
-                  key={p.id}
-                  onClick={() => { setSelectedBillingPatient({ id: p.id, name: p.name }); setBillingNewName(""); }}
-                  className={cn(
-                    "px-3 py-1.5 rounded-full text-sm font-medium border transition-all",
-                    selectedBillingPatient?.id === p.id
-                      ? "bg-violet-600 text-white border-violet-600"
-                      : "bg-white text-slate-700 border-slate-300 hover:border-violet-400"
-                  )}
-                >
-                  {p.name}
-                </button>
-              ))}
-              <button
-                onClick={() => { setBillingAddingNew(true); setSelectedBillingPatient(null); setBillingNewName(""); }}
-                className="px-3 py-1.5 rounded-full text-sm font-medium border border-dashed border-slate-300 text-slate-500 hover:border-violet-400 hover:text-violet-600 transition-all"
-              >
-                + Someone else
-              </button>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-slate-800">Patient</h3>
+          </div>
+
+          {/* Mode toggle */}
+          <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+            <button
+              onClick={() => switchMode("registered")}
+              className={cn(
+                "flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                patientMode === "registered" ? "bg-white text-violet-700 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Registered Patient
+            </button>
+            <button
+              onClick={() => switchMode("walkin")}
+              className={cn(
+                "flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                patientMode === "walkin" ? "bg-white text-violet-700 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              Walk-in
+            </button>
+          </div>
+
+          {patientMode === "registered" ? (
+            <>
+              <Input
+                placeholder="Search by phone number"
+                value={billingPhone}
+                onChange={e => { setBillingPhone(e.target.value); setBillingAddingNew(false); setSelectedBillingPatient(null); }}
+                className="rounded-xl h-10"
+              />
+              {billingPhoneReady && billingMatches.length > 0 && !billingAddingNew && (
+                <div className="flex flex-wrap gap-2">
+                  {billingMatches.map((p: any) => (
+                    <button
+                      key={p.id}
+                      onClick={() => { setSelectedBillingPatient({ id: p.id, name: p.name }); setBillingNewName(""); }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-sm font-medium border transition-all",
+                        selectedBillingPatient?.id === p.id
+                          ? "bg-violet-600 text-white border-violet-600"
+                          : "bg-white text-slate-700 border-slate-300 hover:border-violet-400"
+                      )}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                  <button
+                    onClick={() => { setBillingAddingNew(true); setSelectedBillingPatient(null); setBillingNewName(""); }}
+                    className="px-3 py-1.5 rounded-full text-sm font-medium border border-dashed border-slate-300 text-slate-500 hover:border-violet-400 hover:text-violet-600 transition-all"
+                  >
+                    + Someone else
+                  </button>
+                </div>
+              )}
+              {billingPhoneReady && (billingMatches.length === 0 || billingAddingNew) && (
+                <Input
+                  placeholder="Patient name (optional)"
+                  value={billingNewName}
+                  onChange={e => setBillingNewName(e.target.value)}
+                  className="rounded-xl h-10"
+                  autoFocus={billingAddingNew}
+                />
+              )}
+              {selectedBillingPatient && (
+                <RxImportSection
+                  patientId={selectedBillingPatient.id}
+                  medicines={medicines}
+                  onAddToCart={addToCart}
+                />
+              )}
+            </>
+          ) : (
+            <div className="space-y-2">
+              <Input
+                placeholder="Patient name (optional)"
+                value={walkinName}
+                onChange={e => setWalkinName(e.target.value)}
+                className="rounded-xl h-10"
+                autoFocus
+              />
+              <Input
+                placeholder="Phone number (optional)"
+                value={walkinPhone}
+                onChange={e => setWalkinPhone(e.target.value)}
+                className="rounded-xl h-10"
+              />
+              <p className="text-xs text-slate-400">Bill will be recorded as "Walk-in" if name is left blank.</p>
             </div>
-          )}
-          {billingPhoneReady && (billingMatches.length === 0 || billingAddingNew) && (
-            <Input
-              placeholder="Patient name (optional)"
-              value={billingNewName}
-              onChange={e => setBillingNewName(e.target.value)}
-              className="rounded-xl h-10"
-              autoFocus={billingAddingNew}
-            />
-          )}
-          {selectedBillingPatient && (
-            <RxImportSection
-              patientId={selectedBillingPatient.id}
-              medicines={medicines}
-              onAddToCart={addToCart}
-            />
           )}
         </div>
 
@@ -1660,12 +1738,30 @@ export default function Pharmacy() {
                               >
                                 <Edit2 className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => deleteMedicine.mutate(m.id)}
-                                className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <button
+                                    className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="rounded-2xl">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Remove from inventory?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      This will permanently delete <span className="font-semibold text-slate-800">{m.name}</span> from the inventory. This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => deleteMedicine.mutate(m.id)}
+                                      className="rounded-xl bg-red-600 hover:bg-red-700"
+                                    >Delete</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
                             </div>
                           </td>
                         </tr>

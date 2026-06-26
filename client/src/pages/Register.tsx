@@ -1,7 +1,7 @@
 import { useParams } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
-import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Clock, Calendar, Hash } from "lucide-react";
+import { Loader2, CheckCircle, User, Phone, Stethoscope, MessageSquare, ChevronRight, AlertCircle, ExternalLink, Calendar, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, addDays } from "date-fns";
 
@@ -16,22 +16,10 @@ function BariQLogo() {
   );
 }
 
-type DoctorSlot = { start: string; end: string };
-
 type KioskInfo = {
   clinic: { name: string; tagline: string | null; address: string | null };
-  doctors: { id: string; name: string; specialization: string; slots: DoctorSlot[] }[];
+  doctors: { id: string; name: string; specialization: string; availableToday: boolean }[];
 };
-
-function formatSlot(slot: DoctorSlot): string {
-  const fmt = (t: string) => {
-    const [h, m] = t.split(":").map(Number);
-    const period = h < 12 ? "AM" : "PM";
-    const hh = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    return `${hh}:${String(m).padStart(2, "0")} ${period}`;
-  };
-  return `${fmt(slot.start)} – ${fmt(slot.end)}`;
-}
 
 function todayStr() {
   return format(new Date(), "yyyy-MM-dd");
@@ -62,11 +50,11 @@ function buildDateOptions() {
 
 export default function Register() {
   const { token } = useParams<{ token: string }>();
+  const queryClient = useQueryClient();
 
   const [step, setStep] = useState<"form" | "success">("form");
   const [selectedDate, setSelectedDate] = useState<string>(todayStr());
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
-  const [selectedSlot, setSelectedSlot] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [reason, setReason] = useState("");
@@ -118,12 +106,36 @@ export default function Register() {
     refetchInterval: 10000,
   });
 
+  // Live queue data for success screen (today's bookings only)
+  const isSuccessToday = step === "success" && !!result?.queueToken && selectedDate === todayStr();
+  const { data: liveQueue } = useQuery({
+    queryKey: ["queue", result?.queueToken],
+    queryFn: async () => {
+      const res = await fetch(`/api/queue/${result!.queueToken}`);
+      if (!res.ok) return null;
+      return res.json();
+    },
+    enabled: isSuccessToday,
+    refetchInterval: 10000,
+    staleTime: 0,
+  });
+
+  // SSE: push live queue updates to the success screen
+  useEffect(() => {
+    if (!isSuccessToday || !selectedDoctorId) return;
+    const es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
+    es.onmessage = (e) => {
+      if (e.data === "connected") return;
+      queryClient.invalidateQueries({ queryKey: ["queue", result?.queueToken] });
+    };
+    return () => es.close();
+  }, [isSuccessToday, selectedDoctorId, result?.queueToken, queryClient]);
+
   const doctors = info?.doctors ?? [];
 
-  // Reset doctor/slot when date changes (availability differs by day)
+  // Reset doctor when date changes
   useEffect(() => {
     setSelectedDoctorId("");
-    setSelectedSlot("");
   }, [selectedDate]);
 
   // Auto-select when only one doctor
@@ -132,17 +144,6 @@ export default function Register() {
       setSelectedDoctorId(prev => prev || info!.doctors[0].id);
     }
   }, [info]);
-
-  // Reset/auto-select slot when doctor changes
-  useEffect(() => {
-    if (!selectedDoctorId) { setSelectedSlot(""); return; }
-    const doc = doctors.find(d => d.id === selectedDoctorId);
-    if (doc?.slots?.length === 1) {
-      setSelectedSlot(doc.slots[0].start);
-    } else {
-      setSelectedSlot("");
-    }
-  }, [selectedDoctorId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const registerMutation = useMutation({
     mutationFn: async () => {
@@ -154,7 +155,6 @@ export default function Register() {
           phone: phone.trim(),
           doctorId: selectedDoctorId,
           reason: reason.trim() || null,
-          slotStart: selectedSlot || undefined,
           date: selectedDate,
           ...(selectedExistingId ? { patientId: selectedExistingId } : {}),
         }),
@@ -180,7 +180,6 @@ export default function Register() {
   };
 
   const selectedDoctor = doctors.find(d => d.id === selectedDoctorId);
-  const selectedDoctorSlots = selectedDoctor?.slots ?? [];
 
   const waMessage = result
     ? encodeURIComponent(`Hi! I'm ${result.patientName}. Track my queue position:\n${result.queueUrl}`)
@@ -248,10 +247,39 @@ export default function Register() {
                   <CheckCircle className="w-8 h-8 text-white" />
                 </div>
                 <p className="text-teal-100/80 text-[10px] uppercase tracking-[0.2em] font-bold mb-2">You're Registered!</p>
-                <div className="text-7xl font-black text-white leading-none tracking-tighter mb-2">
+                <div className="text-7xl font-black text-white leading-none tracking-tighter mb-1">
                   #{result.queuePosition}
                 </div>
-                <p className="text-teal-100 text-sm font-semibold">Your token number</p>
+                <p className="text-teal-100/70 text-sm font-semibold">Your token number</p>
+
+                {/* Live queue position (today only) */}
+                {selectedDate === todayStr() && (
+                  <div className="mt-4 pt-4 border-t border-white/20">
+                    {liveQueue ? (
+                      liveQueue.status === "completed" ? (
+                        <p className="text-green-200 font-bold text-sm">Consultation complete!</p>
+                      ) : liveQueue.status === "in_progress" ? (
+                        <p className="text-teal-100 font-bold text-sm animate-pulse">With doctor now</p>
+                      ) : liveQueue.position === 1 ? (
+                        <p className="text-amber-200 font-bold text-sm">You're up next!</p>
+                      ) : (
+                        <p className="text-teal-100/80 text-sm">
+                          <span className="font-bold text-white text-lg">{liveQueue.aheadCount}</span>{" "}
+                          {liveQueue.aheadCount === 1 ? "person" : "people"} ahead of you
+                        </p>
+                      )
+                    ) : (
+                      <div className="flex items-center justify-center gap-1.5">
+                        <div className="w-1.5 h-1.5 bg-teal-300/50 rounded-full animate-pulse" />
+                        <p className="text-teal-100/60 text-xs">Loading live position…</p>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-center gap-1.5 mt-2">
+                      <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                      <p className="text-teal-100/50 text-xs">Live updates</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -312,7 +340,7 @@ export default function Register() {
                 setStep("form");
                 setName(""); setPhone(""); setReason(""); setResult(null);
                 setSelectedDate(todayStr());
-                setSelectedDoctorId(""); setSelectedSlot("");
+                setSelectedDoctorId("");
                 setSelectedExistingId(null); setAddingNew(false);
               }}
               className="w-full py-3 text-sm text-slate-400 hover:text-slate-600 transition-colors"
@@ -378,128 +406,53 @@ export default function Register() {
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Doctor *</label>
                 <div className="space-y-2">
-                  {doctors.map(doc => {
-                    const hasSlots = doc.slots.length > 0;
-                    return (
-                      <button
-                        key={doc.id}
-                        type="button"
-                        onClick={() => hasSlots && setSelectedDoctorId(doc.id)}
-                        disabled={!hasSlots}
-                        className={cn(
-                          "w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all",
-                          !hasSlots && "opacity-40 cursor-not-allowed border-slate-100 bg-slate-50",
-                          hasSlots && selectedDoctorId === doc.id && "border-teal-500 bg-teal-50",
-                          hasSlots && selectedDoctorId !== doc.id && "border-slate-200 bg-white hover:border-teal-200"
-                        )}
-                      >
-                        <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-sm",
-                          selectedDoctorId === doc.id ? "bg-teal-500 text-white" : "bg-slate-100 text-slate-500"
-                        )}>
-                          {doc.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className={cn("font-bold text-sm", selectedDoctorId === doc.id ? "text-teal-800" : "text-slate-800")}>
-                            Dr. {doc.name}
-                          </p>
-                          <p className="text-xs text-slate-500 truncate">{doc.specialization}</p>
-                          {!hasSlots && <p className="text-[10px] text-slate-400 mt-0.5">Not available on this day</p>}
-                        </div>
-                        {hasSlots && (
-                          <div className={cn(
-                            "w-5 h-5 rounded-full border-2 shrink-0 ml-auto flex items-center justify-center",
-                            selectedDoctorId === doc.id ? "border-teal-500 bg-teal-500" : "border-slate-300"
-                          )}>
-                            {selectedDoctorId === doc.id && <div className="w-2 h-2 rounded-full bg-white" />}
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
+                  {doctors.map(doc => (
+                    <button
+                      key={doc.id}
+                      type="button"
+                      onClick={() => setSelectedDoctorId(doc.id)}
+                      className={cn(
+                        "w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all",
+                        selectedDoctorId === doc.id ? "border-teal-500 bg-teal-50" : "border-slate-200 bg-white hover:border-teal-200"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0 font-black text-sm",
+                        selectedDoctorId === doc.id ? "bg-teal-500 text-white" : "bg-slate-100 text-slate-500"
+                      )}>
+                        {doc.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2)}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn("font-bold text-sm", selectedDoctorId === doc.id ? "text-teal-800" : "text-slate-800")}>
+                          Dr. {doc.name}
+                        </p>
+                        <p className="text-xs text-slate-500 truncate">{doc.specialization}</p>
+                      </div>
+                      <div className={cn(
+                        "w-5 h-5 rounded-full border-2 shrink-0 ml-auto flex items-center justify-center",
+                        selectedDoctorId === doc.id ? "border-teal-500 bg-teal-500" : "border-slate-300"
+                      )}>
+                        {selectedDoctorId === doc.id && <div className="w-2 h-2 rounded-full bg-white" />}
+                      </div>
+                    </button>
+                  ))}
                 </div>
               </div>
             )}
 
             {/* Single doctor — just show who they'll see */}
             {doctors.length === 1 && (
-              <div className={cn(
-                "flex items-center gap-3 p-4 rounded-2xl border",
-                doctors[0].slots.length > 0
-                  ? "bg-teal-50 border-teal-100"
-                  : "bg-slate-50 border-slate-200 opacity-60"
-              )}>
-                <div className={cn(
-                  "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-                  doctors[0].slots.length > 0 ? "bg-teal-500" : "bg-slate-300"
-                )}>
+              <div className="flex items-center gap-3 p-4 rounded-2xl border bg-teal-50 border-teal-100">
+                <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center shrink-0">
                   <Stethoscope className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <p className={cn("text-xs font-semibold uppercase tracking-wider", doctors[0].slots.length > 0 ? "text-teal-600" : "text-slate-400")}>Consulting</p>
-                  <p className={cn("font-bold", doctors[0].slots.length > 0 ? "text-teal-900" : "text-slate-500")}>Dr. {doctors[0].name}</p>
-                  <p className={cn("text-xs", doctors[0].slots.length > 0 ? "text-teal-600" : "text-slate-400")}>
-                    {doctors[0].slots.length > 0 ? doctors[0].specialization : "Not available on this day"}
-                  </p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-teal-600">Consulting</p>
+                  <p className="font-bold text-teal-900">Dr. {doctors[0].name}</p>
+                  <p className="text-xs text-teal-600">{doctors[0].specialization}</p>
                 </div>
               </div>
             )}
-
-            {/* ── Time slot selection ────────────────────────────────────── */}
-            {selectedDoctorId && (() => {
-              if (selectedDoctorSlots.length === 0) {
-                return (
-                  <div className="flex items-center gap-3 p-4 rounded-2xl bg-amber-50 border border-amber-100">
-                    <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
-                    <p className="text-sm text-amber-700">No available slots for this day. Please select another date.</p>
-                  </div>
-                );
-              }
-              if (selectedDoctorSlots.length === 1) {
-                return (
-                  <div className="flex items-center gap-3 p-4 rounded-2xl bg-teal-50 border border-teal-100">
-                    <div className="w-10 h-10 rounded-xl bg-teal-500 flex items-center justify-center shrink-0">
-                      <Clock className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-teal-600 font-semibold uppercase tracking-wider">Time Slot</p>
-                      <p className="font-bold text-teal-900">{formatSlot(selectedDoctorSlots[0])}</p>
-                    </div>
-                  </div>
-                );
-              }
-              return (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Select Time Slot *</label>
-                  <div className="space-y-2">
-                    {selectedDoctorSlots.map(slot => (
-                      <button
-                        key={slot.start}
-                        type="button"
-                        onClick={() => setSelectedSlot(slot.start)}
-                        className={cn(
-                          "w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all",
-                          selectedSlot === slot.start
-                            ? "border-teal-500 bg-teal-50"
-                            : "border-slate-200 bg-white hover:border-teal-200"
-                        )}
-                      >
-                        <Clock className={cn("w-5 h-5 shrink-0", selectedSlot === slot.start ? "text-teal-500" : "text-slate-400")} />
-                        <p className={cn("font-bold text-sm", selectedSlot === slot.start ? "text-teal-800" : "text-slate-800")}>
-                          {formatSlot(slot)}
-                        </p>
-                        <div className={cn(
-                          "w-5 h-5 rounded-full border-2 shrink-0 ml-auto flex items-center justify-center",
-                          selectedSlot === slot.start ? "border-teal-500 bg-teal-500" : "border-slate-300"
-                        )}>
-                          {selectedSlot === slot.start && <div className="w-2 h-2 rounded-full bg-white" />}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
 
             {/* Phone (first) */}
             <div className="space-y-1.5">
@@ -659,9 +612,7 @@ export default function Register() {
                 registerMutation.isPending ||
                 !phoneReady ||
                 !name.trim() ||
-                !selectedDoctorId ||
-                selectedDoctorSlots.length === 0 ||
-                (selectedDoctorSlots.length > 1 && !selectedSlot)
+                !selectedDoctorId
               }
               className={cn(
                 "w-full flex items-center justify-center gap-2 py-4 rounded-2xl font-bold text-base transition-all shadow-lg",

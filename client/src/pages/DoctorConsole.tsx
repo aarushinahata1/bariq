@@ -546,12 +546,12 @@ export default function DoctorConsole() {
   useEffect(() => {
     if (!selectedDoctorId) return;
     const es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
-    es.onmessage = () => {
-      refetch();
+    es.onmessage = (e) => {
+      if (e.data === "connected") return;
       queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
     };
     return () => es.close();
-  }, [selectedDoctorId, refetch, queryClient]);
+  }, [selectedDoctorId]);
 
   // Prescription state
   const appt = consoleData?.currentAppointment;

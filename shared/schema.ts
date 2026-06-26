@@ -80,15 +80,15 @@ export const doctorProfiles = pgTable("doctor_profiles", {
   avgConsultationTime: integer("avg_consultation_time").default(15),
   consultationFee: integer("consultation_fee").default(15000),
   availability: jsonb("availability").$type<{
-    [key: string]: { slots: { start: string; end: string }[]; enabled: boolean }
+    [key: string]: { enabled: boolean }
   }>().default({
-    "monday": { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-    "tuesday": { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-    "wednesday": { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-    "thursday": { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-    "friday": { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-    "saturday": { slots: [{ start: "09:00", end: "12:00" }], enabled: false },
-    "sunday": { slots: [{ start: "09:00", end: "12:00" }], enabled: false },
+    "monday": { enabled: true },
+    "tuesday": { enabled: true },
+    "wednesday": { enabled: true },
+    "thursday": { enabled: true },
+    "friday": { enabled: true },
+    "saturday": { enabled: false },
+    "sunday": { enabled: false },
   }),
   isAvailable: boolean("is_available").default(true),
 });

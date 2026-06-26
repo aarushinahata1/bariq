@@ -10,7 +10,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calendar as CalendarIcon, Plus, User, RefreshCw, ListOrdered, Search, Printer, Phone, X, Trash2 } from "lucide-react";
+import { Calendar as CalendarIcon, Plus, RefreshCw, ListOrdered, Search, Printer, Phone, X, Trash2 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format, isToday, isFuture, isPast, isSameDay, parseISO } from "date-fns";
 import { useForm } from "react-hook-form";
@@ -29,7 +29,6 @@ import { useRole } from "@/hooks/use-role";
 // Frontend needs slightly different schema for the form (string date instead of Date object initially)
 const appointmentFormSchema = z.object({
   date: z.string().min(1, "Date is required"),
-  slot: z.string().optional(),
   patientId: z.coerce.number().min(1, "Patient is required"),
   doctorId: z.string().min(1, "Doctor is required"),
   status: z.enum(["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"]),
@@ -37,83 +36,32 @@ const appointmentFormSchema = z.object({
   notes: z.string().optional(),
 });
 
-function generateTimeSlots(availability: any, dayOfWeek: string, selectedDate?: string): string[] {
-  if (!availability || !availability[dayOfWeek] || !availability[dayOfWeek].enabled) {
-    return [];
-  }
-  const daySlots: { start: string; end: string }[] = availability[dayOfWeek].slots || [];
-  const todayStr = format(new Date(), "yyyy-MM-dd");
-  const isSelectedToday = selectedDate === todayStr;
-  const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
-
-  return daySlots
-    .filter(slot => {
-      if (!isSelectedToday) return true;
-      const [endH, endM] = slot.end.split(":").map(Number);
-      return endH * 60 + endM > nowMins;
-    })
-    .map(slot => `${slot.start}-${slot.end}`);
-}
-
 type AppointmentFormValues = z.infer<typeof appointmentFormSchema>;
 
 const rescheduleSchema = z.object({
   date: z.string().min(1, "Date is required"),
-  slot: z.string().optional(),
 });
 type RescheduleFormValues = z.infer<typeof rescheduleSchema>;
 
 function RescheduleDialog({ appointment }: { appointment: any }) {
   const { toast } = useToast();
   const updateAppointment = useUpdateAppointment();
-  const { data: doctors } = useDoctors();
   const [open, setOpen] = useState(false);
 
   const form = useForm<RescheduleFormValues>({
     resolver: zodResolver(rescheduleSchema),
-    defaultValues: { date: "", slot: "" },
+    defaultValues: { date: "" },
   });
-
-  const watchedRescheduleDate = form.watch("date");
-
-  const rescheduleSlots = useMemo(() => {
-    if (!watchedRescheduleDate || !doctors) return [];
-    const doctor = doctors.find(d => d.id === appointment.doctorId);
-    if (!doctor?.doctorProfile?.availability) return [];
-    const [y, mo, d] = watchedRescheduleDate.split("-").map(Number);
-    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(y, mo - 1, d).getDay()];
-    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek, watchedRescheduleDate);
-  }, [watchedRescheduleDate, doctors, appointment.doctorId]);
 
   useEffect(() => {
     if (open) {
-      form.reset({ date: format(new Date(appointment.date), "yyyy-MM-dd"), slot: "" });
+      form.reset({ date: format(new Date(appointment.date), "yyyy-MM-dd") });
     }
   }, [open]);
 
-  useEffect(() => {
-    if (rescheduleSlots.length > 0) {
-      const current = form.getValues("slot");
-      if (!current || !rescheduleSlots.includes(current)) {
-        form.setValue("slot", rescheduleSlots[0], { shouldValidate: false });
-      }
-    } else {
-      form.setValue("slot", "", { shouldValidate: false });
-    }
-  }, [rescheduleSlots]);
-
   const onSubmit = (data: RescheduleFormValues) => {
-    const originalDate = new Date(appointment.date);
-    let appointmentDate: Date;
-    if (data.slot) {
-      const [start] = data.slot.split("-");
-      const [h, m] = start.split(":").map(Number);
-      const [y, mo, d] = data.date.split("-").map(Number);
-      appointmentDate = new Date(y, mo - 1, d, h, m);
-    } else {
-      const [y, mo, d] = data.date.split("-").map(Number);
-      appointmentDate = new Date(y, mo - 1, d, originalDate.getHours(), originalDate.getMinutes());
-    }
+    const [y, mo, d] = data.date.split("-").map(Number);
+    const appointmentDate = new Date(y, mo - 1, d, 9, 0);
 
     updateAppointment.mutate({
       id: appointment.id,
@@ -160,34 +108,6 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
                   <FormControl>
                     <Input type="date" {...field} min={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-11" />
                   </FormControl>
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="slot"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Time Slot</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value ?? ""}>
-                    <FormControl>
-                      <SelectTrigger className="rounded-xl h-11">
-                        <SelectValue placeholder={rescheduleSlots.length === 0 ? "Keep original time" : "Select Slot"} />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {rescheduleSlots.length === 0 ? (
-                        <div className="px-2 py-4 text-center text-sm text-slate-500">
-                          No slots configured — original time will be kept
-                        </div>
-                      ) : (
-                        rescheduleSlots.map(slot => (
-                          <SelectItem key={slot} value={slot}>{slot}</SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
                 </FormItem>
               )}
             />
@@ -734,14 +654,9 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   const appointmentOnlySchema = useMemo(() => z.object({
     doctorId: z.string().min(1, "Doctor is required"),
     date: z.string().min(1, "Date is required"),
-    slot: z.string().optional(),
     status: z.enum(["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"]),
     reason: z.string().optional(),
     notes: z.string().optional(),
-  }).superRefine((data, ctx) => {
-    if (data.status !== "checked_in" && !data.slot) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Time slot is required", path: ["slot"] });
-    }
   }), []);
 
   const form = useForm<any>({
@@ -751,30 +666,12 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
       reason: "",
       notes: "",
       date: format(new Date(), "yyyy-MM-dd"),
-      slot: "",
     }
   });
 
   const watchedDoctorId = form.watch("doctorId");
   const watchedDate = form.watch("date");
   const watchedStatus = form.watch("status");
-
-  const availableSlots = useMemo(() => {
-    if (!watchedDoctorId || !watchedDate || !doctors) return [];
-    const doctor = doctors.find(d => d.id === watchedDoctorId);
-    if (!doctor?.doctorProfile?.availability) return [];
-    const [y, mo, d] = watchedDate.split("-").map(Number);
-    const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][new Date(y, mo - 1, d).getDay()];
-    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek, watchedDate);
-  }, [watchedDoctorId, watchedDate, doctors]);
-
-  useEffect(() => {
-    if (availableSlots.length > 0 && !form.getValues("slot")) {
-      form.setValue("slot", availableSlots[0]);
-    } else if (availableSlots.length > 0 && !availableSlots.includes(form.getValues("slot"))) {
-      form.setValue("slot", availableSlots[0]);
-    }
-  }, [availableSlots]);
 
   const showPreview = !!watchedDoctorId && !!watchedDate && watchedStatus !== "checked_in" && !isQuickCheck;
 
@@ -835,14 +732,8 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         appointmentDate = new Date();
         finalReason = `EMERGENCY: ${data.reason}`;
       } else {
-        if (!data.slot) {
-          toast({ title: "Error", description: "Please select a time slot", variant: "destructive" });
-          return;
-        }
-        const [start] = data.slot.split('-');
-        const [hours, minutes] = start.split(':');
         const [y, mo, d] = data.date.split('-').map(Number);
-        appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
+        appointmentDate = new Date(y, mo - 1, d, 9, 0);
       }
 
       createAppointment.mutate({
@@ -1024,49 +915,19 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
             />
 
             {watchedStatus !== "checked_in" && (
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="date"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Date</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} min={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-11" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="slot"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Time Slot</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger className="rounded-xl h-11">
-                            <SelectValue placeholder="Select Slot" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {availableSlots.length === 0 ? (
-                            <div className="px-2 py-4 text-center text-sm text-slate-500">
-                              {watchedDoctorId && watchedDate ? "No availability for this day" : "Select doctor and date first"}
-                            </div>
-                          ) : (
-                            availableSlots.map(slot => (
-                              <SelectItem key={slot} value={slot}>{slot}</SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              <FormField
+                control={form.control}
+                name="date"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Date</FormLabel>
+                    <FormControl>
+                      <Input type="date" {...field} min={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-11" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             )}
 
             {showPreview && queuePreview && (

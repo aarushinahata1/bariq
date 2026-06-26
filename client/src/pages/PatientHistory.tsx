@@ -56,7 +56,6 @@ const DOT_COLORS: Record<string, string> = {
 
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"];
 const GENDER_OPTIONS = ["Male", "Female", "Other", "Prefer not to say"];
-const DAY_NAMES = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"] as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -67,11 +66,6 @@ function calcAge(dob: string | null | undefined): string {
   } catch {
     return "";
   }
-}
-
-function generateTimeSlots(availability: any, dayOfWeek: string): string[] {
-  if (!availability?.[dayOfWeek]?.enabled) return [];
-  return (availability[dayOfWeek].slots || []).map((s: any) => `${s.start}-${s.end}`);
 }
 
 function buildPrescriptionHtml(rx: any, patient: any, apt: any, clinicProfile?: any): string {
@@ -281,39 +275,22 @@ function FollowUpDialog({ patient, onClose }: { patient: any; onClose: () => voi
   const { data: doctors } = useDoctors();
   const [doctorId, setDoctorId] = useState("");
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [slot, setSlot] = useState("");
   const [reason, setReason] = useState("Follow-up visit");
 
-  const availableSlots = useMemo(() => {
-    if (!doctorId || !date || !doctors) return [];
-    const doctor = doctors.find(d => d.id === doctorId);
-    if (!doctor?.doctorProfile?.availability) return [];
-    const [y, mo, d] = date.split("-").map(Number);
-    const dayOfWeek = DAY_NAMES[new Date(y, mo - 1, d).getDay()];
-    return generateTimeSlots(doctor.doctorProfile.availability, dayOfWeek);
-  }, [doctorId, date, doctors]);
-
-  useEffect(() => {
-    if (availableSlots.length > 0 && !availableSlots.includes(slot)) setSlot(availableSlots[0]);
-    else if (availableSlots.length === 0) setSlot("");
-  }, [availableSlots]);
-
   const handleSubmit = () => {
-    if (!doctorId || !date || !slot) {
+    if (!doctorId || !date) {
       toast({ title: "Please fill all required fields", variant: "destructive" });
       return;
     }
-    const [start] = slot.split("-");
-    const [hours, minutes] = start.split(":");
     const [y, mo, d] = date.split("-").map(Number);
-    const appointmentDate = new Date(y, mo - 1, d, parseInt(hours), parseInt(minutes));
+    const appointmentDate = new Date(y, mo - 1, d, 9, 0);
     createAppointment.mutate({
       patientId: patient.id, doctorId,
       date: appointmentDate.toISOString(),
       status: "booked", reason, isQuickCheck: false,
     }, {
       onSuccess: () => {
-        toast({ title: "Follow-up booked!", description: `Scheduled for ${format(appointmentDate, "MMM d, h:mm a")}` });
+        toast({ title: "Follow-up booked!", description: `Scheduled for ${format(appointmentDate, "MMM d")}` });
         onClose();
       },
       onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
@@ -328,23 +305,14 @@ function FollowUpDialog({ patient, onClose }: { patient: any; onClose: () => voi
       </div>
       <div className="space-y-2">
         <label className="text-sm font-medium">Doctor *</label>
-        <Select value={doctorId} onValueChange={v => { setDoctorId(v); setSlot(""); }}>
+        <Select value={doctorId} onValueChange={setDoctorId}>
           <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Select doctor" /></SelectTrigger>
           <SelectContent>{doctors?.map(d => <SelectItem key={d.id} value={d.id}>Dr. {d.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Date *</label>
-          <Input type="date" value={date} min={format(new Date(), "yyyy-MM-dd")} onChange={e => { setDate(e.target.value); setSlot(""); }} className="rounded-xl h-11" />
-        </div>
-        <div className="space-y-2">
-          <label className="text-sm font-medium">Time Slot *</label>
-          <Select value={slot} onValueChange={setSlot} disabled={!availableSlots.length}>
-            <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder={availableSlots.length ? "Select slot" : "No slots"} /></SelectTrigger>
-            <SelectContent>{availableSlots.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Date *</label>
+        <Input type="date" value={date} min={format(new Date(), "yyyy-MM-dd")} onChange={e => setDate(e.target.value)} className="rounded-xl h-11" />
       </div>
       <div className="space-y-2">
         <label className="text-sm font-medium">Reason</label>

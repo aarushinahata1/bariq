@@ -305,16 +305,6 @@ tbody tr:last-child td{border-bottom:none}
 </body></html>`;
 }
 
-const DAY_NAMES = [
-  "sunday",
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-] as const;
-
 const PAYMENT_METHODS = [
   { value: "cash", label: "Cash" },
   { value: "upi", label: "UPI" },
@@ -765,7 +755,6 @@ export default function Queue() {
   const { data: settings } = useQuery<Record<string, any>>({ queryKey: ["/api/settings"] });
   const [selectedDoctor, setSelectedDoctor] = useState<string>("");
   const [selectedDate, setSelectedDate] = useState<string>(format(new Date(), "yyyy-MM-dd"));
-  const [selectedSlot, setSelectedSlot] = useState<string>("all");
   const [checkInTarget, setCheckInTarget] = useState<any>(null);
   const [checkInFee, setCheckInFee] = useState<string>("");
   const [checkInPaymentMethod, setCheckInPaymentMethod] = useState<string>("cash");
@@ -783,40 +772,6 @@ export default function Queue() {
     return doc?.doctorProfile ?? null;
   }, [selectedDoctor, doctors]);
 
-  const doctorSlots = useMemo(() => {
-    const profile = selectedDoctorProfile;
-    if (!profile?.availability) return [];
-
-    const slots: { id: string; label: string; date: string; start: string; end: string }[] = [];
-    const now = new Date();
-    const todayStr = format(now, "yyyy-MM-dd");
-    const nowMins = now.getHours() * 60 + now.getMinutes();
-    const isToday = selectedDate === todayStr;
-
-    const dateObj = parseISO(selectedDate);
-    const dayName = DAY_NAMES[dateObj.getDay()];
-    const dayConfig = (profile.availability as Record<string, any>)[dayName];
-    const dateLabel = isToday ? "Today" : format(dateObj, "EEE, MMM d");
-
-    if (!dayConfig?.enabled || !dayConfig.slots?.length) return [];
-
-    for (const s of dayConfig.slots as { start: string; end: string }[]) {
-      if (isToday) {
-        const [endH, endM] = s.end.split(":").map(Number);
-        if (endH * 60 + endM <= nowMins) continue;
-      }
-      slots.push({
-        id: `${selectedDate}|${s.start}-${s.end}`,
-        label: `${dateLabel} · ${s.start} - ${s.end}`,
-        date: selectedDate,
-        start: s.start,
-        end: s.end,
-      });
-    }
-
-    return slots;
-  }, [selectedDoctorProfile, selectedDate]);
-
   const { data: appointments, isLoading } = useAppointments(
     { date: selectedDate, doctorId: selectedDoctor || undefined },
     { keepPrevious: true }
@@ -825,34 +780,18 @@ export default function Queue() {
   const filteredAndSorted = useMemo(() => {
     if (!appointments) return [];
     const statuses = ["booked", "checked_in", "in_progress"];
-    let items = appointments.filter(
+    const items = appointments.filter(
       (apt) =>
         statuses.includes(apt.status) &&
         String(apt.doctorId) === selectedDoctor
     );
-
-    if (selectedSlot && selectedSlot !== "all" && doctorSlots.length > 0) {
-      const slot = doctorSlots.find((s) => s.id === selectedSlot);
-      if (slot) {
-        const [startH, startM] = slot.start.split(":").map(Number);
-        const [endH, endM] = slot.end.split(":").map(Number);
-        const slotStartMins = startH * 60 + startM;
-        const slotEndMins = endH * 60 + endM;
-
-        items = items.filter((apt) => {
-          const d = apt.date instanceof Date ? apt.date : parseISO(apt.date);
-          const aptMins = d.getHours() * 60 + d.getMinutes();
-          return aptMins >= slotStartMins && aptMins < slotEndMins;
-        });
-      }
-    }
 
     return [...items].sort((a, b) => {
       const posA = a.queuePosition ?? Infinity;
       const posB = b.queuePosition ?? Infinity;
       return posA - posB;
     });
-  }, [appointments, selectedDoctor, selectedSlot, doctorSlots]);
+  }, [appointments, selectedDoctor]);
 
   // Refs to prevent the 30-second poll from overwriting an in-flight drag reorder
   const reorderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -871,11 +810,16 @@ export default function Queue() {
     }
   }, [doctors, selectedDoctor]);
 
+  // SSE: live queue updates when doctor marks patient as consulted
   useEffect(() => {
-    if (selectedSlot && selectedSlot !== "all" && !doctorSlots.find((s) => s.id === selectedSlot)) {
-      setSelectedSlot("all");
-    }
-  }, [doctorSlots, selectedSlot]);
+    if (!selectedDoctor) return;
+    const es = new EventSource(`/api/sse/doctor/${selectedDoctor}`);
+    es.onmessage = (e) => {
+      if (e.data === "connected") return;
+      queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
+    };
+    return () => es.close();
+  }, [selectedDoctor, queryClient]);
 
   useEffect(() => {
     if (checkInTarget && selectedDoctorProfile) {
@@ -1027,7 +971,7 @@ export default function Queue() {
         <div className="flex flex-col sm:flex-row gap-3">
           <Select
             value={selectedDoctor}
-            onValueChange={(v) => { setSelectedDoctor(v); setSelectedSlot("all"); }}
+            onValueChange={(v) => { setSelectedDoctor(v); }}
           >
             <SelectTrigger className="bg-white border-slate-200 rounded-xl w-full sm:w-56 h-11">
               <SelectValue placeholder="Select doctor" />
@@ -1043,20 +987,9 @@ export default function Queue() {
           <Input
             type="date"
             value={selectedDate}
-            onChange={(e) => { setSelectedDate(e.target.value); setSelectedSlot("all"); }}
+            onChange={(e) => { setSelectedDate(e.target.value); }}
             className="bg-white border-slate-200 rounded-xl w-full sm:w-44 h-11 px-3 text-sm cursor-pointer"
           />
-          <Select value={selectedSlot} onValueChange={setSelectedSlot}>
-            <SelectTrigger className="bg-white border-slate-200 rounded-xl w-full sm:w-64 h-11">
-              <SelectValue placeholder={doctorSlots.length ? "All slots" : "No slots configured"} />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All slots</SelectItem>
-              {doctorSlots.map((s) => (
-                <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
 
           {/* Public display link */}
           {selectedDoctor && (
@@ -1094,7 +1027,7 @@ export default function Queue() {
               <Users className="w-16 h-16 text-slate-200 mx-auto mb-4" />
               <h3 className="text-lg font-semibold text-slate-400">No patients in queue</h3>
               <p className="text-sm text-slate-300 mt-1">
-                Patients will appear here when appointments are booked for this slot
+                Patients will appear here when appointments are booked for this day
               </p>
             </div>
           </div>

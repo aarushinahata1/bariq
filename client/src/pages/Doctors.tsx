@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Plus, BellRing, Clock, Settings2, X, Pencil, Check, ChevronDown, ChevronUp, Calendar, Trash2 } from "lucide-react";
+import { Plus, BellRing, Clock, Settings2, Pencil, Check, ChevronDown, ChevronUp, Calendar, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { insertUserSchema, type InsertUser } from "@shared/schema";
@@ -18,102 +18,35 @@ import { z } from "zod";
 
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
 
-// Create doctor needs password, role=doctor
 const createDoctorSchema = insertUserSchema.extend({
   name: z.string().min(1, "Full name is required"),
   specialization: z.string().optional(),
   avgConsultationTime: z.coerce.number().min(1).default(15),
-  availability: z.record(z.object({
-    slots: z.array(z.object({
-      start: z.string(),
-      end: z.string()
-    })),
-    enabled: z.boolean()
-  })).optional()
+  availability: z.record(z.object({ enabled: z.boolean() })).optional()
 });
 
 type CreateDoctorValues = z.infer<typeof createDoctorSchema>;
 
 const DEFAULT_AVAILABILITY = {
-  monday: { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-  tuesday: { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-  wednesday: { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-  thursday: { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-  friday: { slots: [{ start: "09:00", end: "12:00" }, { start: "15:00", end: "17:00" }], enabled: true },
-  saturday: { slots: [{ start: "09:00", end: "12:00" }], enabled: false },
-  sunday: { slots: [{ start: "09:00", end: "12:00" }], enabled: false },
+  monday: { enabled: true },
+  tuesday: { enabled: true },
+  wednesday: { enabled: true },
+  thursday: { enabled: true },
+  friday: { enabled: true },
+  saturday: { enabled: false },
+  sunday: { enabled: false },
 };
 
 function AvailabilityEditor({ value, onChange }: { value: any, onChange: (val: any) => void }) {
-  const addSlot = (day: string) => {
-    const slots = [...(value[day]?.slots || [])];
-    slots.push({ start: "09:00", end: "12:00" });
-    onChange({ ...value, [day]: { ...value[day], slots } });
-  };
-
-  const removeSlot = (day: string, index: number) => {
-    const slots = [...(value[day]?.slots || [])];
-    slots.splice(index, 1);
-    onChange({ ...value, [day]: { ...value[day], slots } });
-  };
-
-  const updateSlot = (day: string, index: number, field: 'start' | 'end', val: string) => {
-    const slots = [...(value[day]?.slots || [])];
-    slots[index] = { ...slots[index], [field]: val };
-    onChange({ ...value, [day]: { ...value[day], slots } });
-  };
-
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-2 gap-2">
       {DAYS.map(day => (
-        <div key={day} className="p-4 rounded-xl bg-slate-50 border border-slate-100 space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-bold capitalize text-slate-700">{day}</span>
-            <div className="flex items-center gap-2">
-              <Switch 
-                checked={value[day]?.enabled ?? false} 
-                onCheckedChange={(enabled) => onChange({ ...value, [day]: { ...value[day], enabled } })}
-              />
-              <Button 
-                type="button" 
-                variant="ghost" 
-                size="icon" 
-                className="h-8 w-8 text-teal-700"
-                onClick={() => addSlot(day)}
-              >
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-          
-          <div className="space-y-2">
-            {value[day]?.slots?.map((slot: any, index: number) => (
-              <div key={index} className="flex items-center gap-2">
-                <Input 
-                  type="time" 
-                  value={slot.start} 
-                  onChange={(e) => updateSlot(day, index, 'start', e.target.value)}
-                  className="h-8 w-28 rounded-lg text-xs" 
-                />
-                <span className="text-slate-400">-</span>
-                <Input 
-                  type="time" 
-                  value={slot.end} 
-                  onChange={(e) => updateSlot(day, index, 'end', e.target.value)}
-                  className="h-8 w-28 rounded-lg text-xs" 
-                />
-                <Button 
-                  type="button" 
-                  variant="ghost" 
-                  size="icon" 
-                  className="h-8 w-8 text-red-400 hover:text-red-600"
-                  onClick={() => removeSlot(day, index)}
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
+        <div key={day} className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-100">
+          <span className={`text-sm font-medium capitalize ${value[day]?.enabled ? 'text-slate-700' : 'text-slate-400'}`}>{day}</span>
+          <Switch
+            checked={value[day]?.enabled ?? false}
+            onCheckedChange={(enabled) => onChange({ ...value, [day]: { enabled } })}
+          />
         </div>
       ))}
     </div>
@@ -373,22 +306,18 @@ export default function Doctors() {
                       </div>
                     ) : (
                       <>
-                        {DAYS.map(day => {
-                          const avail = (doc.doctorProfile?.availability as any)?.[day];
-                          const isEnabled = avail?.enabled;
-                          return (
-                            <div key={day} className="flex items-center justify-between py-1.5 text-sm">
-                              <span className={`capitalize font-medium ${isEnabled ? 'text-slate-700' : 'text-slate-400'}`}>{day}</span>
-                              {isEnabled && avail?.slots?.length > 0 ? (
-                                <span className="text-slate-500 text-xs">
-                                  {avail.slots.map((s: any) => `${s.start}-${s.end}`).join(', ')}
-                                </span>
-                              ) : (
-                                <span className="text-slate-300 text-xs">Off</span>
-                              )}
-                            </div>
-                          );
-                        })}
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {DAYS.map(day => {
+                            const avail = (doc.doctorProfile?.availability as any)?.[day];
+                            const isEnabled = avail?.enabled;
+                            return (
+                              <div key={day} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-50 text-sm">
+                                <span className={`capitalize font-medium ${isEnabled ? 'text-slate-700' : 'text-slate-400'}`}>{day.slice(0, 3)}</span>
+                                <span className={`text-xs font-semibold ${isEnabled ? 'text-teal-600' : 'text-slate-300'}`}>{isEnabled ? 'On' : 'Off'}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                         <Button
                           size="sm"
                           variant="outline"

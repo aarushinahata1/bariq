@@ -1067,8 +1067,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         targetDate = new Date(todayMidnight);
       }
 
-      const isTargetToday = targetDate.toDateString() === todayMidnight.toDateString();
-      const nowMins = isTargetToday ? now.getHours() * 60 + now.getMinutes() : 0;
       const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][targetDate.getDay()];
 
       const doctorRows = await db.select().from(users)
@@ -1077,23 +1075,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const list = doctorRows.map(r => {
         const avail = (r.doctor_profiles?.availability as any)?.[dayName];
-        const rawSlots: { start: string; end: string }[] =
-          avail?.enabled && Array.isArray(avail?.slots) ? avail.slots : [];
-        // For today: drop slots whose end time has already passed.
-        // For future dates: show all slots.
-        const activeSlots = isTargetToday
-          ? rawSlots.filter(slot => {
-              const [endH, endM] = slot.end.split(":").map(Number);
-              return nowMins < endH * 60 + endM;
-            })
-          : rawSlots;
+        const availableToday = avail?.enabled === true && (r.doctor_profiles?.isAvailable !== false);
         return {
           id: r.users.id,
           name: r.users.name || [r.users.firstName, r.users.lastName].filter(Boolean).join(" ") || "Doctor",
           specialization: r.doctor_profiles?.specialization || "General Physician",
-          slots: activeSlots,
+          availableToday,
         };
-      });
+      }).filter(d => d.availableToday);
 
       res.json({
         clinic: { name: profile.clinicName || "Clinic", tagline: profile.tagline || null, address: profile.address || null },
@@ -1183,7 +1172,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/kiosk/:token", async (req, res) => {
     try {
       const { token } = req.params;
-      const { name, phone, doctorId, reason, slotStart, date: dateParam, patientId: existingPatientId } = req.body;
+      const { name, phone, doctorId, reason, date: dateParam, patientId: existingPatientId } = req.body;
 
       if (!name?.trim() || !phone || !doctorId) {
         return res.status(400).json({ message: "Name, phone number, and doctor selection are required" });
@@ -1223,33 +1212,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         targetDate = new Date(todayMidnight);
       }
 
-      // Compute appointment date from availability (read-only — safe outside transaction)
-      const [dpRow] = await db.select().from(doctorProfiles).where(eq(doctorProfiles.userId, doctorId));
       const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
       const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
-      const isTargetToday = targetDate.toDateString() === todayMidnight.toDateString();
-      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][targetDate.getDay()];
-      const availability = (dpRow?.availability as any)?.[dayName];
-      let appointmentDate = new Date(targetDate);
-
-      if (slotStart && /^\d{1,2}:\d{2}$/.test(slotStart)) {
-        // Patient explicitly selected a slot on the chosen date
-        const [slotH, slotM] = slotStart.split(":").map(Number);
-        appointmentDate = new Date(targetDate);
-        appointmentDate.setHours(slotH, slotM, 0, 0);
-      } else if (availability?.slots?.length > 0) {
-        // Auto-pick the first upcoming slot on the target date
-        const nowMins = isTargetToday ? now.getHours() * 60 + now.getMinutes() : 0;
-        for (const slot of (availability.slots as { start: string; end: string }[])) {
-          const [endH, endM] = slot.end.split(":").map(Number);
-          if (nowMins < endH * 60 + endM) {
-            const [startH, startM] = slot.start.split(":").map(Number);
-            appointmentDate = new Date(targetDate);
-            appointmentDate.setHours(startH, startM, 0, 0);
-            break;
-          }
-        }
-      }
+      const appointmentDate = new Date(targetDate);
+      appointmentDate.setHours(9, 0, 0, 0);
 
       // All mutating DB ops run inside a single transaction with two advisory locks:
       //   Lock 1 (clinicId, hash(phone)) — prevents concurrent duplicate patient creation
