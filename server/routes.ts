@@ -6,7 +6,7 @@ import { dirname, join } from "path";
 import { getStorage } from "./storage";
 import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
-import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames } from "@shared/schema";
+import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames, pharmacySuppliers, pharmacyReturns, wastageRecords, dailyClosings } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -62,6 +62,18 @@ function broadcastQueueUpdate(doctorId: string) {
   clients.forEach(res => {
     try { res.write(payload); } catch { /* client already disconnected */ }
   });
+}
+
+// Returns start and end of "today" in IST (UTC+5:30) as UTC Date objects.
+// The server runs in UTC on Render, but clinics are in India, so all "today"
+// filters must use IST midnight boundaries or appointments booked after
+// midnight IST (but still UTC-previous-day) will go missing.
+function dayRangeIST(): { start: Date; end: Date } {
+  const IST_MS = 5.5 * 60 * 60 * 1000;
+  const nowIST = new Date(Date.now() + IST_MS);
+  const s = new Date(nowIST); s.setUTCHours(0, 0, 0, 0);
+  const e = new Date(nowIST); e.setUTCHours(23, 59, 59, 999);
+  return { start: new Date(s.getTime() - IST_MS), end: new Date(e.getTime() - IST_MS) };
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -180,7 +192,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.get(api.appointments.list.path, requireAuth, async (req, res) => {
     try {
-      const date = req.query.date ? new Date(req.query.date as string) : undefined;
+      // new Date("YYYY-MM-DD") is parsed as UTC midnight, but appointments are
+      // created from IST browsers and stored as IST midnight in UTC (18:30 UTC the
+      // previous day).  Subtract the IST offset so the filter window starts at
+      // IST midnight, matching what the browser stored.
+      let date: Date | undefined;
+      if (req.query.date) {
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+        date = new Date(new Date(req.query.date as string).getTime() - IST_OFFSET_MS);
+      }
       const doctorId = req.query.doctorId as string | undefined;
       const status = req.query.status as string | undefined;
       const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
@@ -194,7 +214,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const data = api.appointments.create.input.parse(req.body);
       const appointmentDate = new Date(data.date);
-      const yesterday = new Date(); yesterday.setHours(0, 0, 0, 0);
+      const yesterday = dayRangeIST().start;
       if (appointmentDate < yesterday && data.status !== "checked_in") {
         return res.status(400).json({ message: "Cannot book appointments in the past" });
       }
@@ -378,33 +398,29 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let doctorId: string | null = null;
 
       await db.transaction(async (tx) => {
-        // Fetch current positions for this set — we re-use the same position
-        // values (just re-assigned to the new ordering) so other slots' patients
-        // are never displaced.
         const existing = await tx
           .select({ id: appointments.id, queuePosition: appointments.queuePosition, doctorId: appointments.doctorId })
           .from(appointments)
           .where(and(
-            sql`${appointments.id} IN (${sql.join(orderedAppointmentIds.map((id: number) => sql`${id}`), sql`, `)})`,
+            inArray(appointments.id, orderedAppointmentIds),
             eq(appointments.clinicId, req.session.clinicId!)
           ));
 
         if (existing.length > 0) doctorId = existing[0].doctorId;
 
+        // Re-use the same pool of position values (sorted) and re-assign them
+        // to the new order so no other patients' positions are displaced.
         const sortedPositions = existing
           .map(a => a.queuePosition ?? 0)
           .sort((a, b) => a - b);
 
-        if (orderedAppointmentIds.length > 0) {
-          const cases = orderedAppointmentIds.map((id: number, i: number) =>
-            sql`WHEN ${id} THEN ${sortedPositions[i] ?? i + 1}`
-          );
-          await tx.execute(sql`
-            UPDATE appointments
-            SET queue_position = CASE id ${sql.join(cases, sql` `)} END
-            WHERE id IN (${sql.join(orderedAppointmentIds.map((id: number) => sql`${id}`), sql`, `)})
-              AND clinic_id = ${req.session.clinicId!}
-          `);
+        for (let i = 0; i < orderedAppointmentIds.length; i++) {
+          await tx.update(appointments)
+            .set({ queuePosition: sortedPositions[i] ?? i + 1 })
+            .where(and(
+              eq(appointments.id, orderedAppointmentIds[i]),
+              eq(appointments.clinicId, req.session.clinicId!)
+            ));
         }
       });
 
@@ -413,6 +429,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       res.json({ success: true });
     } catch (err) {
+      console.error("reorder error:", err);
       res.status(500).json({ message: "Failed to reorder queue" });
     }
   });
@@ -422,8 +439,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/queue/:token", async (req, res) => {
     try {
       const token = req.params.token;
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+      const { start: today, end: endOfDay } = dayRangeIST();
 
       const result = await db.transaction(async (tx) => {
         const [appt] = await tx.select().from(appointments).where(eq(appointments.queueToken, token));
@@ -497,8 +513,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/public-queue/:doctorId", async (req, res) => {
     try {
       const doctorId = req.params.doctorId;
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+      const { start: today, end: endOfDay } = dayRangeIST();
 
       const [doctorRow] = await db.select().from(users)
         .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
@@ -598,8 +613,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const { doctorId } = req.params;
       const clinicId = req.session.clinicId!;
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+      const { start: today, end: endOfDay } = dayRangeIST();
 
       // Fetch doctor info
       const [doctorRow] = await db.select().from(users)
@@ -1076,14 +1090,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .where(and(eq(clinicSettings.clinicId, clinicId), eq(clinicSettings.key, "clinicProfile")));
       const profile = (profileRow?.value as any) || {};
 
-      // Determine the target date — default to today, clamp past dates to today
-      const now = new Date();
-      const todayMidnight = new Date(now); todayMidnight.setHours(0, 0, 0, 0);
+      // Determine the target date — default to today (IST), clamp past dates to today
+      const todayMidnight = dayRangeIST().start;
       let targetDate: Date;
       const dateParam = req.query.date as string | undefined;
       if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
         const [y, mo, d] = dateParam.split("-").map(Number);
-        targetDate = new Date(y, mo - 1, d);
+        targetDate = new Date(Date.UTC(y, mo - 1, d));
         if (targetDate < todayMidnight) targetDate = new Date(todayMidnight);
       } else {
         targetDate = new Date(todayMidnight);
@@ -1517,6 +1530,303 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err: any) {
       if (err?.isStockError) return res.status(400).json({ message: err.message });
       res.status(400).json({ message: err?.message || "Failed to create pharmacy bill" });
+    }
+  });
+
+  // ── PHARMACY: SUPPLIERS ───────────────────────────────────────────────────
+
+  app.get("/api/pharmacy/suppliers", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const rows = await db.select().from(pharmacySuppliers)
+        .where(and(eq(pharmacySuppliers.clinicId, clinicId), eq(pharmacySuppliers.isActive, true)))
+        .orderBy(pharmacySuppliers.name);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch suppliers" });
+    }
+  });
+
+  app.post("/api/pharmacy/suppliers", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { name, contactPerson, phone, email, address, paymentTerms, leadTimeDays, notes } = req.body;
+      if (!name?.trim()) return res.status(400).json({ message: "Supplier name is required" });
+      const [row] = await db.insert(pharmacySuppliers)
+        .values({ clinicId, name: name.trim(), contactPerson, phone, email, address, paymentTerms, leadTimeDays: leadTimeDays || null, notes })
+        .returning();
+      res.json(row);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to create supplier" });
+    }
+  });
+
+  app.put("/api/pharmacy/suppliers/:id", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const id = Number(req.params.id);
+      const { name, contactPerson, phone, email, address, paymentTerms, leadTimeDays, notes } = req.body;
+      const [row] = await db.update(pharmacySuppliers)
+        .set({ name, contactPerson, phone, email, address, paymentTerms, leadTimeDays: leadTimeDays || null, notes })
+        .where(and(eq(pharmacySuppliers.id, id), eq(pharmacySuppliers.clinicId, clinicId)))
+        .returning();
+      if (!row) return res.status(404).json({ message: "Supplier not found" });
+      res.json(row);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to update supplier" });
+    }
+  });
+
+  app.delete("/api/pharmacy/suppliers/:id", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      await db.update(pharmacySuppliers)
+        .set({ isActive: false })
+        .where(and(eq(pharmacySuppliers.id, Number(req.params.id)), eq(pharmacySuppliers.clinicId, clinicId)));
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to delete supplier" });
+    }
+  });
+
+  // ── PHARMACY: RETURNS ─────────────────────────────────────────────────────
+
+  app.get("/api/pharmacy/returns", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const rows = await db.select().from(pharmacyReturns)
+        .where(eq(pharmacyReturns.clinicId, clinicId))
+        .orderBy(desc(pharmacyReturns.createdAt))
+        .limit(100);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch returns" });
+    }
+  });
+
+  app.post("/api/pharmacy/returns", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { originalBillId, patientName, patientPhone, items, totalAmount, refundMethod, reason } = req.body;
+      if (!items?.length) return res.status(400).json({ message: "No items to return" });
+      const record = await db.transaction(async (tx) => {
+        for (const item of (items as any[])) {
+          if (!item.medicineId) continue;
+          await tx.update(medicines)
+            .set({ stockQty: sql`${medicines.stockQty} + ${item.qty}` })
+            .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
+        }
+        const [row] = await tx.insert(pharmacyReturns)
+          .values({ clinicId, originalBillId: originalBillId || null, patientName, patientPhone, items, totalAmount, refundMethod, reason })
+          .returning();
+        return row!;
+      });
+      res.json(record);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to process return" });
+    }
+  });
+
+  // ── PHARMACY: WASTAGE ─────────────────────────────────────────────────────
+
+  app.get("/api/pharmacy/wastage", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const rows = await db.select().from(wastageRecords)
+        .where(eq(wastageRecords.clinicId, clinicId))
+        .orderBy(desc(wastageRecords.createdAt))
+        .limit(100);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch wastage records" });
+    }
+  });
+
+  app.post("/api/pharmacy/wastage", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { medicineId, medicineName, batchNo, qty, unit, costPrice, reason, notes } = req.body;
+      if (!medicineName) return res.status(400).json({ message: "Medicine name is required" });
+      if (!qty || qty <= 0) return res.status(400).json({ message: "Quantity must be greater than 0" });
+      const totalCost = Math.round((costPrice || 0) * qty);
+      const record = await db.transaction(async (tx) => {
+        if (medicineId) {
+          const [med] = await tx.select({ stockQty: medicines.stockQty })
+            .from(medicines)
+            .where(and(eq(medicines.id, Number(medicineId)), eq(medicines.clinicId, clinicId)));
+          if (!med) throw new Error("Medicine not found");
+          if (med.stockQty < qty) throw Object.assign(new Error(`Insufficient stock (${med.stockQty} available)`), { isStockError: true });
+          await tx.update(medicines)
+            .set({ stockQty: sql`${medicines.stockQty} - ${qty}` })
+            .where(and(eq(medicines.id, Number(medicineId)), eq(medicines.clinicId, clinicId)));
+        }
+        const [row] = await tx.insert(wastageRecords)
+          .values({ clinicId, medicineId: medicineId ? Number(medicineId) : null, medicineName, batchNo: batchNo || null, qty, unit: unit || "Strip", costPrice: costPrice || 0, totalCost, reason: reason || "expired", notes: notes || null })
+          .returning();
+        return row!;
+      });
+      res.json(record);
+    } catch (err: any) {
+      if (err?.isStockError) return res.status(400).json({ message: err.message });
+      res.status(400).json({ message: err?.message || "Failed to log wastage" });
+    }
+  });
+
+  // ── PHARMACY: DAILY CLOSING ───────────────────────────────────────────────
+
+  app.get("/api/pharmacy/closing/today", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+      // IST-aware date string
+      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+      const todayStr = istNow.toISOString().split("T")[0];
+
+      const [dayBills, dayReturns, existing] = await Promise.all([
+        db.select({ paymentMethod: pharmacyBills.paymentMethod, totalAmount: pharmacyBills.totalAmount })
+          .from(pharmacyBills)
+          .where(and(eq(pharmacyBills.clinicId, clinicId), gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd))),
+        db.select({ totalAmount: pharmacyReturns.totalAmount })
+          .from(pharmacyReturns)
+          .where(and(eq(pharmacyReturns.clinicId, clinicId), gte(pharmacyReturns.createdAt, todayStart), lte(pharmacyReturns.createdAt, todayEnd))),
+        db.select().from(dailyClosings)
+          .where(and(eq(dailyClosings.clinicId, clinicId), eq(dailyClosings.closingDate, todayStr))),
+      ]);
+
+      const cashExpected = dayBills.filter(b => (b.paymentMethod || "cash") === "cash").reduce((s, b) => s + b.totalAmount, 0);
+      const upiTotal = dayBills.filter(b => b.paymentMethod === "upi").reduce((s, b) => s + b.totalAmount, 0);
+      const cardTotal = dayBills.filter(b => b.paymentMethod === "card").reduce((s, b) => s + b.totalAmount, 0);
+      const onlineTotal = dayBills.filter(b => b.paymentMethod === "online").reduce((s, b) => s + b.totalAmount, 0);
+      const totalSales = dayBills.reduce((s, b) => s + b.totalAmount, 0);
+      const totalReturns = dayReturns.reduce((s, r) => s + r.totalAmount, 0);
+
+      res.json({
+        date: todayStr,
+        cashExpected, upiTotal, cardTotal, onlineTotal,
+        totalSales, totalReturns, netSales: totalSales - totalReturns,
+        billCount: dayBills.length,
+        existingClosing: existing[0] || null,
+      });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch today's summary" });
+    }
+  });
+
+  app.get("/api/pharmacy/closing", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const rows = await db.select().from(dailyClosings)
+        .where(eq(dailyClosings.clinicId, clinicId))
+        .orderBy(desc(dailyClosings.closingDate))
+        .limit(30);
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch closing records" });
+    }
+  });
+
+  app.post("/api/pharmacy/closing", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const { closingDate, cashExpected, cashActual, upiTotal, cardTotal, onlineTotal, totalSales, totalReturns, notes } = req.body;
+      const [row] = await db.insert(dailyClosings)
+        .values({ clinicId, closingDate, cashExpected, cashActual, upiTotal, cardTotal, onlineTotal, totalSales, totalReturns, notes: notes || null })
+        .onConflictDoUpdate({
+          target: [dailyClosings.clinicId, dailyClosings.closingDate],
+          set: { cashExpected, cashActual, upiTotal, cardTotal, onlineTotal, totalSales, totalReturns, notes: notes || null },
+        })
+        .returning();
+      res.json(row);
+    } catch (err: any) {
+      res.status(400).json({ message: err?.message || "Failed to save closing" });
+    }
+  });
+
+  // ── PHARMACY: GST EXPORT ──────────────────────────────────────────────────
+
+  app.get("/api/pharmacy/gst-export", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      const [year, mon] = month.split("-").map(Number);
+      const from = new Date(year, mon - 1, 1);
+      const to = new Date(year, mon, 0, 23, 59, 59, 999);
+
+      const [billRows, medRows] = await Promise.all([
+        db.select({ items: pharmacyBills.items })
+          .from(pharmacyBills)
+          .where(and(eq(pharmacyBills.clinicId, clinicId), gte(pharmacyBills.createdAt, from), lte(pharmacyBills.createdAt, to))),
+        db.select({ id: medicines.id, hsnCode: medicines.hsnCode })
+          .from(medicines)
+          .where(eq(medicines.clinicId, clinicId)),
+      ]);
+
+      const hsnByMedId = new Map(medRows.map(m => [m.id, m.hsnCode || ""]));
+
+      type HsnEntry = { hsnCode: string; gstRate: number; qty: number; taxableValue: number; gstAmount: number; total: number };
+      const hsnMap = new Map<string, HsnEntry>();
+
+      for (const bill of billRows) {
+        for (const item of (bill.items as any[])) {
+          const hsn = hsnByMedId.get(item.medicineId) || item.hsnCode || "N/A";
+          const gstRate = item.gstPercent ?? 0;
+          const key = `${hsn}_${gstRate}`;
+          const itemTotal = item.total ?? 0;
+          const gstAmt = item.gstAmount ?? 0;
+          const taxable = itemTotal - gstAmt;
+          if (!hsnMap.has(key)) hsnMap.set(key, { hsnCode: hsn, gstRate, qty: 0, taxableValue: 0, gstAmount: 0, total: 0 });
+          const e = hsnMap.get(key)!;
+          e.qty += item.qty ?? 1;
+          e.taxableValue += taxable;
+          e.gstAmount += gstAmt;
+          e.total += itemTotal;
+        }
+      }
+
+      const rows = Array.from(hsnMap.values()).sort((a, b) => a.hsnCode.localeCompare(b.hsnCode));
+      const csvLines = [
+        "HSN Code,GST Rate (%),Total Qty,Taxable Value (Rs),GST Amount (Rs),Invoice Total (Rs),CGST (Rs),SGST (Rs)",
+        ...rows.map(r => {
+          const cgst = Math.round(r.gstAmount / 2);
+          const sgst = r.gstAmount - cgst;
+          return [r.hsnCode, r.gstRate, r.qty, (r.taxableValue / 100).toFixed(2), (r.gstAmount / 100).toFixed(2), (r.total / 100).toFixed(2), (cgst / 100).toFixed(2), (sgst / 100).toFixed(2)].join(",");
+        }),
+      ].join("\n");
+
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="gst-report-${month}.csv"`);
+      res.send(csvLines);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to generate GST export" });
+    }
+  });
+
+  // ── PHARMACY: CONSUMPTION RATES ───────────────────────────────────────────
+
+  app.get("/api/pharmacy/consumption", requireAuth, async (req, res) => {
+    try {
+      const clinicId = req.session.clinicId!;
+      const from = new Date(Date.now() - 30 * 86400000);
+      const billRows = await db.select({ items: pharmacyBills.items })
+        .from(pharmacyBills)
+        .where(and(eq(pharmacyBills.clinicId, clinicId), gte(pharmacyBills.createdAt, from)));
+
+      const qtyMap = new Map<number, number>();
+      for (const bill of billRows) {
+        for (const item of (bill.items as any[])) {
+          if (!item.medicineId) continue;
+          qtyMap.set(item.medicineId, (qtyMap.get(item.medicineId) || 0) + (item.qty || 0));
+        }
+      }
+      const result = Array.from(qtyMap.entries()).map(([medicineId, totalQty30d]) => ({
+        medicineId,
+        totalQty30d,
+        dailyRate: Math.round((totalQty30d / 30) * 10) / 10,
+      }));
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch consumption data" });
     }
   });
 

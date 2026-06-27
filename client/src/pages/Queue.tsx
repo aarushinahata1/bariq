@@ -811,15 +811,31 @@ export default function Queue() {
 
   // SSE: live queue updates when doctor marks patient as consulted.
   // Skip invalidation if a drag-reorder is in-flight to avoid overwriting the local state.
+  // Auto-reconnects on error with a 5-second delay so live updates survive transient drops.
   useEffect(() => {
     if (!selectedDoctor) return;
-    const es = new EventSource(`/api/sse/doctor/${selectedDoctor}`);
-    es.onmessage = (e) => {
-      if (e.data === "connected") return;
-      if (reorderTimeoutRef.current || isPersistingRef.current) return;
-      queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
+    let es: EventSource;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`/api/sse/doctor/${selectedDoctor}`);
+      es.onmessage = (e) => {
+        if (e.data === "connected") return;
+        if (reorderTimeoutRef.current || isPersistingRef.current) return;
+        queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
+      };
+      es.onerror = () => {
+        es.close();
+        reconnectTimer = setTimeout(connect, 5000);
+      };
     };
-    return () => es.close();
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
   }, [selectedDoctor, queryClient]);
 
   useEffect(() => {
@@ -895,10 +911,15 @@ export default function Queue() {
           }
         }
       }
+      // Keep isCheckingIn=true until the mutation resolves so the button stays
+      // disabled for the full duration. Moving setIsCheckingIn(false) to the
+      // mutation callbacks prevents the "finally" block from re-enabling the
+      // button before the payment is actually confirmed.
       updateAppointment.mutate(
         { id: checkInTarget.id, updates: { status: "checked_in" } },
         {
           onSuccess: () => {
+            setIsCheckingIn(false);
             const amountStr = (amountCents / 100).toFixed(0);
             setReceiptData({
               patient: checkInTarget.patient.name,
@@ -912,14 +933,14 @@ export default function Queue() {
             queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
           },
           onError: () => {
+            setIsCheckingIn(false);
             toast({ title: "Error", description: "Failed to check in", variant: "destructive" });
           },
         }
       );
     } catch {
-      toast({ title: "Error", description: "Failed to create bill", variant: "destructive" });
-    } finally {
       setIsCheckingIn(false);
+      toast({ title: "Error", description: "Failed to create bill", variant: "destructive" });
     }
   };
 
@@ -933,6 +954,13 @@ export default function Queue() {
           toast({
             title: "Status Updated",
             description: `Patient marked as ${status.replace("_", " ")}`,
+          });
+        },
+        onError: () => {
+          toast({
+            title: "Error",
+            description: "Failed to update patient status. Please try again.",
+            variant: "destructive",
           });
         },
       }
@@ -1095,10 +1123,9 @@ export default function Queue() {
                           </div>
                         )}
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {format(apt.date instanceof Date ? apt.date : parseISO(apt.date), "h:mm a")}
-                        {apt.reason && <span className="italic"> · {apt.reason}</span>}
-                      </p>
+                      {apt.reason && (
+                        <p className="text-xs text-slate-400 mt-0.5 italic">{apt.reason}</p>
+                      )}
                     </div>
                     <div className="shrink-0 hidden sm:block">
                       <span className={cn(
@@ -1233,7 +1260,7 @@ export default function Queue() {
                   <p className="text-xs text-teal-700">
                     {format(
                       checkInTarget.date instanceof Date ? checkInTarget.date : parseISO(checkInTarget.date),
-                      "h:mm a, MMM d"
+                      "MMM d, yyyy"
                     )}
                   </p>
                 </div>

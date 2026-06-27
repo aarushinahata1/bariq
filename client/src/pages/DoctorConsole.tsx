@@ -541,16 +541,31 @@ export default function DoctorConsole() {
     queryFn: () => fetch("/api/settings/clinicProfile", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
   });
 
-  // SSE for real-time updates
+  // SSE for real-time updates — auto-reconnects on drop (Render 30s proxy timeout, etc.)
   useEffect(() => {
     if (!selectedDoctorId) return;
-    const es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
-    es.onmessage = (e) => {
-      if (e.data === "connected") return;
-      queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
+    let es: EventSource;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
+      es.onmessage = (e) => {
+        if (e.data === "connected") return;
+        queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
+      };
+      es.onerror = () => {
+        es.close();
+        reconnectTimer = setTimeout(connect, 5000);
+      };
     };
-    return () => es.close();
-  }, [selectedDoctorId]);
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [selectedDoctorId, queryClient]);
 
   // Prescription state
   const appt = consoleData?.currentAppointment;
@@ -628,9 +643,13 @@ export default function DoctorConsole() {
       try { await savePrescription.mutateAsync(); } catch {}
       setRxSaving(false);
     }
-    await updateAppointment.mutateAsync({ id: appt.id, updates: { status: "completed" } });
-    toast({ title: "Consultation completed", description: "Patient marked as done." });
-    queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
+    try {
+      await updateAppointment.mutateAsync({ id: appt.id, updates: { status: "completed" } });
+      toast({ title: "Consultation completed", description: "Patient marked as done." });
+      queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
+    } catch {
+      toast({ title: "Error", description: "Failed to complete consultation. Please try again.", variant: "destructive" });
+    }
   };
 
   const printPrescription = () => {

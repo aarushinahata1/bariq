@@ -241,6 +241,81 @@ export const pharmacyBills = pgTable("pharmacy_bills", {
   clinicDateIdx: index("pharmacy_bills_clinic_date_idx").on(t.clinicId, t.createdAt),
 }));
 
+// ── Pharmacy: Suppliers ───────────────────────────────────────────────────────
+
+export const pharmacySuppliers = pgTable("pharmacy_suppliers", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  name: text("name").notNull(),
+  contactPerson: text("contact_person"),
+  phone: text("phone"),
+  email: text("email"),
+  address: text("address"),
+  paymentTerms: text("payment_terms"),
+  leadTimeDays: integer("lead_time_days"),
+  notes: text("notes"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("pharmacy_suppliers_clinic_id_idx").on(t.clinicId),
+}));
+
+// ── Pharmacy: Returns ─────────────────────────────────────────────────────────
+
+export const pharmacyReturns = pgTable("pharmacy_returns", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  originalBillId: integer("original_bill_id").references(() => pharmacyBills.id, { onDelete: "set null" }),
+  patientName: text("patient_name"),
+  patientPhone: text("patient_phone"),
+  items: jsonb("items").notNull().default([]),
+  totalAmount: integer("total_amount").notNull().default(0),
+  refundMethod: text("refund_method").default("cash"),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("pharmacy_returns_clinic_id_idx").on(t.clinicId),
+}));
+
+// ── Pharmacy: Wastage / Write-offs ────────────────────────────────────────────
+
+export const wastageRecords = pgTable("wastage_records", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  medicineId: integer("medicine_id").references(() => medicines.id, { onDelete: "set null" }),
+  medicineName: text("medicine_name").notNull(),
+  batchNo: text("batch_no"),
+  qty: integer("qty").notNull(),
+  unit: text("unit").notNull(),
+  costPrice: integer("cost_price").notNull().default(0),
+  totalCost: integer("total_cost").notNull().default(0),
+  reason: text("reason").notNull().default("expired"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("wastage_records_clinic_id_idx").on(t.clinicId),
+}));
+
+// ── Pharmacy: Daily Cash Closing ──────────────────────────────────────────────
+
+export const dailyClosings = pgTable("daily_closings", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  closingDate: date("closing_date").notNull(),
+  cashExpected: integer("cash_expected").notNull().default(0),
+  cashActual: integer("cash_actual").notNull().default(0),
+  upiTotal: integer("upi_total").notNull().default(0),
+  cardTotal: integer("card_total").notNull().default(0),
+  onlineTotal: integer("online_total").notNull().default(0),
+  totalSales: integer("total_sales").notNull().default(0),
+  totalReturns: integer("total_returns").notNull().default(0),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("daily_closings_clinic_id_idx").on(t.clinicId),
+  dateUniq: uniqueIndex("daily_closings_clinic_date_unique").on(t.clinicId, t.closingDate),
+}));
+
 // ── Relations ─────────────────────────────────────────────────────────────────
 
 export const clinicsRelations = relations(clinics, ({ many }) => ({
@@ -356,3 +431,7 @@ export type Medicine = typeof medicines.$inferSelect;
 export type InsertMedicine = z.infer<typeof insertMedicineSchema>;
 export type PharmacyBill = typeof pharmacyBills.$inferSelect;
 export type InsertPharmacyBill = z.infer<typeof insertPharmacyBillSchema>;
+export type PharmacySupplier = typeof pharmacySuppliers.$inferSelect;
+export type PharmacyReturn = typeof pharmacyReturns.$inferSelect;
+export type WastageRecord = typeof wastageRecords.$inferSelect;
+export type DailyClosing = typeof dailyClosings.$inferSelect;

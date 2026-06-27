@@ -60,7 +60,7 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
 
   const onSubmit = (data: RescheduleFormValues) => {
     const [y, mo, d] = data.date.split("-").map(Number);
-    const appointmentDate = new Date(y, mo - 1, d, 9, 0);
+    const appointmentDate = new Date(y, mo - 1, d);
 
     updateAppointment.mutate({
       id: appointment.id,
@@ -107,6 +107,7 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
                   <FormControl>
                     <Input type="date" {...field} min={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-11" />
                   </FormControl>
+                  <FormMessage />
                 </FormItem>
               )}
             />
@@ -732,7 +733,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         finalReason = `EMERGENCY: ${data.reason}`;
       } else {
         const [y, mo, d] = data.date.split('-').map(Number);
-        appointmentDate = new Date(y, mo - 1, d, 9, 0);
+        appointmentDate = new Date(y, mo - 1, d);
       }
 
       createAppointment.mutate({

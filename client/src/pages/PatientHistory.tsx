@@ -1023,6 +1023,8 @@ export default function PatientHistory() {
                                   if (res.ok) {
                                     queryClient.invalidateQueries({ queryKey: ["/api/bills", { patientId }] });
                                     toast({ title: "Marked as paid" });
+                                  } else {
+                                    toast({ title: "Error", description: "Failed to mark bill as paid", variant: "destructive" });
                                   }
                                 }}
                                 className="px-2 py-0.5 rounded-lg bg-yellow-200 text-yellow-800 font-semibold hover:bg-yellow-300 transition-colors whitespace-nowrap"

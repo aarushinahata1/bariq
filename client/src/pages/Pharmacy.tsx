@@ -18,9 +18,10 @@ import {
   ChevronRight, RefreshCw, BarChart2, Clock, CheckCircle,
   PackagePlus, FileText, ChevronDown, ChevronUp,
   AlertOctagon, ClipboardList, ListChecks, ArrowUpDown, Truck,
+  RotateCcw, Building2, Banknote, Download, Calendar, Users,
 } from "lucide-react";
 
-type Tab = "dashboard" | "inventory" | "billing" | "bills" | "alerts" | "reorder";
+type Tab = "dashboard" | "inventory" | "billing" | "bills" | "alerts" | "reorder" | "returns" | "wastage" | "suppliers" | "closing";
 
 const CATEGORIES = [
   "General", "Antibiotic", "Analgesic", "Antacid", "Antidiabetic",
@@ -54,6 +55,38 @@ interface PharmacyBill {
 interface Stats {
   totalMedicines: number; lowStockCount: number; expiringSoonCount: number;
   todaySales: number; monthSales: number;
+}
+
+interface PharmacySupplier {
+  id: number; clinicId: number; name: string; contactPerson?: string; phone?: string;
+  email?: string; address?: string; paymentTerms?: string; leadTimeDays?: number;
+  notes?: string; isActive: boolean; createdAt: string;
+}
+
+interface ReturnRecord {
+  id: number; clinicId: number; originalBillId?: number; patientName?: string;
+  patientPhone?: string; items: any[]; totalAmount: number; refundMethod?: string;
+  reason?: string; createdAt: string;
+}
+
+interface WastageEntry {
+  id: number; clinicId: number; medicineId?: number; medicineName: string;
+  batchNo?: string; qty: number; unit: string; costPrice: number; totalCost: number;
+  reason: string; notes?: string; createdAt: string;
+}
+
+interface DailyClosing {
+  id: number; clinicId: number; closingDate: string; cashExpected: number;
+  cashActual: number; upiTotal: number; cardTotal: number; onlineTotal: number;
+  totalSales: number; totalReturns: number; notes?: string; createdAt: string;
+}
+
+interface ConsumptionItem { medicineId: number; totalQty30d: number; dailyRate: number; }
+
+interface TodaySummary {
+  date: string; cashExpected: number; upiTotal: number; cardTotal: number;
+  onlineTotal: number; totalSales: number; totalReturns: number; netSales: number;
+  billCount: number; existingClosing?: DailyClosing | null;
 }
 
 function rupees(paise: number) { return (paise / 100).toFixed(2); }
@@ -1366,6 +1399,817 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
   );
 }
 
+// ── Return Dialog ───────────────────────────────────────────────────────────
+
+function ReturnDialog({ bill, open, onClose }: { bill: PharmacyBill | null; open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [selected, setSelected] = useState<Record<number, number>>({});
+  const [refundMethod, setRefundMethod] = useState("Cash");
+  const [reason, setReason] = useState("");
+
+  useEffect(() => { if (open) { setSelected({}); setRefundMethod("Cash"); setReason(""); } }, [open]);
+
+  const items = (bill?.items as CartItem[]) ?? [];
+
+  function toggle(idx: number, qty: number) {
+    setSelected(prev => {
+      const next = { ...prev };
+      if (next[idx] !== undefined) { delete next[idx]; } else { next[idx] = qty; }
+      return next;
+    });
+  }
+
+  function updateQty(idx: number, v: number) {
+    const max = items[idx]?.qty ?? 1;
+    setSelected(prev => ({ ...prev, [idx]: Math.min(Math.max(1, v), max) }));
+  }
+
+  const returnItems = Object.entries(selected).map(([idx, qty]) => ({
+    ...items[Number(idx)], qty,
+  }));
+  const returnTotal = returnItems.reduce((s, i) => s + Math.round((i.sellingPrice * i.qty) * (1 + (i.gstPercent ?? 0) / 100)), 0);
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      if (!returnItems.length) throw new Error("Select at least one item to return");
+      const r = await fetch("/api/pharmacy/returns", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalBillId: bill?.id,
+          patientName: bill?.patientName,
+          patientPhone: bill?.patientPhone,
+          items: returnItems,
+          totalAmount: returnTotal,
+          refundMethod: refundMethod.toLowerCase(),
+          reason: reason.trim() || null,
+        }),
+        credentials: "include",
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/returns"] });
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/medicines"] });
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/stats"] });
+      toast({ title: "Return processed", description: `₹${rupees(returnTotal)} refunded via ${refundMethod}` });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="sm:max-w-md rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <RotateCcw className="w-4 h-4 text-orange-500" /> Process Return — Bill #{bill?.id}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-1">
+          <p className="text-xs text-slate-500">Select items to return. Stock will be credited back automatically.</p>
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+            {items.map((item, idx) => {
+              const checked = selected[idx] !== undefined;
+              return (
+                <div key={idx} className={cn("flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-colors",
+                  checked ? "border-orange-300 bg-orange-50" : "border-slate-100 bg-slate-50")}>
+                  <input type="checkbox" checked={checked} onChange={() => toggle(idx, item.qty)}
+                    className="w-4 h-4 accent-orange-500 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-800 truncate">{item.name}</p>
+                    <p className="text-xs text-slate-400">Billed qty: {item.qty} {item.unit} · ₹{rupees(item.sellingPrice)}</p>
+                  </div>
+                  {checked && (
+                    <Input type="number" min={1} max={item.qty} value={selected[idx]}
+                      onChange={e => updateQty(idx, parseInt(e.target.value) || 1)}
+                      className="w-16 h-8 rounded-lg text-center text-sm" />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Refund Method</Label>
+            <Select value={refundMethod} onValueChange={setRefundMethod}>
+              <SelectTrigger className="rounded-xl h-10"><SelectValue /></SelectTrigger>
+              <SelectContent>{PAYMENT_METHODS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Reason (optional)</Label>
+            <Input value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. Wrong medicine dispensed"
+              className="rounded-xl h-10" />
+          </div>
+          {returnItems.length > 0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl px-3 py-2 text-sm">
+              <span className="text-orange-700">Refund amount: </span>
+              <span className="font-bold text-orange-800">₹{rupees(returnTotal)}</span>
+              <span className="text-orange-500 text-xs ml-1">({returnItems.length} item{returnItems.length > 1 ? "s" : ""})</span>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1 rounded-xl h-10" onClick={onClose}>Cancel</Button>
+            <Button
+              className="flex-1 rounded-xl h-10 bg-orange-500 hover:bg-orange-600"
+              onClick={() => submit.mutate()}
+              disabled={submit.isPending || !returnItems.length}
+            >
+              {submit.isPending ? <RefreshCw className="w-4 h-4 animate-spin mr-1.5" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}
+              Process Return
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Wastage Dialog ──────────────────────────────────────────────────────────
+
+function WastageDialog({ medicines, open, onClose }: { medicines: Medicine[]; open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [medId, setMedId] = useState("");
+  const [qty, setQty] = useState("");
+  const [reason, setReason] = useState("expired");
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => { if (open) { setMedId(""); setQty(""); setReason("expired"); setNotes(""); } }, [open]);
+
+  const selectedMed = medicines.find(m => m.id === Number(medId));
+
+  const submit = useMutation({
+    mutationFn: async () => {
+      const n = parseInt(qty);
+      if (!selectedMed) throw new Error("Select a medicine");
+      if (!n || n <= 0) throw new Error("Enter a valid quantity");
+      const r = await fetch("/api/pharmacy/wastage", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          medicineId: selectedMed.id,
+          medicineName: selectedMed.name,
+          batchNo: selectedMed.batchNo || null,
+          qty: n,
+          unit: selectedMed.unit,
+          costPrice: selectedMed.costPrice,
+          reason,
+          notes: notes.trim() || null,
+        }),
+        credentials: "include",
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/wastage"] });
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/medicines"] });
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/stats"] });
+      toast({ title: "Wastage logged", description: `${qty} ${selectedMed?.unit}s of ${selectedMed?.name} written off` });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const totalLoss = selectedMed && parseInt(qty) > 0 ? Math.round(selectedMed.costPrice * parseInt(qty)) : null;
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="sm:max-w-sm rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="text-base flex items-center gap-2">
+            <Trash2 className="w-4 h-4 text-red-500" /> Log Wastage / Write-off
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 pt-1">
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Medicine *</Label>
+            <Select value={medId} onValueChange={setMedId}>
+              <SelectTrigger className="rounded-xl h-10"><SelectValue placeholder="Select medicine…" /></SelectTrigger>
+              <SelectContent>
+                {medicines.map(m => (
+                  <SelectItem key={m.id} value={String(m.id)}>
+                    {m.name} ({m.stockQty} {m.unit}s)
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {selectedMed && (
+            <div className="bg-slate-50 rounded-xl px-3 py-2 text-xs text-slate-500">
+              Batch: {selectedMed.batchNo || "—"} · Cost: ₹{rupees(selectedMed.costPrice)}/{selectedMed.unit}
+              {selectedMed.expiryDate && ` · Exp: ${format(new Date(selectedMed.expiryDate), "MMM yyyy")}`}
+            </div>
+          )}
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Quantity to Write Off *</Label>
+            <Input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)}
+              placeholder="e.g. 10" className="rounded-xl h-10" />
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Reason *</Label>
+            <Select value={reason} onValueChange={setReason}>
+              <SelectTrigger className="rounded-xl h-10"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="expired">Expired</SelectItem>
+                <SelectItem value="damaged">Damaged / Broken</SelectItem>
+                <SelectItem value="recalled">Supplier Recall</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold text-slate-600 mb-1 block">Notes (optional)</Label>
+            <Input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional details…"
+              className="rounded-xl h-10" />
+          </div>
+          {totalLoss !== null && (
+            <div className="bg-red-50 border border-red-100 rounded-xl px-3 py-2 text-sm">
+              <span className="text-red-600">Estimated loss: </span>
+              <span className="font-bold text-red-700">₹{rupees(totalLoss)}</span>
+              <span className="text-red-400 text-xs ml-1">(at cost price)</span>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1 rounded-xl h-10" onClick={onClose}>Cancel</Button>
+            <Button
+              className="flex-1 rounded-xl h-10 bg-red-600 hover:bg-red-700"
+              onClick={() => submit.mutate()}
+              disabled={submit.isPending || !medId || !qty || parseInt(qty) <= 0}
+            >
+              {submit.isPending ? <RefreshCw className="w-4 h-4 animate-spin mr-1.5" /> : <Trash2 className="w-4 h-4 mr-1.5" />}
+              Write Off
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Supplier Dialog ─────────────────────────────────────────────────────────
+
+function SupplierDialog({ supplier, open, onClose }: { supplier?: PharmacySupplier | null; open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const empty = { name: "", contactPerson: "", phone: "", email: "", address: "", paymentTerms: "", leadTimeDays: "", notes: "" };
+  const [form, setForm] = useState(empty);
+
+  useEffect(() => {
+    if (open) {
+      setForm(supplier ? {
+        name: supplier.name, contactPerson: supplier.contactPerson ?? "",
+        phone: supplier.phone ?? "", email: supplier.email ?? "",
+        address: supplier.address ?? "", paymentTerms: supplier.paymentTerms ?? "",
+        leadTimeDays: supplier.leadTimeDays ? String(supplier.leadTimeDays) : "",
+        notes: supplier.notes ?? "",
+      } : empty);
+    }
+  }, [open, supplier]);
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }));
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const body = { ...form, leadTimeDays: form.leadTimeDays ? parseInt(form.leadTimeDays) : null };
+      const url = supplier ? `/api/pharmacy/suppliers/${supplier.id}` : "/api/pharmacy/suppliers";
+      const r = await fetch(url, {
+        method: supplier ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body), credentials: "include",
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/suppliers"] });
+      toast({ title: supplier ? "Supplier updated" : "Supplier added" });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const fld = (label: string, key: string, opts?: { placeholder?: string; type?: string }) => (
+    <div>
+      <Label className="text-xs font-semibold text-slate-600 mb-1 block">{label}</Label>
+      <Input type={opts?.type ?? "text"} value={(form as any)[key]} onChange={e => set(key, e.target.value)}
+        placeholder={opts?.placeholder} className="rounded-xl h-10" />
+    </div>
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="sm:max-w-md rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>{supplier ? "Edit Supplier" : "Add Supplier"}</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className="col-span-2">{fld("Company / Supplier Name *", "name", { placeholder: "e.g. Cipla Distributors Pvt Ltd" })}</div>
+          {fld("Contact Person", "contactPerson", { placeholder: "e.g. Ramesh Kumar" })}
+          {fld("Phone", "phone", { placeholder: "e.g. 9876543210" })}
+          {fld("Email", "email", { placeholder: "orders@cipladist.com" })}
+          {fld("Lead Time (days)", "leadTimeDays", { type: "number", placeholder: "e.g. 3" })}
+          {fld("Payment Terms", "paymentTerms", { placeholder: "e.g. Net 30" })}
+          <div className="col-span-2">{fld("Address", "address", { placeholder: "Full address…" })}</div>
+          <div className="col-span-2">{fld("Notes", "notes", { placeholder: "Any special instructions…" })}</div>
+        </div>
+        <div className="flex gap-2 pt-2">
+          <Button variant="outline" className="flex-1 rounded-xl" onClick={onClose}>Cancel</Button>
+          <Button className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-700"
+            onClick={() => save.mutate()} disabled={save.isPending || !form.name.trim()}>
+            {save.isPending ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : null}
+            {supplier ? "Save Changes" : "Add Supplier"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Suppliers Tab ───────────────────────────────────────────────────────────
+
+function SuppliersTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [dialog, setDialog] = useState<{ open: boolean; supplier?: PharmacySupplier | null }>({ open: false });
+
+  const { data: suppliers = [] } = useQuery<PharmacySupplier[]>({
+    queryKey: ["/api/pharmacy/suppliers"],
+    queryFn: () => fetch("/api/pharmacy/suppliers", { credentials: "include" }).then(r => r.json()),
+  });
+
+  const deleteSupplier = useMutation({
+    mutationFn: (id: number) => fetch(`/api/pharmacy/suppliers/${id}`, { method: "DELETE", credentials: "include" }).then(r => r.json()),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/pharmacy/suppliers"] }); toast({ title: "Supplier removed" }); },
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-slate-800">Suppliers</h3>
+          <p className="text-xs text-slate-400 mt-0.5">{suppliers.length} active supplier{suppliers.length !== 1 ? "s" : ""}</p>
+        </div>
+        <Button onClick={() => setDialog({ open: true })} className="rounded-xl bg-violet-600 hover:bg-violet-700 gap-2 h-9">
+          <Plus className="w-4 h-4" /> Add Supplier
+        </Button>
+      </div>
+
+      {suppliers.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center bg-white rounded-2xl border border-slate-100">
+          <div className="w-14 h-14 bg-violet-50 rounded-full flex items-center justify-center mb-3">
+            <Building2 className="w-7 h-7 text-violet-300" />
+          </div>
+          <p className="font-semibold text-slate-600 mb-1">No suppliers yet</p>
+          <p className="text-xs text-slate-400">Add your medicine distributors and vendors here</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[600px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-4 py-3 text-left font-semibold">Supplier</th>
+                  <th className="px-4 py-3 text-left font-semibold">Contact</th>
+                  <th className="px-4 py-3 text-left font-semibold">Phone</th>
+                  <th className="px-4 py-3 text-left font-semibold">Lead Time</th>
+                  <th className="px-4 py-3 text-left font-semibold">Payment Terms</th>
+                  <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {suppliers.map(s => (
+                  <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-900">{s.name}</p>
+                      {s.email && <p className="text-xs text-slate-400">{s.email}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{s.contactPerson || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3 text-slate-600">{s.phone || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3 text-slate-600">{s.leadTimeDays ? `${s.leadTimeDays} days` : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3 text-slate-600">{s.paymentTerms || <span className="text-slate-300">—</span>}</td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => setDialog({ open: true, supplier: s })}
+                          className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <button className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="rounded-2xl">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Remove supplier?</AlertDialogTitle>
+                              <AlertDialogDescription>This will remove <span className="font-semibold">{s.name}</span> from your supplier list.</AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => deleteSupplier.mutate(s.id)} className="rounded-xl bg-red-600 hover:bg-red-700">Remove</AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <SupplierDialog open={dialog.open} supplier={dialog.supplier} onClose={() => setDialog({ open: false })} />
+    </div>
+  );
+}
+
+// ── Wastage Tab ─────────────────────────────────────────────────────────────
+
+function WastageTab({ medicines }: { medicines: Medicine[] }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const { data: records = [] } = useQuery<WastageEntry[]>({
+    queryKey: ["/api/pharmacy/wastage"],
+    queryFn: () => fetch("/api/pharmacy/wastage", { credentials: "include" }).then(r => r.json()),
+  });
+
+  const totalLoss = records.reduce((s, r) => s + r.totalCost, 0);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-slate-800">Write-offs & Wastage</h3>
+          <p className="text-xs text-slate-400 mt-0.5">Total cost of wastage: ₹{rupees(totalLoss)}</p>
+        </div>
+        <Button onClick={() => setDialogOpen(true)} className="rounded-xl bg-red-600 hover:bg-red-700 gap-2 h-9">
+          <Plus className="w-4 h-4" /> Log Wastage
+        </Button>
+      </div>
+
+      {records.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center bg-white rounded-2xl border border-slate-100">
+          <div className="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center mb-3">
+            <CheckCircle className="w-7 h-7 text-green-300" />
+          </div>
+          <p className="font-semibold text-slate-600 mb-1">No wastage recorded</p>
+          <p className="text-xs text-slate-400">Log expired or damaged stock here for accounting purposes</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[600px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-4 py-3 text-left font-semibold">Medicine</th>
+                  <th className="px-4 py-3 text-left font-semibold">Reason</th>
+                  <th className="px-4 py-3 text-right font-semibold">Qty</th>
+                  <th className="px-4 py-3 text-right font-semibold">Cost Loss</th>
+                  <th className="px-4 py-3 text-left font-semibold">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {records.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-800">{r.medicineName}</p>
+                      {r.batchNo && <p className="text-xs text-slate-400">Batch: {r.batchNo}</p>}
+                      {r.notes && <p className="text-xs text-slate-400 italic">{r.notes}</p>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold capitalize",
+                        r.reason === "expired" ? "bg-red-100 text-red-700" :
+                        r.reason === "damaged" ? "bg-orange-100 text-orange-700" :
+                        r.reason === "recalled" ? "bg-purple-100 text-purple-700" :
+                        "bg-slate-100 text-slate-600")}
+                      >{r.reason}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-700">{r.qty} {r.unit}s</td>
+                    <td className="px-4 py-3 text-right font-bold text-red-600">₹{rupees(r.totalCost)}</td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">{format(new Date(r.createdAt), "dd MMM yyyy, h:mm a")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between">
+            <p className="text-xs text-slate-400">{records.length} record{records.length !== 1 ? "s" : ""}</p>
+            <p className="text-xs font-semibold text-red-600">Total loss: ₹{rupees(totalLoss)}</p>
+          </div>
+        </div>
+      )}
+
+      <WastageDialog medicines={medicines} open={dialogOpen} onClose={() => setDialogOpen(false)} />
+    </div>
+  );
+}
+
+// ── Returns Tab ─────────────────────────────────────────────────────────────
+
+function ReturnsTab({ bills, settings }: { bills: PharmacyBill[]; settings?: Record<string, any> }) {
+  const [returnBill, setReturnBill] = useState<PharmacyBill | null>(null);
+  const [search, setSearch] = useState("");
+
+  const { data: returns = [] } = useQuery<ReturnRecord[]>({
+    queryKey: ["/api/pharmacy/returns"],
+    queryFn: () => fetch("/api/pharmacy/returns", { credentials: "include" }).then(r => r.json()),
+  });
+
+  const totalRefunded = returns.reduce((s, r) => s + r.totalAmount, 0);
+
+  const filteredBills = useMemo(() => {
+    if (!search.trim()) return bills.slice(0, 20);
+    const q = search.toLowerCase();
+    return bills.filter(b =>
+      String(b.id).includes(q) ||
+      (b.patientName || "").toLowerCase().includes(q) ||
+      (b.patientPhone || "").includes(q)
+    ).slice(0, 20);
+  }, [bills, search]);
+
+  return (
+    <div className="space-y-6">
+      {/* Summary */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white rounded-2xl border border-slate-100 p-4">
+          <p className="text-xs text-slate-500 mb-1">Total Returns</p>
+          <p className="text-2xl font-black text-orange-600">{returns.length}</p>
+        </div>
+        <div className="bg-white rounded-2xl border border-slate-100 p-4">
+          <p className="text-xs text-slate-500 mb-1">Total Refunded</p>
+          <p className="text-2xl font-black text-orange-600">₹{rupees(totalRefunded)}</p>
+        </div>
+      </div>
+
+      {/* Select a bill to return from */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
+        <h3 className="font-semibold text-slate-800 text-sm">Process a Return</h3>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input placeholder="Search bill # or patient name…" value={search} onChange={e => setSearch(e.target.value)}
+            className="pl-9 rounded-xl h-10" />
+        </div>
+        <div className="space-y-1.5 max-h-56 overflow-y-auto">
+          {filteredBills.map(b => (
+            <div key={b.id} className="flex items-center justify-between px-3 py-2.5 rounded-xl bg-slate-50 border border-slate-100">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">#{b.id} — {b.patientName || "Walk-in"}</p>
+                <p className="text-xs text-slate-400">
+                  {format(new Date(b.createdAt), "dd MMM yyyy, h:mm a")} · {(b.items as any[]).length} items · ₹{rupees(b.totalAmount)}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setReturnBill(b)}
+                className="h-8 px-3 rounded-lg text-xs border-orange-300 text-orange-600 hover:bg-orange-50 gap-1">
+                <RotateCcw className="w-3 h-3" /> Return
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Return history */}
+      {returns.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h3 className="font-semibold text-slate-800 text-sm">Return History</h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[550px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-4 py-3 text-left font-semibold">Return #</th>
+                  <th className="px-4 py-3 text-left font-semibold">Patient</th>
+                  <th className="px-4 py-3 text-left font-semibold">Original Bill</th>
+                  <th className="px-4 py-3 text-right font-semibold">Refunded</th>
+                  <th className="px-4 py-3 text-left font-semibold">Method</th>
+                  <th className="px-4 py-3 text-left font-semibold">Date</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {returns.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 font-mono font-semibold text-orange-600">R#{r.id}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-800">{r.patientName || "Walk-in"}</p>
+                      {r.patientPhone && <p className="text-xs text-slate-400">{r.patientPhone}</p>}
+                    </td>
+                    <td className="px-4 py-3 text-slate-500">{r.originalBillId ? `#${r.originalBillId}` : "—"}</td>
+                    <td className="px-4 py-3 text-right font-bold text-orange-600">₹{rupees(r.totalAmount)}</td>
+                    <td className="px-4 py-3 capitalize">
+                      <span className="px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 text-xs font-semibold">{r.refundMethod || "cash"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-slate-500">{format(new Date(r.createdAt), "dd MMM yyyy, h:mm a")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <ReturnDialog bill={returnBill} open={!!returnBill} onClose={() => setReturnBill(null)} />
+    </div>
+  );
+}
+
+// ── Closing Tab ─────────────────────────────────────────────────────────────
+
+function ClosingTab() {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const [cashActual, setCashActual] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const { data: summary, refetch: refetchSummary } = useQuery<TodaySummary>({
+    queryKey: ["/api/pharmacy/closing/today"],
+    queryFn: () => fetch("/api/pharmacy/closing/today", { credentials: "include" }).then(r => r.json()),
+    refetchInterval: 30000,
+  });
+
+  const { data: history = [] } = useQuery<DailyClosing[]>({
+    queryKey: ["/api/pharmacy/closing"],
+    queryFn: () => fetch("/api/pharmacy/closing", { credentials: "include" }).then(r => r.json()),
+  });
+
+  useEffect(() => {
+    if (summary?.existingClosing) {
+      setCashActual(String(summary.existingClosing.cashActual / 100));
+      setNotes(summary.existingClosing.notes ?? "");
+    } else if (summary) {
+      setCashActual(String(summary.cashExpected / 100));
+    }
+  }, [summary?.date]);
+
+  const saveClosing = useMutation({
+    mutationFn: async () => {
+      if (!summary) throw new Error("No summary loaded");
+      const r = await fetch("/api/pharmacy/closing", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          closingDate: summary.date,
+          cashExpected: summary.cashExpected,
+          cashActual: Math.round(parseFloat(cashActual || "0") * 100),
+          upiTotal: summary.upiTotal,
+          cardTotal: summary.cardTotal,
+          onlineTotal: summary.onlineTotal,
+          totalSales: summary.totalSales,
+          totalReturns: summary.totalReturns,
+          notes: notes.trim() || null,
+        }),
+        credentials: "include",
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/closing"] });
+      refetchSummary();
+      toast({ title: "Day closed successfully" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+
+  const cashActualPaise = Math.round(parseFloat(cashActual || "0") * 100);
+  const cashDiff = summary ? cashActualPaise - summary.cashExpected : 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-slate-800">Daily Cash Closing</h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {summary?.date ? format(new Date(summary.date), "dd MMMM yyyy") : "Today"}
+            {summary?.existingClosing && <span className="ml-2 text-green-600 font-semibold">· Closed</span>}
+          </p>
+        </div>
+        <button onClick={() => refetchSummary()} className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors">
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Today's breakdown */}
+      {summary && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: "Cash Sales", value: summary.cashExpected, color: "text-green-700", bg: "bg-green-50" },
+              { label: "UPI Sales", value: summary.upiTotal, color: "text-blue-700", bg: "bg-blue-50" },
+              { label: "Card Sales", value: summary.cardTotal, color: "text-purple-700", bg: "bg-purple-50" },
+              { label: "Online Sales", value: summary.onlineTotal, color: "text-teal-700", bg: "bg-teal-50" },
+            ].map(c => (
+              <div key={c.label} className={cn("rounded-xl p-3 border", c.bg, "border-slate-100")}>
+                <p className="text-xs text-slate-500 mb-1">{c.label}</p>
+                <p className={cn("text-lg font-black", c.color)}>₹{rupees(c.value)}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white rounded-xl border border-slate-100 p-3">
+              <p className="text-xs text-slate-500 mb-1">Gross Sales</p>
+              <p className="text-lg font-black text-slate-800">₹{rupees(summary.totalSales)}</p>
+              <p className="text-[10px] text-slate-400">{summary.billCount} bills</p>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 p-3">
+              <p className="text-xs text-slate-500 mb-1">Returns</p>
+              <p className="text-lg font-black text-orange-600">− ₹{rupees(summary.totalReturns)}</p>
+            </div>
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-3">
+              <p className="text-xs text-slate-500 mb-1">Net Sales</p>
+              <p className="text-lg font-black text-slate-900">₹{rupees(summary.netSales)}</p>
+            </div>
+          </div>
+
+          {/* Cash reconciliation */}
+          <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3">
+            <h4 className="font-semibold text-slate-700 text-sm flex items-center gap-2">
+              <Banknote className="w-4 h-4 text-green-500" /> Cash Reconciliation
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-semibold text-slate-500 mb-1 block">Expected Cash (from bills)</Label>
+                <div className="h-10 rounded-xl bg-slate-50 border border-slate-200 px-3 flex items-center text-sm font-semibold text-slate-700">
+                  ₹{rupees(summary.cashExpected)}
+                </div>
+              </div>
+              <div>
+                <Label className="text-xs font-semibold text-slate-600 mb-1 block">Actual Cash in Drawer *</Label>
+                <Input type="number" value={cashActual} onChange={e => setCashActual(e.target.value)}
+                  placeholder="0.00" className="rounded-xl h-10" />
+              </div>
+            </div>
+            {cashActual && (
+              <div className={cn("px-3 py-2 rounded-xl text-sm font-semibold",
+                cashDiff === 0 ? "bg-green-50 text-green-700" :
+                cashDiff > 0 ? "bg-blue-50 text-blue-700" : "bg-red-50 text-red-700")}>
+                {cashDiff === 0 ? "✓ Cash matches perfectly" :
+                  cashDiff > 0 ? `↑ Excess: ₹${rupees(Math.abs(cashDiff))}` :
+                  `↓ Shortage: ₹${rupees(Math.abs(cashDiff))}`}
+              </div>
+            )}
+            <div>
+              <Label className="text-xs font-semibold text-slate-600 mb-1 block">Notes</Label>
+              <Input value={notes} onChange={e => setNotes(e.target.value)}
+                placeholder="Closing remarks…" className="rounded-xl h-10" />
+            </div>
+            <Button
+              onClick={() => saveClosing.mutate()}
+              disabled={saveClosing.isPending || !cashActual}
+              className="w-full rounded-xl bg-violet-600 hover:bg-violet-700 h-10"
+            >
+              {saveClosing.isPending ? <RefreshCw className="w-4 h-4 animate-spin mr-2" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+              {summary.existingClosing ? "Update Closing" : "Close Day"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* History */}
+      {history.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100">
+            <h4 className="font-semibold text-slate-800 text-sm">Closing History</h4>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[600px]">
+              <thead>
+                <tr className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+                  <th className="px-4 py-2.5 text-left font-semibold">Date</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Gross</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Returns</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Net</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Cash Expected</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Cash Actual</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Diff</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {history.map(c => {
+                  const diff = c.cashActual - c.cashExpected;
+                  return (
+                    <tr key={c.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-semibold text-slate-700">{format(new Date(c.closingDate), "dd MMM yyyy")}</td>
+                      <td className="px-4 py-3 text-right text-slate-700">₹{rupees(c.totalSales)}</td>
+                      <td className="px-4 py-3 text-right text-orange-500">₹{rupees(c.totalReturns)}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-slate-800">₹{rupees(c.totalSales - c.totalReturns)}</td>
+                      <td className="px-4 py-3 text-right text-slate-500">₹{rupees(c.cashExpected)}</td>
+                      <td className="px-4 py-3 text-right text-slate-700">₹{rupees(c.cashActual)}</td>
+                      <td className={cn("px-4 py-3 text-right font-semibold text-xs", diff === 0 ? "text-green-600" : diff > 0 ? "text-blue-600" : "text-red-600")}>
+                        {diff === 0 ? "✓" : diff > 0 ? `+₹${rupees(Math.abs(diff))}` : `-₹${rupees(Math.abs(diff))}`}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Pharmacy Page ──────────────────────────────────────────────────────
 
 export default function Pharmacy() {
@@ -1379,6 +2223,7 @@ export default function Pharmacy() {
   const [billSearch, setBillSearch] = useState("");
   const [billDateFilter, setBillDateFilter] = useState<"all" | "today" | "week" | "month">("all");
   const [medicineDialog, setMedicineDialog] = useState<{ open: boolean; medicine?: Medicine | null; prefill?: Medicine | null }>({ open: false });
+  const [returnBillFromHistory, setReturnBillFromHistory] = useState<PharmacyBill | null>(null);
 
   const { data: settings } = useQuery<Record<string, any>>({ queryKey: ["/api/settings"] });
 
@@ -1399,6 +2244,28 @@ export default function Pharmacy() {
     queryFn: () => fetch("/api/pharmacy/bills", { credentials: "include" }).then(r => r.json()),
     staleTime: 30000,
   });
+
+  const { data: consumption = [] } = useQuery<ConsumptionItem[]>({
+    queryKey: ["/api/pharmacy/consumption"],
+    queryFn: () => fetch("/api/pharmacy/consumption", { credentials: "include" }).then(r => r.json()),
+    staleTime: 60000,
+  });
+
+  const consumptionMap = useMemo(() => {
+    const m = new Map<number, ConsumptionItem>();
+    consumption.forEach(c => m.set(c.medicineId, c));
+    return m;
+  }, [consumption]);
+
+  const [gstMonth, setGstMonth] = useState(() => new Date().toISOString().slice(0, 7));
+
+  function downloadGstExport() {
+    const url = `/api/pharmacy/gst-export?month=${gstMonth}`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `gst-report-${gstMonth}.csv`;
+    a.click();
+  }
 
   const deleteMedicine = useMutation({
     mutationFn: (id: number) =>
@@ -1499,6 +2366,10 @@ export default function Pharmacy() {
               )}
             </TabsTrigger>
             <TabsTrigger value="reorder" className="rounded-lg text-xs gap-1 shrink-0"><ListChecks className="w-3.5 h-3.5" />Reorder</TabsTrigger>
+            <TabsTrigger value="returns" className="rounded-lg text-xs gap-1 shrink-0"><RotateCcw className="w-3.5 h-3.5" />Returns</TabsTrigger>
+            <TabsTrigger value="wastage" className="rounded-lg text-xs gap-1 shrink-0"><Trash2 className="w-3.5 h-3.5" />Wastage</TabsTrigger>
+            <TabsTrigger value="suppliers" className="rounded-lg text-xs gap-1 shrink-0"><Building2 className="w-3.5 h-3.5" />Suppliers</TabsTrigger>
+            <TabsTrigger value="closing" className="rounded-lg text-xs gap-1 shrink-0"><Banknote className="w-3.5 h-3.5" />Closing</TabsTrigger>
           </TabsList>
         </Tabs>
 
@@ -1681,6 +2552,7 @@ export default function Pharmacy() {
                       <th className="px-4 py-3 text-left font-semibold">Medicine</th>
                       <th className="px-4 py-3 text-left font-semibold">Category</th>
                       <th className="px-4 py-3 text-right font-semibold">Stock</th>
+                      <th className="px-4 py-3 text-right font-semibold">Days Left</th>
                       <th className="px-4 py-3 text-right font-semibold">MRP</th>
                       <th className="px-4 py-3 text-left font-semibold">Batch / Expiry</th>
                       <th className="px-4 py-3 text-left font-semibold">Supplier</th>
@@ -1689,11 +2561,13 @@ export default function Pharmacy() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {filteredMedicines.length === 0 ? (
-                      <tr><td colSpan={7} className="text-center text-slate-400 py-12">No medicines found</td></tr>
+                      <tr><td colSpan={8} className="text-center text-slate-400 py-12">No medicines found</td></tr>
                     ) : filteredMedicines.map(m => {
                       const isLow = m.stockQty <= m.minStockQty;
                       const isExpiring = m.expiryDate && m.expiryDate <= new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0] && m.expiryDate >= today;
                       const isExpired = m.expiryDate && m.expiryDate < today;
+                      const cons = consumptionMap.get(m.id);
+                      const daysLeft = cons && cons.dailyRate > 0 ? Math.floor(m.stockQty / cons.dailyRate) : null;
                       return (
                         <tr key={m.id} className="hover:bg-slate-50 transition-colors">
                           <td className="px-4 py-3">
@@ -1709,6 +2583,14 @@ export default function Pharmacy() {
                               {m.stockQty} {m.unit}s
                             </span>
                             {isLow && <p className="text-[10px] text-red-500">Low stock</p>}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {daysLeft !== null ? (
+                              <span className={cn("font-semibold text-xs", daysLeft <= 7 ? "text-red-600" : daysLeft <= 14 ? "text-amber-600" : "text-slate-600")}>
+                                ~{daysLeft}d
+                              </span>
+                            ) : <span className="text-slate-300 text-xs">—</span>}
+                            {cons && <p className="text-[10px] text-slate-400">{cons.dailyRate}/day</p>}
                           </td>
                           <td className="px-4 py-3 text-right font-semibold text-slate-900">₹{rupees(m.sellingPrice)}</td>
                           <td className="px-4 py-3">
@@ -1823,6 +2705,16 @@ export default function Pharmacy() {
                   </button>
                 ))}
               </div>
+              {/* GST Export */}
+              <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 h-10">
+                <Calendar className="w-3.5 h-3.5 text-slate-400" />
+                <input type="month" value={gstMonth} onChange={e => setGstMonth(e.target.value)}
+                  className="text-xs text-slate-600 bg-transparent outline-none" />
+                <button onClick={downloadGstExport}
+                  className="flex items-center gap-1 text-xs font-semibold text-violet-700 hover:text-violet-900 transition-colors ml-1">
+                  <Download className="w-3.5 h-3.5" /> GST
+                </button>
+              </div>
             </div>
 
             <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
@@ -1836,7 +2728,7 @@ export default function Pharmacy() {
                       <th className="px-4 py-3 text-right font-semibold">Items</th>
                       <th className="px-4 py-3 text-right font-semibold">Total</th>
                       <th className="px-4 py-3 text-left font-semibold">Payment</th>
-                      <th className="px-4 py-3 text-right font-semibold">Print</th>
+                      <th className="px-4 py-3 text-right font-semibold">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -1860,15 +2752,24 @@ export default function Pharmacy() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <button
-                            onClick={() => {
-                              const w = window.open("", "_blank");
-                              if (w) { w.document.write(buildBillHtml(b, settings?.clinicProfile)); w.document.close(); }
-                            }}
-                            className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center ml-auto transition-colors"
-                          >
-                            <Printer className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => setReturnBillFromHistory(b)}
+                              title="Process return"
+                              className="w-8 h-8 rounded-lg text-slate-400 hover:text-orange-600 hover:bg-orange-50 flex items-center justify-center transition-colors"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                const w = window.open("", "_blank");
+                                if (w) { w.document.write(buildBillHtml(b, settings?.clinicProfile)); w.document.close(); }
+                              }}
+                              className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -1886,6 +2787,18 @@ export default function Pharmacy() {
             </div>
           </div>
         )}
+
+        {/* ── RETURNS ── */}
+        {tab === "returns" && <ReturnsTab bills={bills} settings={settings} />}
+
+        {/* ── WASTAGE ── */}
+        {tab === "wastage" && <WastageTab medicines={medicines} />}
+
+        {/* ── SUPPLIERS ── */}
+        {tab === "suppliers" && <SuppliersTab />}
+
+        {/* ── CLOSING ── */}
+        {tab === "closing" && <ClosingTab />}
       </div>
 
       <MedicineDialog
@@ -1893,6 +2806,12 @@ export default function Pharmacy() {
         onClose={() => setMedicineDialog({ open: false })}
         medicine={medicineDialog.medicine}
         prefill={medicineDialog.prefill}
+      />
+
+      <ReturnDialog
+        bill={returnBillFromHistory}
+        open={!!returnBillFromHistory}
+        onClose={() => setReturnBillFromHistory(null)}
       />
     </>
   );

@@ -209,8 +209,11 @@ export class DatabaseStorage {
     let conditions: any[] = [eq(appointments.clinicId, this.clinicId)];
 
     if (filters.date) {
-      const startOfDay = new Date(filters.date); startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(filters.date); endOfDay.setHours(23, 59, 59, 999);
+      // Use a fixed 24 h window from the passed timestamp rather than setHours(),
+      // which is server-timezone-dependent.  Callers (routes.ts) are responsible
+      // for passing the correct day-start timestamp (IST midnight for Indian clinics).
+      const startOfDay = new Date(filters.date);
+      const endOfDay = new Date(filters.date.getTime() + 24 * 60 * 60 * 1000 - 1);
       conditions.push(and(gte(appointments.date, startOfDay), lte(appointments.date, endOfDay)));
     }
     if (filters.doctorId) conditions.push(eq(appointments.doctorId, filters.doctorId));
@@ -303,10 +306,13 @@ export class DatabaseStorage {
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
   async getDashboardStats(): Promise<any> {
-    const now = new Date();
-    const today = new Date(now); today.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(now); endOfToday.setHours(23, 59, 59, 999);
-    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - 6); weekStart.setHours(0, 0, 0, 0);
+    const IST_MS = 5.5 * 60 * 60 * 1000;
+    const nowIST = new Date(Date.now() + IST_MS);
+    const s = new Date(nowIST); s.setUTCHours(0, 0, 0, 0);
+    const e = new Date(nowIST); e.setUTCHours(23, 59, 59, 999);
+    const today = new Date(s.getTime() - IST_MS);
+    const endOfToday = new Date(e.getTime() - IST_MS);
+    const weekStart = new Date(today); weekStart.setDate(weekStart.getDate() - 6);
 
     // 5 parallel queries instead of 18 sequential ones
     const [todaysAppts, weekAppts, weekPaidBills, allBills, doctors, sourceCounts] = await Promise.all([
@@ -339,7 +345,7 @@ export class DatabaseStorage {
     const weeklyData = [];
     let totalRevenue = 0;
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(now); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
+      const d = new Date(today); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
       const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
       const dayTs = d.getTime();
       const dEndTs = dEnd.getTime();

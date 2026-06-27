@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer, Smartphone, Wifi, WifiOff, Loader2, Users, Plus, Trash2, Edit2, Pill } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
@@ -425,6 +426,7 @@ function StaffPanel() {
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState({ name: "", email: "", role: "pharmacist", password: "" });
   const [showPw, setShowPw] = useState(false);
+  const [confirmDeleteStaff, setConfirmDeleteStaff] = useState<any>(null);
 
   const { data: staff = [] } = useQuery<any[]>({
     queryKey: ["/api/staff"],
@@ -460,6 +462,7 @@ function StaffPanel() {
       qc.invalidateQueries({ queryKey: ["/api/staff"] });
       toast({ title: "Staff member removed" });
     },
+    onError: () => toast({ title: "Error", description: "Failed to remove staff member", variant: "destructive" }),
   });
 
   return (
@@ -525,7 +528,7 @@ function StaffPanel() {
                 <button onClick={() => openEdit(s)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 flex items-center justify-center transition-colors">
                   <Edit2 className="w-3.5 h-3.5" />
                 </button>
-                <button onClick={() => remove.mutate(s.id)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
+                <button onClick={() => setConfirmDeleteStaff(s)} className="w-8 h-8 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 flex items-center justify-center transition-colors">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -594,6 +597,27 @@ function StaffPanel() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Delete staff confirmation */}
+      <AlertDialog open={!!confirmDeleteStaff} onOpenChange={v => !v && setConfirmDeleteStaff(null)}>
+        <AlertDialogContent className="rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove staff member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove <span className="font-semibold text-slate-800">{confirmDeleteStaff?.name}</span> from your staff. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="rounded-xl bg-red-600 hover:bg-red-700"
+              onClick={() => { remove.mutate(confirmDeleteStaff.id); setConfirmDeleteStaff(null); }}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
