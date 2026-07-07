@@ -15,6 +15,23 @@ export const clinics = pgTable("clinics", {
   planStatus: text("plan_status", { enum: ["trial", "active", "expired", "cancelled"] }).default("trial").notNull(),
   trialEndsAt: timestamp("trial_ends_at"),
   subscriptionEndsAt: timestamp("subscription_ends_at"),
+  partnerId: integer("partner_id").references(() => partners.id),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+});
+
+// ── Partners (referral program) ────────────────────────────────────────────────
+
+export const partners = pgTable("partners", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  email: text("email").unique().notNull(),
+  passwordHash: text("password_hash").notNull(),
+  phone: text("phone"),
+  referralCode: text("referral_code").unique().notNull(),
+  commissionPercent: integer("commission_percent").default(10).notNull(),
+  // New partners start "pending" until a super admin approves them — only then can
+  // their referral code be used to attribute clinics, and their dashboard unlocks.
+  status: text("status", { enum: ["pending", "active", "inactive"] }).default("pending").notNull(),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 });
 
@@ -318,10 +335,15 @@ export const dailyClosings = pgTable("daily_closings", {
 
 // ── Relations ─────────────────────────────────────────────────────────────────
 
-export const clinicsRelations = relations(clinics, ({ many }) => ({
+export const clinicsRelations = relations(clinics, ({ one, many }) => ({
   users: many(users),
   patients: many(patients),
   payments: many(clinicPayments),
+  partner: one(partners, { fields: [clinics.partnerId], references: [partners.id] }),
+}));
+
+export const partnersRelations = relations(partners, ({ many }) => ({
+  clinics: many(clinics),
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -373,6 +395,14 @@ export const insertClinicSchema = z.object({
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().optional(),
   address: z.string().optional(),
+  referralCode: z.string().optional(),
+});
+
+export const insertPartnerSchema = z.object({
+  name: z.string().min(2, "Name required"),
+  email: z.string().email("Valid email required"),
+  password: z.string().min(6, "Password must be at least 6 characters"),
+  phone: z.string().optional(),
 });
 
 export const insertPrescriptionSchema = createInsertSchema(prescriptions).omit({ id: true, createdAt: true });
@@ -399,6 +429,8 @@ export const insertBillSchema = createInsertSchema(bills).omit({ id: true, creat
 
 export type Clinic = typeof clinics.$inferSelect;
 export type ClinicPayment = typeof clinicPayments.$inferSelect;
+export type Partner = typeof partners.$inferSelect;
+export type InsertPartner = z.infer<typeof insertPartnerSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type UpsertUser = typeof users.$inferInsert;

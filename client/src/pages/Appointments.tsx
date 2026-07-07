@@ -56,7 +56,7 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
     if (open) {
       form.reset({ date: format(new Date(appointment.date), "yyyy-MM-dd") });
     }
-  }, [open]);
+  }, [open, appointment]);
 
   const onSubmit = (data: RescheduleFormValues) => {
     const [y, mo, d] = data.date.split("-").map(Number);
@@ -64,7 +64,10 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
 
     updateAppointment.mutate({
       id: appointment.id,
-      updates: { date: appointmentDate.toISOString() }
+      updates: {
+        date: appointmentDate.toISOString(),
+        status: "booked",
+      }
     }, {
       onSuccess: () => {
         toast({ title: "Success", description: "Appointment rescheduled successfully." });

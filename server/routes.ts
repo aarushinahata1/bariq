@@ -6,11 +6,11 @@ import { dirname, join } from "path";
 import { getStorage } from "./storage";
 import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
-import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames, pharmacySuppliers, pharmacyReturns, wastageRecords, dailyClosings } from "@shared/schema";
+import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames, pharmacySuppliers, pharmacyReturns, wastageRecords, dailyClosings, partners } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { setupAuth, requireAuth, requireSuperAdmin } from "./auth";
+import { setupAuth, requireAuth, requireSuperAdmin, requirePartner, requireActivePartner, hashPassword, generateReferralCode } from "./auth";
 import { nanoid } from "nanoid";
 import bcrypt from "bcryptjs";
 
@@ -294,6 +294,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { clinicId: _cid, patientId: _pid, ...updates } = req.body;
       const clinicId = req.session.clinicId!;
 
+      // Drizzle's timestamp columns expect a Date instance, not the ISO string
+      // that comes over the wire as JSON — coerce it or every reschedule 500s.
+      if (updates.date !== undefined) {
+        updates.date = new Date(updates.date);
+      }
+
       // Build set-clause with COALESCE for timestamps so concurrent updates are idempotent:
       // the first writer wins and subsequent writers cannot overwrite an already-set timestamp.
       const setClause: any = { ...updates };
@@ -307,10 +313,53 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         setClause.completedAt = sql`NOW()`;
       }
 
-      const [updated] = await db.update(appointments)
-        .set(setClause)
-        .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)))
-        .returning();
+      let updated: typeof appointments.$inferSelect | undefined;
+
+      if (updates.date !== undefined) {
+        // Rescheduling moves the appointment to a different day's queue, so it needs
+        // a fresh queue number/position/token scoped to that day — otherwise the
+        // patient's token is wiped and never replaced (dead queue link).
+        updated = await db.transaction(async (tx) => {
+          const [existing] = await tx.select().from(appointments)
+            .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)));
+          if (!existing) return undefined;
+
+          const doctorId = existing.doctorId;
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(${clinicId}::int, hashtext(${doctorId})::int)`);
+
+          const dayStart = new Date(updates.date); dayStart.setHours(0, 0, 0, 0);
+          const dayEnd = new Date(updates.date); dayEnd.setHours(23, 59, 59, 999);
+          const [maxRow] = await tx.select({
+            maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
+            maxPos: sql<number>`COALESCE(MAX(${appointments.queuePosition}), 0)::int`,
+          }).from(appointments).where(and(
+            eq(appointments.clinicId, clinicId),
+            eq(appointments.doctorId, doctorId),
+            gte(appointments.date, dayStart),
+            lte(appointments.date, dayEnd),
+          ));
+
+          setClause.queueNumber = (maxRow?.maxNum ?? 0) + 1;
+          setClause.queuePosition = (maxRow?.maxPos ?? 0) + 1;
+          setClause.queueToken = nanoid(8);
+          // Clear stale timing fields from whatever day this appointment was on before
+          if (setClause.checkInTime === undefined) setClause.checkInTime = null;
+          if (setClause.consultationStartTime === undefined) setClause.consultationStartTime = null;
+          if (setClause.completedAt === undefined) setClause.completedAt = null;
+
+          const [row] = await tx.update(appointments)
+            .set(setClause)
+            .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)))
+            .returning();
+          return row;
+        });
+      } else {
+        const [row] = await db.update(appointments)
+          .set(setClause)
+          .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)))
+          .returning();
+        updated = row;
+      }
 
       if (!updated) return res.status(404).json({ message: "Appointment not found" });
 
@@ -323,6 +372,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (updated.doctorId) broadcastQueueUpdate(updated.doctorId);
       res.json(updated);
     } catch (err) {
+      console.error("Failed to update appointment:", err);
       res.status(400).json({ message: "Failed to update appointment" });
     }
   });
@@ -1919,10 +1969,23 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   app.post("/api/payments", requireAuth, async (req, res) => {
     try {
-      const { utr, planType } = req.body;
+      const { utr, planType, referralCode } = req.body;
       if (!utr) return res.status(400).json({ message: "UTR is required" });
       const resolvedPlan = (PLAN_PRICES[planType] ? planType : "monthly") as string;
       const resolvedAmount = PLAN_PRICES[resolvedPlan];
+
+      // Optional referral code entered at payment time — only links if the clinic
+      // isn't already attributed to a partner from signup. Best-effort, never blocks payment.
+      if (referralCode && String(referralCode).trim()) {
+        const [clinic] = await db.select().from(clinics).where(eq(clinics.id, req.session.clinicId!));
+        if (clinic && !clinic.partnerId) {
+          const [partner] = await db.select().from(partners)
+            .where(eq(partners.referralCode, String(referralCode).trim().toUpperCase()));
+          if (partner && partner.status === "active") {
+            await db.update(clinics).set({ partnerId: partner.id }).where(eq(clinics.id, req.session.clinicId!));
+          }
+        }
+      }
 
       // SELECT FOR UPDATE inside a transaction — serializes concurrent submissions so only
       // one pending payment is created even if the user double-clicks or opens two tabs.
@@ -1961,6 +2024,79 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  // ══ PARTNER DASHBOARD ════════════════════════════════════════════════════
+
+  app.get("/api/partner/stats", requireActivePartner, async (req, res) => {
+    try {
+      const partnerId = req.session.partnerId!;
+      const now = new Date();
+      const [partner] = await db.select().from(partners).where(eq(partners.id, partnerId));
+      const rows = await db.select().from(clinics).where(eq(clinics.partnerId, partnerId));
+      const clinicIds = rows.map(c => c.id);
+
+      const total = rows.length;
+      const active = rows.filter(c => c.planStatus === "active" && (!c.subscriptionEndsAt || c.subscriptionEndsAt >= now)).length;
+      const trial = rows.filter(c => c.planStatus === "trial" && (!c.trialEndsAt || c.trialEndsAt >= now)).length;
+      const expired = rows.filter(c =>
+        (c.planStatus === "trial" && c.trialEndsAt && c.trialEndsAt < now) ||
+        (c.planStatus === "active" && c.subscriptionEndsAt && c.subscriptionEndsAt < now) ||
+        c.planStatus === "expired" || c.planStatus === "cancelled"
+      ).length;
+
+      // Revenue attributed to this partner's clinics — approved payments only.
+      // paidCount = distinct clinics that have EVER paid (may differ from `active`,
+      // since a clinic that paid once but later lapsed still counts as a conversion).
+      let totalRevenue = 0;
+      let paidCount = 0;
+      if (clinicIds.length > 0) {
+        const approvedPayments = await db.select().from(clinicPayments)
+          .where(and(inArray(clinicPayments.clinicId, clinicIds), eq(clinicPayments.status, "approved")));
+        totalRevenue = approvedPayments.reduce((s, p) => s + p.amount, 0) / 100;
+        paidCount = new Set(approvedPayments.map(p => p.clinicId)).size;
+      }
+      const commissionPercent = partner?.commissionPercent ?? 0;
+      const commissionEarned = Math.round(totalRevenue * commissionPercent) / 100;
+
+      res.json({ registered: total, paidCount, total, active, trial, expired, totalRevenue, commissionPercent, commissionEarned });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch partner stats" });
+    }
+  });
+
+  app.get("/api/partner/clients", requireActivePartner, async (req, res) => {
+    try {
+      const partnerId = req.session.partnerId!;
+      const now = new Date();
+      const rows = await db.select().from(clinics)
+        .where(eq(clinics.partnerId, partnerId))
+        .orderBy(desc(clinics.createdAt));
+
+      const clinicIds = rows.map(c => c.id);
+      const allPayments = clinicIds.length > 0
+        ? await db.select().from(clinicPayments).where(inArray(clinicPayments.clinicId, clinicIds))
+        : [];
+      const paidByClinic = new Map<number, number>();
+      for (const p of allPayments) {
+        if (p.status !== "approved") continue;
+        paidByClinic.set(p.clinicId, (paidByClinic.get(p.clinicId) ?? 0) + p.amount);
+      }
+
+      const enriched = rows.map(c => {
+        const { passwordHash: _, ...safe } = c;
+        const isExpired = (c.planStatus === "trial" && c.trialEndsAt && c.trialEndsAt < now) ||
+          (c.planStatus === "active" && c.subscriptionEndsAt && c.subscriptionEndsAt < now);
+        const totalPaid = (paidByClinic.get(c.id) ?? 0) / 100;
+        return { ...safe, isExpired, totalPaid, hasPaid: totalPaid > 0 };
+      });
+
+      res.json(enriched);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch clients" });
+    }
+  });
+
   // ══ SUPER ADMIN ══════════════════════════════════════════════════════════
 
   app.get("/api/admin/clinics", requireSuperAdmin, async (_req, res) => {
@@ -1968,17 +2104,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const now = new Date();
 
       // 3 aggregate queries instead of 3N individual queries
-      const [allClinics, patientCounts, apptCounts, allPayments] = await Promise.all([
+      const [allClinics, patientCounts, apptCounts, allPayments, allPartners] = await Promise.all([
         db.select().from(clinics).orderBy(desc(clinics.createdAt)),
         db.select({ clinicId: patients.clinicId, cnt: sql<number>`count(*)::int` })
           .from(patients).groupBy(patients.clinicId),
         db.select({ clinicId: appointments.clinicId, cnt: sql<number>`count(*)::int` })
           .from(appointments).groupBy(appointments.clinicId),
         db.select().from(clinicPayments),
+        db.select().from(partners),
       ]);
 
       const patientCountMap = new Map(patientCounts.map(r => [r.clinicId, r.cnt]));
       const apptCountMap = new Map(apptCounts.map(r => [r.clinicId, r.cnt]));
+      const partnerMap = new Map(allPartners.map(p => [p.id, p]));
       const paymentsByClinic = new Map<number, typeof allPayments>();
       for (const p of allPayments) {
         if (!paymentsByClinic.has(p.clinicId)) paymentsByClinic.set(p.clinicId, []);
@@ -1991,12 +2129,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const { passwordHash: _, ...safe } = c;
         const isExpired = (c.planStatus === "trial" && c.trialEndsAt && c.trialEndsAt < now) ||
           (c.planStatus === "active" && c.subscriptionEndsAt && c.subscriptionEndsAt < now);
+        const partner = c.partnerId ? partnerMap.get(c.partnerId) : undefined;
         return {
           ...safe,
           patientCount: patientCountMap.get(c.id) ?? 0,
           apptCount: apptCountMap.get(c.id) ?? 0,
           totalPaid: totalPaid / 100,
           isExpired,
+          partnerName: partner?.name ?? null,
+          partnerReferralCode: partner?.referralCode ?? null,
           daysLeft: c.planStatus === "trial" && c.trialEndsAt
             ? Math.ceil((c.trialEndsAt.getTime() - now.getTime()) / 86400000)
             : c.subscriptionEndsAt
@@ -2179,6 +2320,126 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: "Failed to delete clinic" });
+    }
+  });
+
+  // ── ADMIN: PARTNER MANAGEMENT ──────────────────────────────────────────────
+
+  app.get("/api/admin/partners", requireSuperAdmin, async (_req, res) => {
+    try {
+      const [allPartners, allClinics, allPayments] = await Promise.all([
+        db.select().from(partners).orderBy(desc(partners.createdAt)),
+        db.select().from(clinics),
+        db.select().from(clinicPayments).where(eq(clinicPayments.status, "approved")),
+      ]);
+
+      const now = new Date();
+      const clinicsByPartner = new Map<number, typeof allClinics>();
+      for (const c of allClinics) {
+        if (!c.partnerId) continue;
+        if (!clinicsByPartner.has(c.partnerId)) clinicsByPartner.set(c.partnerId, []);
+        clinicsByPartner.get(c.partnerId)!.push(c);
+      }
+      const revenueByClinic = new Map<number, number>();
+      for (const p of allPayments) {
+        revenueByClinic.set(p.clinicId, (revenueByClinic.get(p.clinicId) ?? 0) + p.amount);
+      }
+
+      const enriched = allPartners.map(p => {
+        const { passwordHash: _, ...safe } = p;
+        const clientClinics = clinicsByPartner.get(p.id) ?? [];
+        const activeClients = clientClinics.filter(c =>
+          c.planStatus === "active" && (!c.subscriptionEndsAt || c.subscriptionEndsAt >= now)
+        ).length;
+        const paidClients = clientClinics.filter(c => (revenueByClinic.get(c.id) ?? 0) > 0).length;
+        const totalRevenue = clientClinics.reduce((s, c) => s + (revenueByClinic.get(c.id) ?? 0), 0) / 100;
+        const commissionOwed = Math.round(totalRevenue * p.commissionPercent) / 100;
+        return { ...safe, clientCount: clientClinics.length, activeClients, paidClients, totalRevenue, commissionOwed };
+      });
+
+      res.json(enriched);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to fetch partners" });
+    }
+  });
+
+  app.post("/api/admin/partners", requireSuperAdmin, async (req, res) => {
+    try {
+      const { name, email, password, phone, commissionPercent } = req.body;
+      if (!name || !email || !password) {
+        return res.status(400).json({ message: "Name, email and password are required" });
+      }
+      if (String(password).length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+      const existing = await db.select().from(partners).where(eq(partners.email, String(email).toLowerCase().trim()));
+      if (existing.length > 0) {
+        return res.status(400).json({ message: "A partner with this email already exists" });
+      }
+
+      const passwordHash = await hashPassword(password);
+      const referralCode = await generateReferralCode();
+
+      // Admin-created partners are pre-approved — the approval step only guards
+      // self-service signups via /api/auth/partner-signup.
+      const [partner] = await db.insert(partners).values({
+        name: String(name).trim(),
+        email: String(email).toLowerCase().trim(),
+        passwordHash,
+        phone: phone?.trim() || null,
+        referralCode,
+        commissionPercent: commissionPercent != null ? Number(commissionPercent) : undefined,
+        status: "active",
+      }).returning();
+
+      const { passwordHash: _, ...safe } = partner!;
+      res.status(201).json(safe);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to create partner" });
+    }
+  });
+
+  app.patch("/api/admin/partners/:id", requireSuperAdmin, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const { action, status, commissionPercent, name, phone } = req.body;
+
+      let updates: Record<string, any> = {};
+      if (action === "regenerate-code") {
+        updates.referralCode = await generateReferralCode();
+      } else if (status === "active" || status === "inactive") {
+        updates.status = status;
+      } else {
+        if (commissionPercent != null) updates.commissionPercent = Number(commissionPercent);
+        if (name) updates.name = String(name).trim();
+        if (phone !== undefined) updates.phone = phone?.trim() || null;
+        if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No valid fields to update" });
+      }
+
+      const [updated] = await db.update(partners).set(updates).where(eq(partners.id, id)).returning();
+      if (!updated) return res.status(404).json({ message: "Partner not found" });
+      const { passwordHash: _, ...safe } = updated;
+      res.json(safe);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to update partner" });
+    }
+  });
+
+  app.delete("/api/admin/partners/:id", requireSuperAdmin, async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      await db.transaction(async (tx) => {
+        // Unlink referred clinics rather than touching their data
+        await tx.update(clinics).set({ partnerId: null }).where(eq(clinics.partnerId, id));
+        await tx.delete(partners).where(eq(partners.id, id));
+      });
+      res.json({ success: true });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to delete partner" });
     }
   });
 

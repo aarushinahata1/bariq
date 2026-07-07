@@ -33,6 +33,7 @@ export default function PaymentWall() {
   }
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>("quarterly");
   const [utr, setUtr] = useState("");
+  const [referralCode, setReferralCode] = useState("");
   const [copied, setCopied] = useState(false);
 
   // After auto-expire, planStatus is "expired" for both trial and subscription.
@@ -46,7 +47,7 @@ export default function PaymentWall() {
   });
 
   const submit = useMutation({
-    mutationFn: (body: { utr: string; planType: string }) =>
+    mutationFn: (body: { utr: string; planType: string; referralCode?: string }) =>
       apiRequest("POST", "/api/payments", body).then(r => r.json()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/payments"] });
@@ -75,7 +76,7 @@ export default function PaymentWall() {
       return;
     }
     const plan = PLANS.find(p => p.key === selectedPlan)!;
-    submit.mutate({ utr: trimmed, planType: plan.key });
+    submit.mutate({ utr: trimmed, planType: plan.key, referralCode: referralCode.trim() || undefined });
   }
 
   if (isLoading) return (
@@ -243,6 +244,24 @@ export default function PaymentWall() {
                     Find this in your UPI app under transaction details, usually labeled UTR, Ref No, or Transaction ID.
                   </p>
                 </div>
+
+                {/* Referral code — only relevant if this clinic isn't already linked to a partner */}
+                {!clinic?.partnerId && (
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700 mb-2">
+                      Referral Code <span className="text-gray-400 font-normal">(optional)</span>
+                    </p>
+                    <Input
+                      value={referralCode}
+                      onChange={e => setReferralCode(e.target.value)}
+                      placeholder="e.g. BRQ-7K2P9X"
+                      className="font-mono uppercase h-11"
+                    />
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      Were you referred by a partner? Enter their code here.
+                    </p>
+                  </div>
+                )}
 
                 <Button
                   type="submit"

@@ -1,34 +1,32 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Stethoscope, Eye, EyeOff, CheckCircle } from "lucide-react";
+import { Stethoscope, Eye, EyeOff, CheckCircle, Handshake } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
-const perks = ["Queue management", "Patient CRM", "Digital prescriptions", "Billing & reports"];
+const perks = [
+  "Unique referral code for every clinic you bring",
+  "Track all your referred clinics in one dashboard",
+  "Earn commission on every subscription you refer",
+];
 
-export default function Signup() {
+export default function PartnerSignup() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const [showPw, setShowPw] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "", referralCode: "" });
-
-  // Partner referral links look like /signup?ref=BRQ-XXXXXX — auto-fill the code
-  useEffect(() => {
-    const ref = new URLSearchParams(window.location.search).get("ref");
-    if (ref) setForm(f => ({ ...f, referralCode: ref.toUpperCase() }));
-  }, []);
+  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
 
   const signup = useMutation({
     mutationFn: (body: typeof form) =>
-      apiRequest("POST", "/api/auth/signup", body).then(r => r.json()),
+      apiRequest("POST", "/api/auth/partner-signup", body).then(r => r.json()),
     onSuccess: (data) => {
       qc.setQueryData(["/api/auth/me"], data);
-      navigate("/dashboard");
+      navigate("/partner-dashboard");
     },
     onError: (err: any) => {
       const raw = err?.message || "Signup failed";
@@ -44,8 +42,8 @@ export default function Signup() {
       toast({ title: "Required fields missing", description: "Please fill all required fields", variant: "destructive" });
       return;
     }
-    if (form.password.length < 6) {
-      toast({ title: "Weak password", description: "Password must be at least 6 characters", variant: "destructive" });
+    if (form.password.length < 8) {
+      toast({ title: "Weak password", description: "Password must be at least 8 characters", variant: "destructive" });
       return;
     }
     signup.mutate(form);
@@ -64,10 +62,13 @@ export default function Signup() {
               <span className="text-2xl font-bold text-gray-900">BariQ</span>
             </div>
           </Link>
+          <div className="inline-flex items-center gap-2 bg-teal-50 border border-teal-100 text-teal-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-5">
+            <Handshake className="w-3.5 h-3.5" /> Partner Program
+          </div>
           <h2 className="text-3xl font-bold text-gray-900 mb-4 leading-snug">
-            Start managing your clinic smarter
+            Earn by referring clinics to BariQ
           </h2>
-          <p className="text-gray-500 mb-8">7 days free. No credit card required. Full access to all features.</p>
+          <p className="text-gray-500 mb-8">Get your own referral code and dashboard. Every clinic that signs up with your code shows up under you, automatically.</p>
           <div className="space-y-3">
             {perks.map(p => (
               <div key={p} className="flex items-center gap-3">
@@ -77,9 +78,9 @@ export default function Signup() {
             ))}
           </div>
           <div className="mt-10 bg-teal-50 border border-teal-100 rounded-2xl p-5">
-            <p className="text-teal-800 font-semibold text-sm mb-1">After your trial</p>
-            <p className="text-teal-700 text-base font-semibold">Contact us for pricing</p>
-            <p className="text-teal-600 text-xs mt-1">Custom plans · no contracts · cancel anytime.</p>
+            <p className="text-teal-800 font-semibold text-sm mb-1">Not a clinic owner?</p>
+            <p className="text-teal-700 text-base font-semibold">This is for referral partners</p>
+            <p className="text-teal-600 text-xs mt-1">Clinics should <Link href="/signup" className="underline">sign up here</Link> instead.</p>
           </div>
         </div>
 
@@ -97,15 +98,15 @@ export default function Signup() {
           </div>
 
           <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
-            <h1 className="text-2xl font-bold text-gray-900 mb-1">Create your account</h1>
-            <p className="text-gray-500 text-sm mb-7">7-day free trial · No credit card needed</p>
+            <h1 className="text-2xl font-bold text-gray-900 mb-1">Become a partner</h1>
+            <p className="text-gray-500 text-sm mb-7">Get your referral code in seconds</p>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="name" className="text-gray-700 font-medium">Clinic / Hospital Name <span className="text-red-500">*</span></Label>
+                <Label htmlFor="name" className="text-gray-700 font-medium">Full Name <span className="text-red-500">*</span></Label>
                 <Input
                   id="name"
-                  placeholder="e.g. Sharma Multi-Specialty Clinic"
+                  placeholder="e.g. Rahul Verma"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   className="h-11 rounded-xl"
@@ -117,7 +118,7 @@ export default function Signup() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="clinic@example.com"
+                  placeholder="you@example.com"
                   value={form.email}
                   onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                   className="h-11 rounded-xl"
@@ -143,7 +144,7 @@ export default function Signup() {
                   <Input
                     id="password"
                     type={showPw ? "text" : "password"}
-                    placeholder="Min 6 characters"
+                    placeholder="Min 8 characters"
                     value={form.password}
                     onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
                     className="h-11 rounded-xl pr-10"
@@ -159,36 +160,17 @@ export default function Signup() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="referralCode" className="text-gray-700 font-medium">
-                  Referral Code <span className="text-gray-400 font-normal">(optional)</span>
-                </Label>
-                <Input
-                  id="referralCode"
-                  placeholder="e.g. BRQ-7K2P9X"
-                  value={form.referralCode}
-                  onChange={e => setForm(f => ({ ...f, referralCode: e.target.value }))}
-                  className="h-11 rounded-xl font-mono uppercase"
-                />
-              </div>
-
               <Button
                 type="submit"
                 className="w-full h-11 bg-teal-700 hover:bg-teal-800 text-white rounded-xl font-semibold mt-2"
                 disabled={signup.isPending}
               >
-                {signup.isPending ? "Creating account..." : "Start Free Trial"}
+                {signup.isPending ? "Creating account..." : "Create Partner Account"}
               </Button>
             </form>
 
-            <p className="text-center text-xs text-gray-400 mt-5">
-              By signing up you agree to our{" "}
-              <a href="#" className="underline hover:text-gray-600">Terms</a> &{" "}
-              <a href="#" className="underline hover:text-gray-600">Privacy Policy</a>
-            </p>
-
-            <p className="text-center text-sm text-gray-500 mt-4">
-              Already have an account?{" "}
+            <p className="text-center text-sm text-gray-500 mt-6">
+              Already a partner?{" "}
               <Link href="/login" className="text-teal-700 font-semibold hover:underline">Login</Link>
             </p>
           </div>

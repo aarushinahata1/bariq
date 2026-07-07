@@ -22,6 +22,8 @@ export default function Login() {
       qc.setQueryData(["/api/auth/me"], data);
       if (data.isSuperAdmin) {
         navigate("/super-admin");
+      } else if (data.isPartner) {
+        navigate("/partner-dashboard");
       } else {
         navigate("/dashboard");
       }

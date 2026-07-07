@@ -4,6 +4,7 @@ import {
   Activity, Clock, Users, FileText, BarChart3, Shield,
   Star, CheckCircle, ArrowRight, Stethoscope, Zap, MessageCircle,
   Pill, Package, Bell, Heart, Printer, AlertTriangle, Menu, X, Phone, Mail, MapPin,
+  Handshake, IndianRupee, Link2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -142,8 +143,27 @@ const navLinks = [
   { label: "Features", href: "#features" },
   { label: "Pharmacy", href: "#pharmacy" },
   { label: "Patient Records", href: "#records" },
+  { label: "Partners", href: "#partner" },
   { label: "Testimonials", href: "#testimonials" },
   { label: "Contact", href: "#contact" },
+];
+
+const partnerPerks = [
+  {
+    icon: Link2,
+    title: "Your own referral code",
+    body: "Sign up as a partner and get a unique code to share with clinics you bring on board.",
+  },
+  {
+    icon: Users,
+    title: "Track every client",
+    body: "See every clinic that signed up under your code, and their subscription status, in your own dashboard.",
+  },
+  {
+    icon: IndianRupee,
+    title: "Earn commission",
+    body: "Get paid a share of the subscription revenue for every clinic you refer, for as long as they stay subscribed.",
+  },
 ];
 
 export default function Landing() {
@@ -461,6 +481,42 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── Partner Program ──────────────────────────────────────── */}
+      <section id="partner" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-14">
+            <div className="inline-flex items-center gap-2 bg-teal-50 border border-teal-100 text-teal-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-5">
+              <Handshake className="w-3.5 h-3.5" /> Partner Program
+            </div>
+            <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
+              Become a BariQ Partner
+            </h2>
+            <p className="text-gray-500 text-lg max-w-xl mx-auto">
+              Know clinics that could use BariQ? Refer them, track them, and earn commission — all from your own partner dashboard.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
+            {partnerPerks.map((p) => (
+              <div key={p.title} className="bg-white rounded-2xl p-7 border border-gray-100 shadow-sm">
+                <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center mb-5">
+                  <p.icon className="w-5 h-5 text-teal-700" />
+                </div>
+                <h3 className="text-base font-bold text-gray-900 mb-2">{p.title}</h3>
+                <p className="text-gray-500 text-sm leading-relaxed">{p.body}</p>
+              </div>
+            ))}
+          </div>
+          <div className="text-center">
+            <Link href="/partner-signup">
+              <Button size="lg" className="bg-teal-700 hover:bg-teal-800 text-white px-8 h-12 rounded-xl font-semibold text-base shadow-md">
+                Become a Partner
+                <ArrowRight className="ml-2 w-4 h-4" />
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </section>
+
       {/* ── Testimonials ─────────────────────────────────────────── */}
       <section id="testimonials" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-6xl mx-auto">
@@ -637,6 +693,7 @@ export default function Landing() {
               <div className="space-y-2">
                 <Link href="/signup" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Sign Up Free</Link>
                 <Link href="/login" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Sign In</Link>
+                <Link href="/partner-signup" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Become a Partner</Link>
               </div>
             </div>
             {/* Contact */}

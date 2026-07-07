@@ -13,6 +13,8 @@ const NotFound = lazy(() => import("@/pages/not-found"));
 const Landing = lazy(() => import("@/pages/Landing"));
 const Login = lazy(() => import("@/pages/Login"));
 const Signup = lazy(() => import("@/pages/Signup"));
+const PartnerSignup = lazy(() => import("@/pages/PartnerSignup"));
+const PartnerDashboard = lazy(() => import("@/pages/PartnerDashboard"));
 const SuperAdmin = lazy(() => import("@/pages/SuperAdmin"));
 const PaymentWall = lazy(() => import("@/pages/PaymentWall"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -30,7 +32,7 @@ const Pharmacy = lazy(() => import("@/pages/Pharmacy"));
 const DoctorConsole = lazy(() => import("@/pages/DoctorConsole"));
 
 function Router() {
-  const { isAuthenticated, isSuperAdmin, isLoading, clinic } = useAuth();
+  const { isAuthenticated, isSuperAdmin, isPartner, isLoading, clinic } = useAuth();
   const [location] = useLocation();
 
   // Always-public routes — no auth needed, show instantly
@@ -45,17 +47,19 @@ function Router() {
     );
   }
 
-  // Public pages (/, /login, /signup) — show immediately while auth loads.
+  // Public pages (/, /login, /signup, /partner-signup) — show immediately while auth loads.
   // Once auth resolves, redirect logged-in users to their dashboard.
-  const isPublicPage = location === "/" || location === "/login" || location === "/signup";
+  const isPublicPage = location === "/" || location === "/login" || location === "/signup" || location === "/partner-signup";
   if (isPublicPage) {
     if (!isLoading && isSuperAdmin) return <Redirect to="/super-admin" />;
+    if (!isLoading && isPartner) return <Redirect to="/partner-dashboard" />;
     if (!isLoading && isAuthenticated) return <Redirect to="/dashboard" />;
     return (
       <Switch>
         <Route path="/" component={Landing} />
         <Route path="/login" component={Login} />
         <Route path="/signup" component={Signup} />
+        <Route path="/partner-signup" component={PartnerSignup} />
         <Route component={Landing} />
       </Switch>
     );
@@ -66,8 +70,18 @@ function Router() {
     return <div className="min-h-screen flex items-center justify-center"><Loading /></div>;
   }
 
-  if (!isAuthenticated && !isSuperAdmin) {
+  if (!isAuthenticated) {
     return <Redirect to="/login" />;
+  }
+
+  // Partner dashboard
+  if (isPartner) {
+    return (
+      <Switch>
+        <Route path="/partner-dashboard" component={PartnerDashboard} />
+        <Route><Redirect to="/partner-dashboard" /></Route>
+      </Switch>
+    );
   }
 
   // Block access when trial/plan has expired — show payment wall

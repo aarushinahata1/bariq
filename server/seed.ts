@@ -43,15 +43,15 @@ async function seed() {
   // ── Doctors ───────────────────────────────────────────────────────────────
   const doctorData = [
     {
-      user: { id: crypto.randomUUID(), email: "dr.sharma@bariq.in", name: "Dr. Priya Sharma", firstName: "Priya", lastName: "Sharma", role: "doctor" as const, clinicId },
+      user: { id: crypto.randomUUID(), email: "dr.sharma@bariq.in", name: "Priya Sharma", firstName: "Priya", lastName: "Sharma", role: "doctor" as const, clinicId },
       profile: { specialization: "General Physician", avgConsultationTime: 12, consultationFee: 50000 },
     },
     {
-      user: { id: crypto.randomUUID(), email: "dr.mehta@bariq.in", name: "Dr. Rohan Mehta", firstName: "Rohan", lastName: "Mehta", role: "doctor" as const, clinicId },
+      user: { id: crypto.randomUUID(), email: "dr.mehta@bariq.in", name: "Rohan Mehta", firstName: "Rohan", lastName: "Mehta", role: "doctor" as const, clinicId },
       profile: { specialization: "Paediatrician", avgConsultationTime: 15, consultationFee: 60000 },
     },
     {
-      user: { id: crypto.randomUUID(), email: "dr.iyer@bariq.in", name: "Dr. Kavitha Iyer", firstName: "Kavitha", lastName: "Iyer", role: "doctor" as const, clinicId },
+      user: { id: crypto.randomUUID(), email: "dr.iyer@bariq.in", name: "Kavitha Iyer", firstName: "Kavitha", lastName: "Iyer", role: "doctor" as const, clinicId },
       profile: { specialization: "Gynaecologist", avgConsultationTime: 20, consultationFee: 80000 },
     },
   ];

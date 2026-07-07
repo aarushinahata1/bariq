@@ -4,7 +4,7 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { db, pool } from "./db";
-import { clinics, type Clinic } from "@shared/schema";
+import { clinics, partners, type Clinic, type Partner } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 const PgSession = connectPgSimple(session);
@@ -13,6 +13,7 @@ declare module "express-session" {
   interface SessionData {
     clinicId?: number;
     isSuperAdmin?: boolean;
+    partnerId?: number;
   }
 }
 
@@ -42,6 +43,24 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 export async function getClinic(id: number): Promise<Clinic | undefined> {
   const [row] = await db.select().from(clinics).where(eq(clinics.id, id));
   return row;
+}
+
+export async function getPartner(id: number): Promise<Partner | undefined> {
+  const [row] = await db.select().from(partners).where(eq(partners.id, id));
+  return row;
+}
+
+// Generates a unique, human-shareable referral code (e.g. "BRQ-7K2P9X"), retrying on collision
+export async function generateReferralCode(): Promise<string> {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no O/0/I/1 — avoids look-alike confusion
+  for (let attempt = 0; attempt < 10; attempt++) {
+    let code = "";
+    for (let i = 0; i < 6; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
+    const full = `BRQ-${code}`;
+    const [existing] = await db.select().from(partners).where(eq(partners.referralCode, full));
+    if (!existing) return full;
+  }
+  throw new Error("Failed to generate a unique referral code");
 }
 
 // Returns true when a clinic's plan has lapsed (by dates), regardless of stored planStatus
@@ -78,6 +97,30 @@ export function requireSuperAdmin(req: Request, res: Response, next: NextFunctio
   next();
 }
 
+export function requirePartner(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.partnerId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  next();
+}
+
+// Stricter than requirePartner — also blocks partners still awaiting admin approval
+// or deactivated, for endpoints that expose real dashboard data (clients, revenue).
+export async function requireActivePartner(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.partnerId) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  const partner = await getPartner(req.session.partnerId);
+  if (!partner) return res.status(401).json({ message: "Partner not found" });
+  if (partner.status === "pending") {
+    return res.status(403).json({ message: "Your partner account is awaiting admin approval" });
+  }
+  if (partner.status === "inactive") {
+    return res.status(403).json({ message: "Your partner account has been deactivated" });
+  }
+  next();
+}
+
 export function setupAuth(app: Express) {
   app.use(
     session({
@@ -107,6 +150,12 @@ export function setupAuth(app: Express) {
     if (req.session.isSuperAdmin) {
       return res.json({ isSuperAdmin: true, email: SUPER_ADMIN_EMAIL });
     }
+    if (req.session.partnerId) {
+      const partner = await getPartner(req.session.partnerId);
+      if (!partner) return res.status(401).json({ message: "Partner not found" });
+      const { passwordHash: _, ...safe } = partner;
+      return res.json({ isPartner: true, ...safe });
+    }
     if (!req.session.clinicId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -123,7 +172,7 @@ export function setupAuth(app: Express) {
   // ── Signup ───────────────────────────────────────────────────────────────
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { name, email, password, phone, address } = req.body;
+      const { name, email, password, phone, address, referralCode } = req.body;
       if (!name || !email || !password) {
         return res.status(400).json({ message: "Name, email and password are required" });
       }
@@ -138,6 +187,14 @@ export function setupAuth(app: Express) {
       const trialEndsAt = new Date();
       trialEndsAt.setDate(trialEndsAt.getDate() + 7);
 
+      // Optional referral code — best-effort link, invalid/unknown codes don't block signup
+      let partnerId: number | null = null;
+      if (referralCode && String(referralCode).trim()) {
+        const [partner] = await db.select().from(partners)
+          .where(eq(partners.referralCode, String(referralCode).trim().toUpperCase()));
+        if (partner && partner.status === "active") partnerId = partner.id;
+      }
+
       const [clinic] = await db.insert(clinics).values({
         name: name.trim(),
         email: email.toLowerCase().trim(),
@@ -146,6 +203,7 @@ export function setupAuth(app: Express) {
         address: address?.trim() || null,
         planStatus: "trial",
         trialEndsAt,
+        partnerId,
       }).returning();
 
       // Regenerate session after signup to prevent session fixation
@@ -166,6 +224,52 @@ export function setupAuth(app: Express) {
       });
     } catch (err: any) {
       console.error("Signup error:", err);
+      res.status(500).json({ message: "Signup failed" });
+    }
+  });
+
+  // ── Partner signup ─────────────────────────────────────────────────────────
+  app.post("/api/auth/partner-signup", async (req, res) => {
+    try {
+      const { name, email, password, phone } = req.body;
+      if (!name || !email || !password) {
+        return res.status(400).json({ message: "Name, email and password are required" });
+      }
+      if (password.length < 8) {
+        return res.status(400).json({ message: "Password must be at least 8 characters" });
+      }
+      const existing = await db.select().from(partners).where(eq(partners.email, email.toLowerCase().trim()));
+      if (existing.length > 0) {
+        return res.status(400).json({ message: "An account with this email already exists" });
+      }
+      const passwordHash = await hashPassword(password);
+      const referralCode = await generateReferralCode();
+
+      const [partner] = await db.insert(partners).values({
+        name: name.trim(),
+        email: email.toLowerCase().trim(),
+        passwordHash,
+        phone: phone?.trim() || null,
+        referralCode,
+      }).returning();
+
+      req.session.regenerate((err) => {
+        if (err) {
+          console.error("Session regenerate error:", err);
+          return res.status(500).json({ message: "Signup failed" });
+        }
+        req.session.partnerId = partner!.id;
+        const { passwordHash: _, ...safe } = partner!;
+        req.session.save((saveErr) => {
+          if (saveErr) {
+            console.error("Session save error:", saveErr);
+            return res.status(500).json({ message: "Signup failed" });
+          }
+          res.status(201).json({ isPartner: true, ...safe });
+        });
+      });
+    } catch (err: any) {
+      console.error("Partner signup error:", err);
       res.status(500).json({ message: "Signup failed" });
     }
   });
@@ -195,29 +299,62 @@ export function setupAuth(app: Express) {
       }
 
       const [clinic] = await db.select().from(clinics).where(eq(clinics.email, email.toLowerCase().trim()));
-      if (!clinic) {
-        return res.status(401).json({ message: "Invalid email or password" });
-      }
-      const valid = await verifyPassword(password, clinic.passwordHash);
-      if (!valid) {
-        return res.status(401).json({ message: "Invalid email or password" });
+      if (clinic) {
+        const valid = await verifyPassword(password, clinic.passwordHash);
+        if (!valid) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+
+        // Regenerate session after login to prevent session fixation
+        return req.session.regenerate((err) => {
+          if (err) {
+            console.error("Session regenerate error:", err);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          req.session.clinicId = clinic.id;
+          req.session.isSuperAdmin = false;
+          req.session.partnerId = undefined;
+          const { passwordHash: _, ...safe } = clinic;
+          req.session.save((saveErr) => {
+            if (saveErr) {
+              console.error("Session save error:", saveErr);
+              return res.status(500).json({ message: "Login failed" });
+            }
+            res.json(safe);
+          });
+        });
       }
 
-      // Regenerate session after login to prevent session fixation
+      // No clinic with this email — try partner login
+      const [partner] = await db.select().from(partners).where(eq(partners.email, email.toLowerCase().trim()));
+      if (!partner) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      const partnerValid = await verifyPassword(password, partner.passwordHash);
+      if (!partnerValid) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+      // "pending" partners can still log in — the dashboard shows an awaiting-approval
+      // screen. Only explicitly deactivated ("inactive") accounts are locked out.
+      if (partner.status === "inactive") {
+        return res.status(403).json({ message: "This partner account has been deactivated" });
+      }
+
       req.session.regenerate((err) => {
         if (err) {
           console.error("Session regenerate error:", err);
           return res.status(500).json({ message: "Login failed" });
         }
-        req.session.clinicId = clinic.id;
+        req.session.partnerId = partner.id;
         req.session.isSuperAdmin = false;
-        const { passwordHash: _, ...safe } = clinic;
+        req.session.clinicId = undefined;
+        const { passwordHash: _, ...safe } = partner;
         req.session.save((saveErr) => {
           if (saveErr) {
             console.error("Session save error:", saveErr);
             return res.status(500).json({ message: "Login failed" });
           }
-          res.json(safe);
+          res.json({ isPartner: true, ...safe });
         });
       });
     } catch (err) {
