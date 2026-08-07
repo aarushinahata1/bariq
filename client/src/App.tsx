@@ -1,11 +1,11 @@
 import { Switch, Route, Redirect, useLocation } from "wouter";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Loading } from "@/components/ui/loading";
-import { RoleProvider } from "@/hooks/use-role";
+import { RoleProvider, useRole } from "@/hooks/use-role";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Layout } from "@/components/Layout";
 
@@ -30,6 +30,28 @@ const Settings = lazy(() => import("@/pages/Settings"));
 const Register = lazy(() => import("@/pages/Register"));
 const Pharmacy = lazy(() => import("@/pages/Pharmacy"));
 const DoctorConsole = lazy(() => import("@/pages/DoctorConsole"));
+
+// Blocks navigation to routes the current role isn't allowed into — e.g. a
+// receptionist typing /settings or /pharmacy directly into the URL bar. The
+// Sidebar already hides these links, but that's cosmetic only; this is the
+// actual client-side gate (the server independently enforces the same
+// boundary on the API side via requireRole).
+function RoleGuard({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  const { canAccess, config } = useRole();
+  if (!canAccess(location)) {
+    return <Redirect to={config.defaultRoute} />;
+  }
+  return <>{children}</>;
+}
+
+// Catch-all for unknown paths — sends each role to ITS OWN default route
+// (previously hardcoded to /dashboard, which isn't even in doctor's or
+// pharmacist's allowedRoutes).
+function RoleAwareFallback() {
+  const { config } = useRole();
+  return <Redirect to={config.defaultRoute} />;
+}
 
 function Router() {
   const { isAuthenticated, isSuperAdmin, isPartner, isLoading, clinic } = useAuth();
@@ -115,19 +137,21 @@ function Router() {
         {/* All app pages share a single persistent Layout */}
         <Route>
           <Layout>
-            <Switch>
-              <Route path="/dashboard" component={Dashboard} />
-              <Route path="/patients" component={Patients} />
-              <Route path="/patients/:id" component={PatientHistory} />
-              <Route path="/crm" component={CRM} />
-              <Route path="/appointments" component={Appointments} />
-              <Route path="/doctors" component={Doctors} />
-              <Route path="/queue" component={Queue} />
-              <Route path="/settings" component={Settings} />
-              <Route path="/pharmacy" component={Pharmacy} />
-              <Route path="/doctor-console" component={DoctorConsole} />
-              <Route><Redirect to="/dashboard" /></Route>
-            </Switch>
+            <RoleGuard>
+              <Switch>
+                <Route path="/dashboard" component={Dashboard} />
+                <Route path="/patients" component={Patients} />
+                <Route path="/patients/:id" component={PatientHistory} />
+                <Route path="/crm" component={CRM} />
+                <Route path="/appointments" component={Appointments} />
+                <Route path="/doctors" component={Doctors} />
+                <Route path="/queue" component={Queue} />
+                <Route path="/settings" component={Settings} />
+                <Route path="/pharmacy" component={Pharmacy} />
+                <Route path="/doctor-console" component={DoctorConsole} />
+                <Route><RoleAwareFallback /></Route>
+              </Switch>
+            </RoleGuard>
           </Layout>
         </Route>
       </Switch>

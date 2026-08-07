@@ -4,8 +4,8 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import bcrypt from "bcryptjs";
 import { db, pool } from "./db";
-import { clinics, partners, type Clinic, type Partner } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { clinics, partners, users, type Clinic, type Partner } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 
 const PgSession = connectPgSimple(session);
 
@@ -14,6 +14,10 @@ declare module "express-session" {
     clinicId?: number;
     isSuperAdmin?: boolean;
     partnerId?: number;
+    // Set only for staff (receptionist/pharmacist/etc.) logins — absent for the
+    // clinic-owner session, which is treated as "admin" wherever role is read.
+    userId?: string;
+    role?: string;
   }
 }
 
@@ -54,6 +58,25 @@ export async function getClinic(id: number): Promise<Clinic | undefined> {
   return row;
 }
 
+// Short-TTL cache for the plan-expiry check below, which otherwise runs a full
+// `clinics` SELECT on every single authenticated /api request — on top of
+// whatever the endpoint itself queries. A plan flipping to expired/active is not
+// time-critical (same tradeoff the public-queue cache elsewhere already makes),
+// so a few seconds of staleness here is a good trade for cutting that read in
+// most requests. Keyed by clinicId; per-process, same as the other in-memory
+// caches in this app.
+const clinicPlanCache = new Map<number, { clinic: Clinic; ts: number }>();
+const CLINIC_PLAN_CACHE_TTL_MS = 30_000;
+
+async function getClinicForPlanCheck(id: number): Promise<Clinic | undefined> {
+  const cached = clinicPlanCache.get(id);
+  if (cached && Date.now() - cached.ts < CLINIC_PLAN_CACHE_TTL_MS) return cached.clinic;
+  const clinic = await getClinic(id);
+  if (clinic) clinicPlanCache.set(id, { clinic, ts: Date.now() });
+  else clinicPlanCache.delete(id);
+  return clinic;
+}
+
 export async function getPartner(id: number): Promise<Partner | undefined> {
   const [row] = await db.select().from(partners).where(eq(partners.id, id));
   return row;
@@ -89,7 +112,33 @@ async function syncPlanStatus(clinic: Clinic): Promise<Clinic> {
     (clinic.planStatus === "active" && clinic.subscriptionEndsAt && clinic.subscriptionEndsAt < now);
   if (!needsExpiry) return clinic;
   await db.update(clinics).set({ planStatus: "expired" }).where(eq(clinics.id, clinic.id));
+  clinicPlanCache.delete(clinic.id);
   return { ...clinic, planStatus: "expired" };
+}
+
+// Called by routes.ts wherever a clinic's plan/status is updated directly (payment
+// approval, admin plan edits) so the cache below doesn't keep serving a stale
+// pre-update row for up to CLINIC_PLAN_CACHE_TTL_MS.
+export function invalidateClinicPlanCache(clinicId: number): void {
+  clinicPlanCache.delete(clinicId);
+}
+
+// Single source of truth for the shape of a "logged into a clinic" response —
+// used by both GET /api/auth/me and every login branch that ends in a clinic
+// session. Login.tsx caches the login response directly as the /api/auth/me
+// query result, so the two MUST match shape exactly or the client's auth state
+// goes stale until the next background refetch.
+async function buildClinicSessionResponse(
+  clinicId: number,
+  userId?: string | null,
+  role?: string | null,
+  userName?: string | null
+) {
+  let clinic = await getClinic(clinicId);
+  if (!clinic) return null;
+  clinic = await syncPlanStatus(clinic);
+  const { passwordHash: _, ...safe } = clinic;
+  return { ...safe, role: role ?? "admin", userId: userId ?? null, userName: userName ?? null };
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
@@ -97,6 +146,22 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Unauthorized" });
   }
   next();
+}
+
+// Server-verified role check — session.role is only ever set at login time from
+// the users table (never trusted from the client). No session.userId means the
+// clinic-owner session, which always counts as "admin".
+export function requireRole(...allowed: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.session.clinicId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    const role = req.session.role || "admin";
+    if (!allowed.includes(role)) {
+      return res.status(403).json({ message: "Forbidden — insufficient permissions for this action" });
+    }
+    next();
+  };
 }
 
 export function requireSuperAdmin(req: Request, res: Response, next: NextFunction) {
@@ -142,6 +207,11 @@ export function setupAuth(app: Express) {
         pool,
         tableName: "sessions",
         createTableIfMissing: false,
+        // Cookie isn't `rolling`, so cookie.expires is fixed at login and never
+        // changes between requests — connect-pg-simple's touch() would otherwise
+        // run an UPDATE on every single authenticated request writing that exact
+        // same, unchanged expire value. Disabling it drops a no-op write per request.
+        disableTouch: true,
       }),
       resave: false,
       saveUninitialized: false,
@@ -168,14 +238,22 @@ export function setupAuth(app: Express) {
     if (!req.session.clinicId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-    let clinic = await getClinic(req.session.clinicId);
-    if (!clinic) return res.status(401).json({ message: "Clinic not found" });
 
-    // Keep DB in sync — auto-expire if trial/subscription dates have passed
-    clinic = await syncPlanStatus(clinic);
+    let userId: string | null = null;
+    let role: string | null = null;
+    let userName: string | null = null;
+    if (req.session.userId) {
+      const [user] = await db.select().from(users)
+        .where(and(eq(users.id, req.session.userId), eq(users.clinicId, req.session.clinicId)));
+      if (!user) return res.status(401).json({ message: "User not found" });
+      userId = user.id;
+      role = user.role;
+      userName = user.name;
+    }
 
-    const { passwordHash: _, ...safe } = clinic;
-    res.json(safe);
+    const body = await buildClinicSessionResponse(req.session.clinicId, userId, role, userName);
+    if (!body) return res.status(401).json({ message: "Clinic not found" });
+    res.json(body);
   });
 
   // ── Signup ───────────────────────────────────────────────────────────────
@@ -323,18 +401,61 @@ export function setupAuth(app: Express) {
           req.session.clinicId = clinic.id;
           req.session.isSuperAdmin = false;
           req.session.partnerId = undefined;
-          const { passwordHash: _, ...safe } = clinic;
-          req.session.save((saveErr) => {
+          req.session.userId = undefined;
+          req.session.role = undefined;
+          req.session.save(async (saveErr) => {
             if (saveErr) {
               console.error("Session save error:", saveErr);
               return res.status(500).json({ message: "Login failed" });
             }
-            res.json(safe);
+            const body = await buildClinicSessionResponse(clinic.id);
+            res.json(body);
           });
         });
       }
 
-      // No clinic with this email — try partner login
+      // No clinic owner with this email — try staff login (receptionist / pharmacist /
+      // etc. accounts created via Settings → Staff & Roles).
+      const [staffUser] = await db.select().from(users).where(eq(users.email, email.toLowerCase().trim()));
+      if (staffUser) {
+        if (!staffUser.passwordHash) {
+          // Account exists but has no password set (shouldn't happen for staff created
+          // through the current flow, which requires one) — burn the same time as a
+          // real check so this doesn't leak account existence via timing.
+          await verifyPassword(password, DUMMY_BCRYPT_HASH);
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+        const staffValid = await verifyPassword(password, staffUser.passwordHash);
+        if (!staffValid) {
+          return res.status(401).json({ message: "Invalid email or password" });
+        }
+        if (!staffUser.clinicId) {
+          return res.status(401).json({ message: "This account is not linked to a clinic" });
+        }
+
+        return req.session.regenerate((err) => {
+          if (err) {
+            console.error("Session regenerate error:", err);
+            return res.status(500).json({ message: "Login failed" });
+          }
+          req.session.clinicId = staffUser.clinicId!;
+          req.session.userId = staffUser.id;
+          req.session.role = staffUser.role;
+          req.session.isSuperAdmin = false;
+          req.session.partnerId = undefined;
+          req.session.save(async (saveErr) => {
+            if (saveErr) {
+              console.error("Session save error:", saveErr);
+              return res.status(500).json({ message: "Login failed" });
+            }
+            const body = await buildClinicSessionResponse(staffUser.clinicId!, staffUser.id, staffUser.role, staffUser.name);
+            if (!body) return res.status(401).json({ message: "Clinic not found" });
+            res.json(body);
+          });
+        });
+      }
+
+      // No clinic owner or staff account with this email — try partner login
       const [partner] = await db.select().from(partners).where(eq(partners.email, email.toLowerCase().trim()));
       if (!partner) {
         // No account at all for this email — run a dummy bcrypt compare so this
@@ -393,7 +514,7 @@ export function setupAuth(app: Express) {
     if (req.path === "/payments" || req.path.startsWith("/payments/")) return next();
 
     try {
-      const clinic = await getClinic(req.session.clinicId);
+      const clinic = await getClinicForPlanCheck(req.session.clinicId);
       if (!clinic) return res.status(401).json({ message: "Clinic not found" });
 
       if (isPlanExpired(clinic)) {

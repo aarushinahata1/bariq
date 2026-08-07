@@ -24,6 +24,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useCreatePatient } from "@/hooks/use-patients";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useRole } from "@/hooks/use-role";
+import { istDateToInstant } from "@/lib/utils";
 
 // Frontend needs slightly different schema for the form (string date instead of Date object initially)
 const appointmentFormSchema = z.object({
@@ -59,8 +60,7 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
   }, [open, appointment]);
 
   const onSubmit = (data: RescheduleFormValues) => {
-    const [y, mo, d] = data.date.split("-").map(Number);
-    const appointmentDate = new Date(y, mo - 1, d);
+    const appointmentDate = istDateToInstant(data.date);
 
     updateAppointment.mutate({
       id: appointment.id,
@@ -744,8 +744,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
         appointmentDate = new Date();
         finalReason = `EMERGENCY: ${data.reason}`;
       } else {
-        const [y, mo, d] = data.date.split('-').map(Number);
-        appointmentDate = new Date(y, mo - 1, d);
+        appointmentDate = istDateToInstant(data.date);
       }
 
       createAppointment.mutate({

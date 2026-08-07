@@ -7,12 +7,30 @@ import { Loading } from "@/components/ui/loading";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, AreaChart, Area, CartesianGrid, PieChart, Pie, Legend } from "recharts";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
 
 const COLORS = ['#0d9488', '#7c3aed', '#db2777', '#ea580c', '#16a34a'];
 
+const RANGE_OPTIONS: { value: string; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "week", label: "This Week" },
+  { value: "month", label: "This Month" },
+  { value: "all", label: "All Time" },
+];
+
 export default function Dashboard() {
+  const [range, setRange] = useState("today");
+  const rangeLabel = RANGE_OPTIONS.find(r => r.value === range)?.label ?? "Today";
+
   const { data: stats, isLoading } = useQuery<any>({
-    queryKey: [api.dashboard.stats.path],
+    queryKey: [api.dashboard.stats.path, range],
+    queryFn: async () => {
+      const res = await fetch(`${api.dashboard.stats.path}?range=${range}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load dashboard stats");
+      return res.json();
+    },
     refetchInterval: 60000,
   });
 
@@ -20,20 +38,39 @@ export default function Dashboard() {
 
   return (
     <>
-      <PageHeader 
-        title="Clinic Overview" 
-        description="Real-time performance and patient flow analytics."
-      />
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <PageHeader
+          title="Clinic Overview"
+          description="Real-time performance and patient flow analytics."
+        />
+        {/* Scopes Patients/Completed/Collected below to a reporting period — defaults
+            to Today. Avg Wait Time, Pending, and the charts stay live/all-time
+            regardless (see the tooltips on those cards). */}
+        <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl p-1">
+          {RANGE_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => setRange(opt.value)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors",
+                range === opt.value ? "bg-white text-teal-700 shadow-sm" : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6">
         <StatCard
-          title="Patients Today"
+          title={`Patients (${rangeLabel})`}
           value={stats?.dailyPatients || 0}
           icon={<Users className="w-6 h-6" />}
           color="teal"
         />
         <StatCard
-          title="Completed Today"
+          title={`Completed (${rangeLabel})`}
           value={stats?.completedToday || 0}
           icon={<CheckCircle2 className="w-6 h-6" />}
           color="green"
@@ -45,13 +82,13 @@ export default function Dashboard() {
           color="orange"
         />
         <StatCard
-          title="Collected"
+          title={`Collected (${rangeLabel})`}
           value={`₹${Number(stats?.totalCollected || 0).toLocaleString('en-IN')}`}
           icon={<Wallet className="w-6 h-6" />}
           color="green"
         />
         <StatCard
-          title="Pending"
+          title="Pending (All Time)"
           value={`₹${Number(stats?.totalPending || 0).toLocaleString('en-IN')}`}
           icon={<DollarSign className="w-6 h-6" />}
           color="purple"

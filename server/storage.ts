@@ -372,7 +372,12 @@ export class DatabaseStorage {
 
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
-  async getDashboardStats(): Promise<any> {
+  // `range` scopes the top "Patients"/"Completed"/"Collected" report cards — omit it
+  // (or pass nulls) for all-time. Live/operational figures (today's queue, active
+  // doctors, avgWaitTime, the 7-day trend charts) always stay tied to today/now
+  // regardless of `range`, since those describe what's happening right now, not a
+  // historical report.
+  async getDashboardStats(range?: { start: Date | null; end: Date | null }): Promise<any> {
     const IST_MS = 5.5 * 60 * 60 * 1000;
     const nowIST = new Date(Date.now() + IST_MS);
     const s = new Date(nowIST); s.setUTCHours(0, 0, 0, 0);
@@ -381,8 +386,20 @@ export class DatabaseStorage {
     const endOfToday = new Date(e.getTime() - IST_MS);
     const weekStart = new Date(today); weekStart.setDate(weekStart.getDate() - 6);
 
-    // 5 parallel queries instead of 18 sequential ones
-    const [todaysAppts, weekAppts, weekPaidBills, allBills, doctors, sourceCounts] = await Promise.all([
+    const rangeStart = range?.start ?? today;
+    const rangeEnd = range?.end ?? endOfToday;
+    const rangeApptConditions = [eq(appointments.clinicId, this.clinicId)];
+    const rangeBillConditions = [eq(bills.clinicId, this.clinicId), eq(bills.status, "paid")];
+    if (range?.start && range?.end) {
+      rangeApptConditions.push(gte(appointments.date, range.start), lte(appointments.date, range.end));
+      rangeBillConditions.push(gte(bills.billingDate, range.start), lte(bills.billingDate, range.end));
+    } else if (!range) {
+      rangeApptConditions.push(gte(appointments.date, rangeStart), lte(appointments.date, rangeEnd));
+      rangeBillConditions.push(gte(bills.billingDate, rangeStart), lte(bills.billingDate, rangeEnd));
+    }
+    // else range = {start: null, end: null} ("all time") — no date bound added
+
+    const [todaysAppts, weekAppts, weekPaidBills, pendingTotal, doctors, sourceCounts, rangeApptStats, rangeCollected] = await Promise.all([
       this.getAppointments({ date: today }),
       db.select({
         id: appointments.id,
@@ -396,17 +413,23 @@ export class DatabaseStorage {
       db.select({ amount: bills.amount, billingDate: bills.billingDate })
         .from(bills)
         .where(and(eq(bills.clinicId, this.clinicId), gte(bills.billingDate, weekStart), lte(bills.billingDate, endOfToday), eq(bills.status, "paid"))),
-      db.select({ amount: bills.amount, status: bills.status })
-        .from(bills)
-        .where(eq(bills.clinicId, this.clinicId)),
+      // Aggregated in SQL rather than pulling every bill this clinic has ever
+      // issued into Node just to sum one field — that scan only grows over a
+      // clinic's lifetime, and this query re-runs on every dashboard poll (60s).
+      db.select({ total: sql<number>`COALESCE(SUM(${bills.amount}), 0)::int` })
+        .from(bills).where(and(eq(bills.clinicId, this.clinicId), eq(bills.status, "pending"))),
       this.getDoctors(),
       db.select({ source: patients.source, cnt: sql<number>`count(*)::int` })
         .from(patients)
         .where(eq(patients.clinicId, this.clinicId))
         .groupBy(patients.source),
+      db.select({
+        total: sql<number>`count(*)::int`,
+        completed: sql<number>`count(*) filter (where ${appointments.status} = 'completed')::int`,
+      }).from(appointments).where(and(...rangeApptConditions)),
+      db.select({ total: sql<number>`COALESCE(SUM(${bills.amount}), 0)::int` })
+        .from(bills).where(and(...rangeBillConditions)),
     ]);
-
-    const completed = todaysAppts.filter(a => a.status === "completed").length;
 
     // Build weekly chart data from in-memory aggregation
     const weeklyData = [];
@@ -445,8 +468,11 @@ export class DatabaseStorage {
       weeklyData.push({ date: format(new Date(d.getTime() + IST_MS), "MMM dd"), patients: dayAppts.length, avgWait, revenue: dayRevenue });
     }
 
-    const totalPending = allBills.filter(b => b.status === "pending").reduce((acc, b) => acc + b.amount, 0);
-    const totalCollected = allBills.filter(b => b.status === "paid").reduce((acc, b) => acc + b.amount, 0);
+    // Pending is always the current outstanding balance across all time — it doesn't
+    // make sense to scope "how much is currently owed" to a reporting date range the
+    // way "how much did we collect in this period" does.
+    const totalPending = pendingTotal[0]?.total ?? 0;
+    const rangeCollectedAmount = rangeCollected[0]?.total ?? 0;
 
     const activeQueues = doctors.map(doc => {
       const docAppts = todaysAppts.filter(a => a.doctorId === doc.id);
@@ -461,13 +487,33 @@ export class DatabaseStorage {
 
     const sourceDistribution = sourceCounts.map(r => ({ name: r.source || "other", value: r.cnt }));
 
+    // Live average wait, not the historical weeklyData figure: the old avgWaitTime
+    // (today's bucket of weeklyData) only measures checkInTime→consultationStartTime
+    // gaps for consultations that have already STARTED — so on a slow morning, or
+    // whenever nobody has been called in yet, it sits frozen at 0 (or a stale earlier
+    // value) while people physically checked in keep waiting longer with nothing
+    // reflecting it. This instead measures elapsed wait, right now, for everyone
+    // currently checked in and not yet seen — it changes every time the dashboard
+    // polls, same as the room actually looks.
+    const now = Date.now();
+    const currentlyWaiting = todaysAppts.filter(a => a.status === "checked_in");
+    const liveWaitMinutes = currentlyWaiting.map(a => {
+      const since = a.checkInTime ? new Date(a.checkInTime).getTime() : new Date(a.date).getTime();
+      return Math.max(0, (now - since) / 60000);
+    });
+    const avgWaitTime = liveWaitMinutes.length > 0
+      ? Math.round(liveWaitMinutes.reduce((a, b) => a + b, 0) / liveWaitMinutes.length)
+      : 0;
+
     return {
-      dailyPatients: todaysAppts.length,
-      completedToday: completed,
-      avgWaitTime: weeklyData[weeklyData.length - 1]?.avgWait ?? 0,
+      // These three respect the requested `range` (default: today); everything else
+      // below stays tied to today/now regardless of it.
+      dailyPatients: rangeApptStats[0]?.total ?? 0,
+      completedToday: rangeApptStats[0]?.completed ?? 0,
+      totalCollected: rangeCollectedAmount / 100,
+      avgWaitTime,
       totalRevenue,
       totalPending: totalPending / 100,
-      totalCollected: totalCollected / 100,
       weeklyData,
       activeQueues,
       sourceDistribution,

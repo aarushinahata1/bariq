@@ -22,7 +22,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { cn } from "@/lib/utils";
+import { cn, istDateToInstant } from "@/lib/utils";
 import DentalChart from "@/components/DentalChart";
 import BodyChart from "@/components/BodyChart";
 
@@ -283,8 +283,7 @@ function FollowUpDialog({ patient, onClose }: { patient: any; onClose: () => voi
       toast({ title: "Please fill all required fields", variant: "destructive" });
       return;
     }
-    const [y, mo, d] = date.split("-").map(Number);
-    const appointmentDate = new Date(y, mo - 1, d, 9, 0);
+    const appointmentDate = istDateToInstant(date);
     createAppointment.mutate({
       patientId: patient.id, doctorId,
       date: appointmentDate.toISOString(),

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { GripVertical, Users, Banknote, Pill, Plus, Trash2, Phone, Copy, Check, ExternalLink, AlertTriangle, Share2, Search, X, ChevronDown, FileText, Printer } from "lucide-react";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -431,7 +432,16 @@ function PrescriptionDialog({ appointment }: { appointment: any }) {
               {appointment.patient.name} · Queue #{appointment.queueNumber} · {format(new Date(appointment.date), "dd MMM yyyy")}
             </p>
           </div>
-          {isExisting && <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">Saved</span>}
+          <div className="flex items-center gap-2 shrink-0">
+            {isExisting && <span className="px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">Saved</span>}
+            {/* This header is full-bleed (DialogContent uses p-0) and sits at z-10 above
+                the dialog's own default close button, hiding it — so this dialog needs
+                its own explicit close button to stay closeable on any screen size. */}
+            <DialogClose className="rounded-lg p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+              <X className="w-5 h-5" />
+              <span className="sr-only">Close</span>
+            </DialogClose>
+          </div>
         </div>
 
         <div className="px-6 py-5 space-y-5">

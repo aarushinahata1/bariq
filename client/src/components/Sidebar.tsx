@@ -51,14 +51,14 @@ const ALL_MENU_ITEMS = [
 
 export function Sidebar({ onNavigate }: SidebarProps) {
   const [location, navigate] = useLocation();
-  const { role, setRole, config } = useRole();
+  const { role, realRole, isAdmin, isPreviewing, setPreviewRole, config } = useRole();
   const [roleSwitcherOpen, setRoleSwitcherOpen] = useState(false);
   const qc = useQueryClient();
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
     qc.clear();
-    localStorage.removeItem("medqueue-role");
+    try { sessionStorage.removeItem("medqueue-role-preview"); } catch {}
     window.location.href = "/login";
   }
 
@@ -120,53 +120,75 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         </button>
       </div>
 
-      {/* Role Switcher */}
+      {/* Role indicator — a live "Preview as" switcher for admins, a static badge for everyone else */}
       <div className="p-3 border-t border-teal-700/60">
-        <div className="relative">
-          <button
-            onClick={() => setRoleSwitcherOpen(!roleSwitcherOpen)}
-            className="w-full rounded-xl p-3 flex items-center gap-3 hover:bg-teal-700/50 transition-colors cursor-pointer"
-          >
+        {isAdmin ? (
+          <div className="relative">
+            <button
+              onClick={() => setRoleSwitcherOpen(!roleSwitcherOpen)}
+              className="w-full rounded-xl p-3 flex items-center gap-3 hover:bg-teal-700/50 transition-colors cursor-pointer"
+            >
+              <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0", ROLE_COLORS[role])}>
+                {ROLE_ICONS[role]}
+              </div>
+              <div className="flex-1 min-w-0 text-left">
+                <p className="text-sm font-semibold text-white truncate leading-none">
+                  {config.label}
+                  {isPreviewing && <span className="ml-1.5 text-[9px] font-bold text-amber-300 uppercase tracking-wider align-middle">Preview</span>}
+                </p>
+                <p className="text-[10px] text-teal-200/60 mt-0.5 truncate uppercase tracking-wider">
+                  {isPreviewing ? "Previewing this role's menu" : config.description}
+                </p>
+              </div>
+              <ChevronDown className={cn("w-4 h-4 text-teal-300 transition-transform flex-shrink-0", roleSwitcherOpen && "rotate-180")} />
+            </button>
+
+            {roleSwitcherOpen && (
+              <div className="absolute bottom-full left-0 right-0 mb-2 bg-teal-900 rounded-xl border border-teal-700 overflow-hidden shadow-2xl">
+                <div className="px-3 py-2 border-b border-teal-700/60">
+                  <div className="flex items-center gap-1.5 text-[10px] text-teal-300 uppercase tracking-widest font-semibold">
+                    <Shield className="w-3 h-3" />
+                    Preview as (admin only)
+                  </div>
+                  <p className="text-[10px] text-teal-400/70 mt-1 leading-snug">
+                    Shows what another role's menu looks like. Your actual access stays Admin — this can't grant extra permissions.
+                  </p>
+                </div>
+                {(Object.keys(ROLE_CONFIGS) as Role[]).map(r => (
+                  <button
+                    key={r}
+                    onClick={() => { setPreviewRole(r === realRole ? null : r); setRoleSwitcherOpen(false); }}
+                    className={cn(
+                      "w-full flex items-center gap-3 px-3 py-3 hover:bg-teal-700/50 transition-colors text-left",
+                      r === role && "bg-teal-700/30"
+                    )}
+                  >
+                    <div className={cn("w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs", ROLE_COLORS[r])}>
+                      {ROLE_ICONS[r]}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-white">
+                        {ROLE_CONFIGS[r].label}{r === realRole && <span className="text-teal-300/70 font-normal"> (real)</span>}
+                      </p>
+                      <p className="text-[10px] text-teal-300/70 truncate">{ROLE_CONFIGS[r].description}</p>
+                    </div>
+                    {r === role && <div className="ml-auto w-2 h-2 rounded-full bg-teal-400" />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="w-full rounded-xl p-3 flex items-center gap-3">
             <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0", ROLE_COLORS[role])}>
               {ROLE_ICONS[role]}
             </div>
             <div className="flex-1 min-w-0 text-left">
-              <p className="text-sm font-semibold text-white truncate leading-none">{config.label}</p>
+              <p className="text-sm font-semibold text-white truncate leading-none">Logged in as: {config.label}</p>
               <p className="text-[10px] text-teal-200/60 mt-0.5 truncate uppercase tracking-wider">{config.description}</p>
             </div>
-            <ChevronDown className={cn("w-4 h-4 text-teal-300 transition-transform flex-shrink-0", roleSwitcherOpen && "rotate-180")} />
-          </button>
-
-          {roleSwitcherOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-2 bg-teal-900 rounded-xl border border-teal-700 overflow-hidden shadow-2xl">
-              <div className="px-3 py-2 border-b border-teal-700/60">
-                <div className="flex items-center gap-1.5 text-[10px] text-teal-300 uppercase tracking-widest font-semibold">
-                  <Shield className="w-3 h-3" />
-                  Switch Role
-                </div>
-              </div>
-              {(Object.keys(ROLE_CONFIGS) as Role[]).map(r => (
-                <button
-                  key={r}
-                  onClick={() => { setRole(r); setRoleSwitcherOpen(false); }}
-                  className={cn(
-                    "w-full flex items-center gap-3 px-3 py-3 hover:bg-teal-700/50 transition-colors text-left",
-                    r === role && "bg-teal-700/30"
-                  )}
-                >
-                  <div className={cn("w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs", ROLE_COLORS[r])}>
-                    {ROLE_ICONS[r]}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-white">{ROLE_CONFIGS[r].label}</p>
-                    <p className="text-[10px] text-teal-300/70 truncate">{ROLE_CONFIGS[r].description}</p>
-                  </div>
-                  {r === role && <div className="ml-auto w-2 h-2 rounded-full bg-teal-400" />}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </aside>
   );

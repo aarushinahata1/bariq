@@ -537,10 +537,9 @@ function StaffPanel() {
         })}
       </div>
 
-      {/* Note about Switch Role */}
+      {/* Note about staff login */}
       <div className="rounded-xl bg-teal-50 border border-teal-200 px-4 py-3 text-xs text-teal-800">
-        <strong>Switch Role</strong> in the sidebar lets you preview each role's experience.
-        Staff accounts created here can be used to set up dedicated logins in future updates.
+        Staff log in at the normal login page with the email and password set here, and land on the dashboard for their assigned role automatically — Settings, Doctors, Pharmacy and CRM stay hidden and blocked for anyone who isn't Admin.
       </div>
 
       {/* Add / Edit dialog */}
@@ -555,8 +554,8 @@ function StaffPanel() {
               <Input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="Full name" className="rounded-xl h-10" />
             </div>
             <div>
-              <Label className="text-xs font-semibold text-slate-600 mb-1 block">Email (optional)</Label>
-              <Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="staff@clinic.com" className="rounded-xl h-10" />
+              <Label className="text-xs font-semibold text-slate-600 mb-1 block">Email * <span className="font-normal text-slate-400">(used to log in)</span></Label>
+              <Input value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} placeholder="staff@clinic.com" className="rounded-xl h-10" disabled={!!editing} />
             </div>
             <div>
               <Label className="text-xs font-semibold text-slate-600 mb-1 block">Role *</Label>
@@ -588,7 +587,7 @@ function StaffPanel() {
               <Button
                 className="flex-1 rounded-xl bg-violet-600 hover:bg-violet-700"
                 onClick={() => save.mutate()}
-                disabled={save.isPending || !form.name.trim() || (!editing && !form.password)}
+                disabled={save.isPending || !form.name.trim() || (!editing && (!form.email.trim() || !form.password))}
               >
                 {save.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
                 {editing ? "Save Changes" : "Add Staff"}

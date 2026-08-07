@@ -216,10 +216,18 @@ export default function Register() {
 
   const selectedDoctor = doctors.find(d => d.id === selectedDoctorId);
 
+  // Built client-side from window.location.origin, not the server's result.queueUrl —
+  // this app is deployed with the frontend (Netlify) and backend (Render) on separate
+  // domains, and the backend only sees its own host via req.get("host"), so a
+  // server-built absolute URL points at the API domain instead of the domain the
+  // patient is actually on. Every other queue-link builder in the app (Queue.tsx,
+  // Appointments.tsx) already derives it this way — this was the one exception.
+  const queueUrl = result?.queueToken ? `${window.location.origin}/patient-queue/${result.queueToken}` : null;
+
   const waMessage = result
-    ? encodeURIComponent(`Hi! I'm ${result.patientName}. Track my queue position:\n${result.queueUrl}`)
+    ? encodeURIComponent(`Hi! I'm ${result.patientName}. Track my queue position:\n${queueUrl}`)
     : "";
-  const waUrl = result?.queueUrl ? `https://wa.me/?text=${waMessage}` : "";
+  const waUrl = queueUrl ? `https://wa.me/?text=${waMessage}` : "";
 
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (isLoading) {
@@ -346,9 +354,9 @@ export default function Register() {
             </div>
 
             {/* Track position button (only meaningful for today's bookings) */}
-            {result.queueToken && selectedDate === todayStr() && (
+            {queueUrl && selectedDate === todayStr() && (
               <a
-                href={result.queueUrl}
+                href={`/patient-queue/${result.queueToken}`}
                 className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl bg-teal-600 text-white font-bold text-base shadow-lg shadow-teal-200 hover:bg-teal-700 transition-colors"
               >
                 Track Your Position <ChevronRight className="w-5 h-5" />
@@ -437,6 +445,17 @@ export default function Register() {
                 ))}
               </div>
             </div>
+
+            {/* No doctors available this day — without this, the form just silently
+                omits the doctor section with no explanation and the submit button
+                stays disabled forever, since nothing else here previously handled the
+                zero-doctors case. */}
+            {doctors.length === 0 && (
+              <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50 text-center">
+                <p className="text-sm font-semibold text-amber-800">No doctors available on {dateOptions.find(d => d.value === selectedDate)?.label ?? "this date"}</p>
+                <p className="text-xs text-amber-600 mt-1">Please choose a different date above.</p>
+              </div>
+            )}
 
             {/* ── Doctor selection ───────────────────────────────────────── */}
             {doctors.length > 1 && (

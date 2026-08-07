@@ -86,7 +86,13 @@ export const users = pgTable("users", {
   name: text("name"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
   updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  // Nullable-safe: Postgres allows unlimited NULLs under a unique index, only
+  // non-null duplicates are rejected — same pattern as appointments.queueToken.
+  // Login looks up staff by email alone (no clinic context yet), so this must be
+  // globally unique, not just per-clinic.
+  emailUniq: uniqueIndex("users_email_unique").on(t.email),
+}));
 
 export const appointmentStatus = ["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"] as const;
 

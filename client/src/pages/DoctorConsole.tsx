@@ -1,5 +1,7 @@
 import { PageHeader } from "@/components/ui/PageHeader";
 import { MedicineNameAutocomplete } from "@/components/MedicineNameAutocomplete";
+import DentalChart from "@/components/DentalChart";
+import BodyChart from "@/components/BodyChart";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useDoctors } from "@/hooks/use-doctors";
 import { useUpdateAppointment } from "@/hooks/use-appointments";
@@ -46,6 +48,9 @@ import {
   Copy,
   CalendarDays,
   ChevronRight,
+  Smile,
+  PersonStanding,
+  Wallet,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -85,6 +90,8 @@ type ConsoleData = {
     checkInTime: string | null;
     vitals: { bp?: string; pulse?: number; temperature?: number; weight?: number; spO2?: number; height?: number } | null;
     status: string;
+    bill: { id: number; amount: number; status: string } | null;
+    patientPendingTotal: number;
     patient: {
       id: number;
       name: string;
@@ -543,6 +550,8 @@ export default function DoctorConsole() {
     queryFn: () => fetch("/api/settings", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
   });
   const clinicProfile = settings?.clinicProfile;
+  const dentalEnabled = !!settings?.modules?.dental;
+  const orthoEnabled = !!settings?.modules?.ortho;
 
   // SSE for real-time updates — auto-reconnects on drop (Render 30s proxy timeout, etc.)
   useEffect(() => {
@@ -578,6 +587,8 @@ export default function DoctorConsole() {
   const [rxNotes, setRxNotes] = useState("");
   const [rxSaving, setRxSaving] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showDentalChart, setShowDentalChart] = useState(false);
+  const [showBodyChart, setShowBodyChart] = useState(false);
   const prevApptId = useRef<number | null>(null);
 
   // Reset prescription form when patient changes
@@ -591,6 +602,8 @@ export default function DoctorConsole() {
     setMeds(rx?.medications?.length ? rx.medications : [{ ...BLANK_MED }]);
     setRxNotes(rx?.notes || "");
     setShowHistory(false);
+    setShowDentalChart(false);
+    setShowBodyChart(false);
   }, [appt?.id]);
 
   const elapsed = useElapsedTime(appt?.consultationStartTime || null);
@@ -784,6 +797,24 @@ export default function DoctorConsole() {
                           <Clock className="w-3 h-3" /> {elapsed}
                         </span>
                       )}
+                      {/* This visit's payment status — the console previously had no
+                          billing visibility at all, so a doctor had no way to tell
+                          whether the patient in front of them had actually paid. */}
+                      {appt.bill ? (
+                        appt.bill.status === "paid" ? (
+                          <span className="bg-white/20 text-white text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+                            <Wallet className="w-3 h-3" /> Paid ₹{(appt.bill.amount / 100).toFixed(0)}
+                          </span>
+                        ) : (
+                          <span className="bg-amber-400 text-amber-950 text-xs font-bold px-2.5 py-1 rounded-full flex items-center gap-1">
+                            <Wallet className="w-3 h-3" /> Pending ₹{(appt.bill.amount / 100).toFixed(0)}
+                          </span>
+                        )
+                      ) : (
+                        <span className="bg-white/20 text-white/80 text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1">
+                          <Wallet className="w-3 h-3" /> Not Billed
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -807,6 +838,11 @@ export default function DoctorConsole() {
                               {appt.patient.bloodGroup && (
                                 <span className="flex items-center gap-1 text-sm font-semibold text-red-600">
                                   <Droplets className="w-3.5 h-3.5" /> {appt.patient.bloodGroup}
+                                </span>
+                              )}
+                              {appt.patientPendingTotal > 0 && (
+                                <span className="flex items-center gap-1 text-xs font-bold text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full">
+                                  <AlertTriangle className="w-3 h-3" /> ₹{(appt.patientPendingTotal / 100).toFixed(0)} pending across visits
                                 </span>
                               )}
                               {appt.pastVisitsCount > 0 && (
@@ -939,6 +975,48 @@ export default function DoctorConsole() {
                     </div>
                   </div>
                 </div>
+
+                {/* ── Dental Chart (opt-in module) ── */}
+                {dentalEnabled && appt.patient && (
+                  <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                    <button
+                      onClick={() => setShowDentalChart(v => !v)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <Smile className="w-4 h-4 text-teal-600" />
+                        Dental Chart
+                      </span>
+                      {showDentalChart ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                    </button>
+                    {showDentalChart && (
+                      <div className="px-5 pb-5 bg-gray-50/50 border-t border-gray-100 pt-4">
+                        <DentalChart patientId={appt.patient.id} />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* ── Ortho / Physio Body Chart (opt-in module) ── */}
+                {orthoEnabled && appt.patient && (
+                  <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                    <button
+                      onClick={() => setShowBodyChart(v => !v)}
+                      className="w-full px-5 py-3.5 flex items-center justify-between text-sm font-semibold text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      <span className="flex items-center gap-2">
+                        <PersonStanding className="w-4 h-4 text-teal-600" />
+                        Ortho / Physio Chart
+                      </span>
+                      {showBodyChart ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+                    </button>
+                    {showBodyChart && (
+                      <div className="px-5 pb-5 bg-gray-50/50 border-t border-gray-100 pt-4">
+                        <BodyChart patientId={appt.patient.id} />
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* ── Patient history (expandable encounters) ── */}
                 {appt.pastEncounters.length > 0 && (
