@@ -177,7 +177,11 @@ export const appointments = pgTable("appointments", {
 }, (t) => ({
   clinicDateIdx: index("appointments_clinic_date_idx").on(t.clinicId, t.date),
   clinicDoctorIdx: index("appointments_clinic_doctor_idx").on(t.clinicId, t.doctorId),
-  tokenIdx: index("appointments_queue_token_idx").on(t.queueToken),
+  // Unique (not just indexed): nanoid(8) collisions are rare but not impossible, and a
+  // collision would silently resolve one patient's queue link to a different patient's
+  // identity. NULL is fine — quick-check appointments store no token, and Postgres
+  // doesn't treat multiple NULLs as duplicates under a unique index.
+  tokenIdx: uniqueIndex("appointments_queue_token_idx").on(t.queueToken),
   patientIdx: index("appointments_patient_id_idx").on(t.clinicId, t.patientId),
 }));
 
@@ -208,6 +212,97 @@ export const prescriptions = pgTable("prescriptions", {
 }, (t) => ({
   apptIdx: uniqueIndex("prescriptions_appointment_id_unique").on(t.appointmentId),
 }));
+
+// ── Dental Charts ─────────────────────────────────────────────────────────────
+// Opt-in module (see clinic_settings key "modules") — most clinics never touch this table.
+
+export const toothConditions = [
+  "healthy", "caries", "filled", "crown", "missing", "rct",
+  "implant", "extraction_planned", "fractured", "impacted", "bridge",
+] as const;
+
+export type ToothState = {
+  condition: typeof toothConditions[number];
+  surfaces?: string[];
+  note?: string;
+  updatedAt?: string;
+};
+
+export type DentalTreatmentLogEntry = {
+  id: string;
+  date: string;
+  teeth: string[];
+  procedure: string;
+  note?: string;
+};
+
+export const dentalCharts = pgTable("dental_charts", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  patientId: integer("patient_id").references(() => patients.id, { onDelete: "cascade" }).notNull(),
+  dentitionType: text("dentition_type", { enum: ["permanent", "primary"] }).default("permanent").notNull(),
+  teeth: jsonb("teeth").$type<Record<string, ToothState>>().default({}),
+  treatmentLog: jsonb("treatment_log").$type<DentalTreatmentLogEntry[]>().default([]),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+  updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("dental_charts_clinic_id_idx").on(t.clinicId),
+  patientUniq: uniqueIndex("dental_charts_patient_unique").on(t.patientId),
+}));
+
+export const dentalChartsRelations = relations(dentalCharts, ({ one }) => ({
+  patient: one(patients, { fields: [dentalCharts.patientId], references: [patients.id] }),
+}));
+
+export const insertDentalChartSchema = createInsertSchema(dentalCharts).omit({ id: true, createdAt: true, updatedAt: true });
+export type DentalChart = typeof dentalCharts.$inferSelect;
+export type InsertDentalChart = z.infer<typeof insertDentalChartSchema>;
+
+// ── Ortho / Physio Body Charts ──────────────────────────────────────────────────
+// Opt-in module (see clinic_settings key "modules") — most clinics never touch this table.
+
+export const bodyRegionConditions = [
+  "normal", "pain", "sprain_strain", "fracture", "post_surgery",
+  "inflammation", "reduced_rom", "swelling", "numbness", "chronic",
+] as const;
+
+export type BodyRegionState = {
+  condition: typeof bodyRegionConditions[number];
+  severity?: "mild" | "moderate" | "severe";
+  note?: string;
+  updatedAt?: string;
+};
+
+export type BodyTreatmentLogEntry = {
+  id: string;
+  date: string;
+  regions: string[];
+  procedure: string;
+  note?: string;
+};
+
+export const bodyCharts = pgTable("body_charts", {
+  id: serial("id").primaryKey(),
+  clinicId: integer("clinic_id").references(() => clinics.id, { onDelete: "cascade" }).notNull(),
+  patientId: integer("patient_id").references(() => patients.id, { onDelete: "cascade" }).notNull(),
+  regions: jsonb("regions").$type<Record<string, BodyRegionState>>().default({}),
+  treatmentLog: jsonb("treatment_log").$type<BodyTreatmentLogEntry[]>().default([]),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").$defaultFn(() => new Date()),
+  updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
+}, (t) => ({
+  clinicIdx: index("body_charts_clinic_id_idx").on(t.clinicId),
+  patientUniq: uniqueIndex("body_charts_patient_unique").on(t.patientId),
+}));
+
+export const bodyChartsRelations = relations(bodyCharts, ({ one }) => ({
+  patient: one(patients, { fields: [bodyCharts.patientId], references: [patients.id] }),
+}));
+
+export const insertBodyChartSchema = createInsertSchema(bodyCharts).omit({ id: true, createdAt: true, updatedAt: true });
+export type BodyChart = typeof bodyCharts.$inferSelect;
+export type InsertBodyChart = z.infer<typeof insertBodyChartSchema>;
 
 // ── Pharmacy ──────────────────────────────────────────────────────────────────
 
@@ -406,7 +501,11 @@ export const insertPartnerSchema = z.object({
 });
 
 export const insertPrescriptionSchema = createInsertSchema(prescriptions).omit({ id: true, createdAt: true });
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true });
+// Used only for doctor creation (POST /api/doctors) — role and passwordHash are
+// deliberately not accepted from the client. Role is forced server-side to "doctor"
+// (see storage.ts createDoctor); doctors don't have an individual login path today,
+// so passwordHash has no legitimate client-supplied value here.
+export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true, passwordHash: true, role: true });
 export const insertDoctorProfileSchema = createInsertSchema(doctorProfiles).omit({ id: true });
 export const insertPatientSchema = createInsertSchema(patients).omit({ id: true, createdAt: true }).extend({
   name: z.string().min(1, "Name is required"),
@@ -423,7 +522,9 @@ export const insertAppointmentSchema = createInsertSchema(appointments).omit({ i
   date: z.coerce.date(),
 });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, sentAt: true });
-export const insertBillSchema = createInsertSchema(bills).omit({ id: true, createdAt: true, billingDate: true });
+export const insertBillSchema = createInsertSchema(bills).omit({ id: true, createdAt: true, billingDate: true }).extend({
+  amount: z.coerce.number().int().min(1, "Amount must be greater than zero"),
+});
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

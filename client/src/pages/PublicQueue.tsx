@@ -27,21 +27,38 @@ export default function PublicQueue() {
       if (!res.ok) throw new Error("Doctor not found");
       return res.json();
     },
-    refetchInterval: 10000,
+    refetchInterval: 60000, // safety net only — SSE below drives real-time updates
     refetchIntervalInBackground: true,
     staleTime: 0,
     enabled: !!doctorId,
   });
 
-  // SSE: get pushed updates immediately when queue changes
+  // SSE: get pushed updates immediately when queue changes.
+  // Auto-reconnects on error with a 5-second delay so this always-on TV display
+  // survives transient drops instead of silently going stale.
   useEffect(() => {
     if (!doctorId) return;
-    const es = new EventSource(`/api/sse/doctor/${doctorId}`);
-    es.onmessage = (e) => {
-      if (e.data === "connected") return;
-      queryClient.invalidateQueries({ queryKey: ["public-queue", doctorId] });
+    let es: EventSource;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`/api/sse/doctor/${doctorId}`);
+      es.onmessage = (e) => {
+        if (e.data === "connected") return;
+        queryClient.invalidateQueries({ queryKey: ["public-queue", doctorId] });
+      };
+      es.onerror = () => {
+        es.close();
+        reconnectTimer = setTimeout(connect, 5000);
+      };
     };
-    return () => es.close();
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
   }, [doctorId, queryClient]);
 
   const doctor = data?.doctor;

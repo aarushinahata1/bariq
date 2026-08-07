@@ -24,6 +24,7 @@ const BG = "min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-teal-
 function StatusCard({ data }: { data: any }) {
   const isExpired = data.expired === true;
   const isCancelled = data.status === "cancelled" || data.status === "no_show";
+  const isNotToday = data.notInTodayQueue === true;
   const isCompleted = data.status === "completed";
   const isWithDoctor = data.status === "in_progress";
   const isNext = data.position === 1 && !isWithDoctor && !isCompleted;
@@ -31,7 +32,7 @@ function StatusCard({ data }: { data: any }) {
   const patientName: string = data.patientName || "Patient";
   const doctorName: string = data.doctorName || "Doctor";
 
-  if (isExpired || isCancelled) {
+  if (isExpired || isCancelled || isNotToday) {
     return (
       <div className={cn(BG, "items-center justify-center px-6")}>
         <div className="w-full max-w-sm text-center">
@@ -46,13 +47,15 @@ function StatusCard({ data }: { data: any }) {
                 : <Clock className="w-8 h-8 text-slate-400" />}
             </div>
             <h1 className="text-2xl font-bold text-white mb-2">
-              {isCancelled ? "Appointment Cancelled" : "Queue Session Ended"}
+              {isCancelled ? "Appointment Cancelled" : isNotToday ? "Not in Today's Queue" : "Queue Session Ended"}
             </h1>
             <p className="text-white/60 text-sm mb-1">{patientName}</p>
             <p className="text-teal-400/60 text-sm mb-4">Dr. {doctorName}</p>
             <p className="text-white/40 text-sm leading-relaxed">
               {isCancelled
                 ? "This appointment was cancelled or marked as no-show."
+                : isNotToday
+                ? "This appointment isn't part of today's queue — it may have been rescheduled. Please check with the clinic for your updated time."
                 : "This queue link has expired. Please visit the clinic for assistance."}
             </p>
           </div>
@@ -152,7 +155,7 @@ function StatusCard({ data }: { data: any }) {
           {/* Live indicator */}
           <div className="flex items-center justify-center gap-2 text-xs text-white/25">
             <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-            Updates every 5 seconds
+            Live updates
           </div>
         </div>
       </main>
@@ -170,8 +173,9 @@ export default function PatientQueue() {
   const { token } = useParams();
   const queryClient = useQueryClient();
 
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["queue", token],
+  // Own identity — resolved once from the private token, never polled.
+  const { data: identity, isLoading, error } = useQuery({
+    queryKey: ["queue-identity", token],
     queryFn: async () => {
       const res = await fetch(`/api/queue/${token}`);
       if (!res.ok) {
@@ -180,25 +184,57 @@ export default function PatientQueue() {
       }
       return res.json();
     },
-    refetchInterval: 10000,
+    staleTime: Infinity,
+  });
+
+  const doctorId = identity?.doctorId;
+  const expired = identity?.expired === true;
+
+  // Shared board — the same query every patient (and the waiting-room TV) reads for
+  // this doctor. Server-cached and pushed via SSE below, so N patients no longer
+  // each trigger their own per-token DB scan every few seconds.
+  const { data: board, isLoading: isBoardLoading } = useQuery<{ queue: any[] }>({
+    queryKey: ["public-queue", doctorId],
+    queryFn: async () => {
+      const res = await fetch(`/api/public-queue/${doctorId}`);
+      if (!res.ok) throw new Error("Failed to load queue board");
+      return res.json();
+    },
+    enabled: !!doctorId && !expired,
+    refetchInterval: 60000, // safety net only — SSE below drives real-time updates
     refetchIntervalInBackground: true,
     refetchOnWindowFocus: true,
     staleTime: 0,
   });
 
-  // SSE: get pushed updates immediately when queue changes
-  const doctorId = data?.doctorId;
+  // SSE: get pushed updates immediately when the doctor's queue changes.
+  // Auto-reconnects on error with a 5-second delay so live updates survive transient drops.
   useEffect(() => {
     if (!doctorId) return;
-    const es = new EventSource(`/api/sse/doctor/${doctorId}`);
-    es.onmessage = (e) => {
-      if (e.data === "connected") return;
-      queryClient.invalidateQueries({ queryKey: ["queue", token] });
-    };
-    return () => es.close();
-  }, [doctorId, token, queryClient]);
+    let es: EventSource;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  if (isLoading) {
+    const connect = () => {
+      es = new EventSource(`/api/sse/doctor/${doctorId}`);
+      es.onmessage = (e) => {
+        if (e.data === "connected") return;
+        queryClient.invalidateQueries({ queryKey: ["public-queue", doctorId] });
+      };
+      es.onerror = () => {
+        es.close();
+        reconnectTimer = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [doctorId, queryClient]);
+
+  if (isLoading || (!!doctorId && !expired && isBoardLoading)) {
     return (
       <div className={cn(BG, "items-center justify-center")}>
         <div className="text-center">
@@ -224,6 +260,43 @@ export default function PatientQueue() {
       </div>
     );
   }
+
+  // Find our own row in the shared board — it carries the freshest status/position
+  // (e.g. after a doctor reorders the queue), falling back to the one-time identity
+  // fetch when the board hasn't loaded yet.
+  const ownRow = board?.queue.find((a: any) => a.id === identity.id);
+  const status = ownRow?.status ?? identity.status;
+  const queuePosition = ownRow?.queuePosition ?? identity.queuePosition;
+  const queueNumber = ownRow?.queueNumber ?? identity.queueNumber;
+  const isDone = status === "completed" || status === "cancelled" || status === "no_show";
+
+  // Board loaded but doesn't contain this appointment (rescheduled to a different day,
+  // or deleted) and it isn't already in a terminal state — there's no live position to
+  // show, so surface that plainly instead of a stale/misleading fallback number.
+  const notInTodayQueue = !!board && !ownRow && !isDone;
+
+  // Only count patients still actively waiting (booked or paid/checked_in). Excluding
+  // in_progress means: once the doctor starts seeing the patient ahead of you, your
+  // position immediately reflects that you are next.
+  const aheadCount = board && !notInTodayQueue
+    ? board.queue.filter((a: any) =>
+        a.queuePosition !== null &&
+        a.queuePosition < (queuePosition ?? 0) &&
+        (a.status === "booked" || a.status === "checked_in")
+      ).length
+    : 0;
+
+  const data = {
+    expired,
+    notInTodayQueue,
+    patientName: identity.patientName,
+    doctorName: identity.doctorName,
+    status,
+    queueNumber,
+    queuePosition,
+    aheadCount: isDone ? 0 : aheadCount,
+    position: isDone ? 0 : aheadCount + 1,
+  };
 
   return <StatusCard data={data} />;
 }

@@ -64,9 +64,13 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
 
     updateAppointment.mutate({
       id: appointment.id,
+      // Don't force status back to "booked" here — this dialog is offered for
+      // checked_in/in_progress appointments too (only completed/cancelled/no_show are
+      // excluded), and forcing "booked" was silently un-checking-in a paid patient or
+      // pulling a patient currently with the doctor back to "booked" on a simple
+      // date-typo fix.
       updates: {
         date: appointmentDate.toISOString(),
-        status: "booked",
       }
     }, {
       onSuccess: () => {
@@ -284,7 +288,7 @@ export default function Appointments() {
                 </div>
                 <div className="flex items-center justify-between text-xs text-slate-500">
                   <div className="flex flex-col gap-1">
-                    <span className="font-medium text-slate-700">Dr. {apt.doctor.name}</span>
+                    <span className="font-medium text-slate-700">Dr. {apt.doctor?.name || "Unknown"}</span>
                     <span className="flex items-center gap-1">
                       <CalendarIcon className="w-3 h-3" />
                       {format(new Date(apt.date), "MMM d, yyyy")}
@@ -456,7 +460,7 @@ export default function Appointments() {
                         )}
                       </div>
                     </div>
-                    <div className="text-sm font-medium text-slate-700">Dr. {apt.doctor.name}</div>
+                    <div className="text-sm font-medium text-slate-700">Dr. {apt.doctor?.name || "Unknown"}</div>
                     <div className="text-sm text-slate-600">
                       <div className="flex items-center gap-1">
                         <CalendarIcon className="w-3 h-3" />
@@ -492,7 +496,7 @@ export default function Appointments() {
                                 const cTagline = clinicProfile?.tagline ? `<p style="font-size:11px;color:#64748b;font-style:italic;margin-top:2px">${esc(clinicProfile.tagline)}</p>` : "";
                                 const w = window.open('', '_blank');
                                 if (!w) return;
-                                w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt – ${esc(apt.patient.name)}</title></head><body style="margin:0;font-family:'Segoe UI',sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact"><div style="max-width:480px;margin:0 auto"><div style="height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)"></div><div style="padding:18px 24px 14px;border-bottom:2px solid #e2e8f0"><p style="font-size:20px;font-weight:900;color:#0f766e;margin-bottom:3px">${cName}</p>${cTagline}${cAddr}${cPhone}</div><div style="padding:14px 24px 20px"><p style="text-align:center;font-size:9px;font-weight:800;letter-spacing:.25em;color:#94a3b8;text-transform:uppercase;margin-bottom:12px">Appointment Receipt</p><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px"><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Patient: </span><strong>${esc(apt.patient.name)}</strong></p><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Doctor: </span>Dr. ${esc(apt.doctor.name)}</p><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Date: </span>${esc(format(new Date(apt.bill.billingDate), "dd MMM yyyy, h:mm a"))}</p></div><div style="display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;margin-bottom:16px"><div><p style="font-size:12px;font-weight:600;color:#15803d">Amount Paid</p></div><div style="text-align:right"><p style="font-size:26px;font-weight:900;color:#15803d">₹${esc(String((apt.bill.amount / 100).toFixed(0)))}</p><span style="font-size:9px;font-weight:700;background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:20px;text-transform:uppercase">✓ Paid</span></div></div></div><div style="text-align:center;padding:0 24px 16px"><p style="font-size:12px;color:#475569;margin-bottom:6px">Thank you for your visit!</p><p style="font-size:8px;color:#cbd5e1">Powered by BariQ</p></div></div><script>window.onload=()=>{window.print();}<\/script></body></html>`);
+                                w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Receipt – ${esc(apt.patient.name)}</title></head><body style="margin:0;font-family:'Segoe UI',sans-serif;background:#fff;color:#1e293b;-webkit-print-color-adjust:exact;print-color-adjust:exact"><div style="max-width:480px;margin:0 auto"><div style="height:5px;background:linear-gradient(90deg,#0f766e,#0891b2)"></div><div style="padding:18px 24px 14px;border-bottom:2px solid #e2e8f0"><p style="font-size:20px;font-weight:900;color:#0f766e;margin-bottom:3px">${cName}</p>${cTagline}${cAddr}${cPhone}</div><div style="padding:14px 24px 20px"><p style="text-align:center;font-size:9px;font-weight:800;letter-spacing:.25em;color:#94a3b8;text-transform:uppercase;margin-bottom:12px">Appointment Receipt</p><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px"><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Patient: </span><strong>${esc(apt.patient.name)}</strong></p><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Doctor: </span>Dr. ${esc(apt.doctor?.name || "Unknown")}</p><p style="font-size:12.5px;margin:2px 0"><span style="color:#64748b">Date: </span>${esc(format(new Date(apt.bill.billingDate), "dd MMM yyyy, h:mm a"))}</p></div><div style="display:flex;justify-content:space-between;align-items:center;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:14px 18px;margin-bottom:16px"><div><p style="font-size:12px;font-weight:600;color:#15803d">Amount Paid</p></div><div style="text-align:right"><p style="font-size:26px;font-weight:900;color:#15803d">₹${esc(String((apt.bill.amount / 100).toFixed(0)))}</p><span style="font-size:9px;font-weight:700;background:#dcfce7;color:#16a34a;padding:2px 8px;border-radius:20px;text-transform:uppercase">✓ Paid</span></div></div></div><div style="text-align:center;padding:0 24px 16px"><p style="font-size:12px;color:#475569;margin-bottom:6px">Thank you for your visit!</p><p style="font-size:8px;color:#cbd5e1">Powered by BariQ</p></div></div><script>window.onload=()=>{window.print();}<\/script></body></html>`);
                                 w.document.close();
                               }}
                               className="text-teal-700 hover:text-teal-800"
@@ -699,6 +703,11 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   };
 
   const onSubmit = async (data: any) => {
+    // Guards the window between createPatient starting and createAppointment starting
+    // — disabled={createAppointment.isPending} alone leaves the button enabled while a
+    // new-patient creation is still in flight, so a fast double-click/double-Enter can
+    // fire createPatient.mutateAsync twice and create two patient records.
+    if (createPatient.isPending || createAppointment.isPending) return;
     try {
       const digits = normalizePhone(phoneInput);
       if (digits.length < 10) {
@@ -966,10 +975,10 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
 
             <Button
               type="submit"
-              disabled={createAppointment.isPending}
+              disabled={createPatient.isPending || createAppointment.isPending}
               className={`w-full rounded-xl h-12 font-semibold mt-4 ${watchedStatus === 'checked_in' ? 'bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/20' : ''}`}
             >
-              {createAppointment.isPending ? "Booking..." : (watchedStatus === 'checked_in' ? "Create Emergency Entry" : "Confirm Booking")}
+              {createPatient.isPending || createAppointment.isPending ? "Booking..." : (watchedStatus === 'checked_in' ? "Create Emergency Entry" : "Confirm Booking")}
             </Button>
           </form>
         </Form>

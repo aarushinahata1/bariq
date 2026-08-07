@@ -10,7 +10,7 @@ import {
   History, Calendar, Phone, Mail, FileText, Clock,
   ArrowLeft, ChevronRight, Pencil, Check, X,
   Pill, Receipt, CalendarPlus, Activity, Trash2,
-  AlertTriangle, Printer, MapPin, ChevronDown, ChevronUp, Filter,
+  AlertTriangle, Printer, MapPin, ChevronDown, ChevronUp, Filter, Smile, PersonStanding,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import DentalChart from "@/components/DentalChart";
+import BodyChart from "@/components/BodyChart";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -340,6 +342,8 @@ function VitalsEditor({ vitals, onSave, onCancel }: {
     height: vitals?.height?.toString() || "",
   });
 
+  const { toast } = useToast();
+
   type VField = keyof typeof form;
   const vf = (label: string, key: VField, placeholder: string) => (
     <div>
@@ -348,14 +352,30 @@ function VitalsEditor({ vitals, onSave, onCancel }: {
     </div>
   );
 
+  // Fields that silently became NaN (non-numeric input) used to be dropped from the
+  // save payload with no error shown — the user got a "Vitals saved" toast while their
+  // value vanished. Now rejects invalid/negative numbers instead of dropping them.
+  const numericFields: { key: VField; label: string }[] = [
+    { key: "pulse", label: "Pulse" },
+    { key: "temperature", label: "Temperature" },
+    { key: "weight", label: "Weight" },
+    { key: "spO2", label: "SpO₂" },
+    { key: "height", label: "Height" },
+  ];
+
   const handleSave = () => {
     const out: any = {};
     if (form.bp.trim()) out.bp = form.bp.trim();
-    if (form.pulse) out.pulse = parseFloat(form.pulse);
-    if (form.temperature) out.temperature = parseFloat(form.temperature);
-    if (form.weight) out.weight = parseFloat(form.weight);
-    if (form.spO2) out.spO2 = parseFloat(form.spO2);
-    if (form.height) out.height = parseFloat(form.height);
+    for (const { key, label } of numericFields) {
+      const raw = form[key];
+      if (!raw) continue;
+      const value = parseFloat(raw);
+      if (!Number.isFinite(value) || value < 0) {
+        toast({ title: `Invalid ${label}`, description: `Enter a valid non-negative number for ${label}.`, variant: "destructive" });
+        return;
+      }
+      out[key] = value;
+    }
     onSave(out);
   };
 
@@ -498,6 +518,9 @@ export default function PatientHistory() {
     queryFn: () => fetch("/api/settings", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
   });
   const clinicProfile = settings?.clinicProfile;
+  const dentalEnabled = !!settings?.modules?.dental;
+  const orthoEnabled = !!settings?.modules?.ortho;
+  const [historyTab, setHistoryTab] = useState<"medical" | "dental" | "ortho">("medical");
   const updatePatient = useUpdatePatient();
   const deletePatient = useDeletePatient();
   const { toast } = useToast();
@@ -595,6 +618,13 @@ export default function PatientHistory() {
       (phoneDigits.length === 12 && phoneDigits.startsWith("91") && /^[6-9]/.test(phoneDigits.slice(2)));
     if (!validPhone) {
       toast({ title: "Invalid phone number", description: "Enter a valid 10-digit mobile number", variant: "destructive" });
+      return;
+    }
+    // The date input's `max` is a soft hint some browsers/manual edits can bypass —
+    // a future DOB otherwise passes through and renders as a negative age everywhere
+    // (patient header, prescriptions).
+    if (editData.dateOfBirth && editData.dateOfBirth > format(new Date(), "yyyy-MM-dd")) {
+      toast({ title: "Invalid date of birth", description: "Date of birth cannot be in the future", variant: "destructive" });
       return;
     }
     try {
@@ -709,7 +739,7 @@ export default function PatientHistory() {
                     </div>
                     <div>
                       <label className="text-xs font-semibold text-slate-500 mb-1 block">Date of Birth</label>
-                      <Input type="date" value={editData.dateOfBirth} onChange={ef("dateOfBirth")} className="rounded-xl h-9 text-sm" />
+                      <Input type="date" value={editData.dateOfBirth} onChange={ef("dateOfBirth")} max={format(new Date(), "yyyy-MM-dd")} className="rounded-xl h-9 text-sm" />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -853,6 +883,35 @@ export default function PatientHistory() {
 
         {/* ── Right Panel / Timeline ─────────────────────────────────────────── */}
         <div className="lg:col-span-2 space-y-5">
+          {(dentalEnabled || orthoEnabled) && (
+            <div className="flex gap-1 border-b border-slate-200">
+              {([
+                { id: "medical" as const, label: "Medical History", show: true },
+                { id: "dental" as const, label: "Dental Chart", show: dentalEnabled },
+                { id: "ortho" as const, label: "Ortho / Physio", show: orthoEnabled },
+              ]).filter(tab => tab.show).map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setHistoryTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors",
+                    historyTab === tab.id ? "border-teal-600 text-teal-700" : "border-transparent text-slate-400 hover:text-slate-600"
+                  )}
+                >
+                  {tab.id === "dental" && <Smile className="w-3.5 h-3.5" />}
+                  {tab.id === "ortho" && <PersonStanding className="w-3.5 h-3.5" />}
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {historyTab === "dental" && dentalEnabled ? (
+            <DentalChart patientId={patientId} />
+          ) : historyTab === "ortho" && orthoEnabled ? (
+            <BodyChart patientId={patientId} />
+          ) : (
+          <>
           <div className="flex items-center justify-between">
             <h3 className="text-xl font-black text-slate-900">Medical History</h3>
             <div className="flex items-center gap-2">
@@ -1022,6 +1081,10 @@ export default function PatientHistory() {
                                   });
                                   if (res.ok) {
                                     queryClient.invalidateQueries({ queryKey: ["/api/bills", { patientId }] });
+                                    // Dashboard's Collected/Pending cards and the Appointments billing
+                                    // column both read this bill's status — keep them in sync too.
+                                    queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
+                                    queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
                                     toast({ title: "Marked as paid" });
                                   } else {
                                     toast({ title: "Error", description: "Failed to mark bill as paid", variant: "destructive" });
@@ -1053,6 +1116,8 @@ export default function PatientHistory() {
                 );
               })}
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

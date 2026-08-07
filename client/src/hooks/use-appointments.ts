@@ -47,6 +47,9 @@ export function useCreateAppointment() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
+      // Patients page renders a "Last Status" badge derived from appointment status —
+      // without this it sticks on the previous value until an unrelated refetch.
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
     },
   });
 }
@@ -68,6 +71,9 @@ export function useUpdateAppointment() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
+      // Patients page renders a "Last Status" badge derived from appointment status —
+      // without this it sticks on the previous value until an unrelated refetch.
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
     },
   });
 }
@@ -103,6 +109,9 @@ export function useDeleteAppointment() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
       queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
+      // Patients page renders a "Last Status" badge derived from appointment status —
+      // without this it sticks on the previous value until an unrelated refetch.
+      queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
     },
   });
 }

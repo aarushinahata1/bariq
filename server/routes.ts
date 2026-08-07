@@ -6,7 +6,7 @@ import { dirname, join } from "path";
 import { getStorage } from "./storage";
 import * as waWeb from "./whatsapp-web";
 import { api } from "@shared/routes";
-import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames, pharmacySuppliers, pharmacyReturns, wastageRecords, dailyClosings, partners } from "@shared/schema";
+import { notifications, patients, appointments, users, bills, clinics, clinicPayments, prescriptions, clinicSettings, doctorProfiles, insertBillSchema, insertPrescriptionSchema, medicines, pharmacyBills, medicineNames, pharmacySuppliers, pharmacyReturns, wastageRecords, dailyClosings, partners, insertDentalChartSchema, insertMedicineSchema, insertBodyChartSchema } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, gte, lte, desc, sql, count, sum, ilike, or, lt, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -55,7 +55,15 @@ function storage(req: Request) {
 // doctorId → set of active SSE response objects for that doctor's queue
 const sseClients = new Map<string, Set<Response>>();
 
+// doctorId → cached /api/public-queue payload. Every patient watching this doctor
+// (plus the waiting-room TV board) reads the same cached snapshot instead of each
+// triggering their own full-day appointment scan. Invalidated on every mutation
+// below via broadcastQueueUpdate; the TTL is just a safety net.
+const publicQueueCache = new Map<string, { data: any; ts: number }>();
+const PUBLIC_QUEUE_CACHE_TTL_MS = 5000;
+
 function broadcastQueueUpdate(doctorId: string) {
+  publicQueueCache.delete(doctorId);
   const clients = sseClients.get(doctorId);
   if (!clients?.size) return;
   const payload = `data: ${JSON.stringify({ type: "update", ts: Date.now() })}\n\n`;
@@ -64,16 +72,47 @@ function broadcastQueueUpdate(doctorId: string) {
   });
 }
 
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
 // Returns start and end of "today" in IST (UTC+5:30) as UTC Date objects.
 // The server runs in UTC on Render, but clinics are in India, so all "today"
 // filters must use IST midnight boundaries or appointments booked after
 // midnight IST (but still UTC-previous-day) will go missing.
 function dayRangeIST(): { start: Date; end: Date } {
-  const IST_MS = 5.5 * 60 * 60 * 1000;
-  const nowIST = new Date(Date.now() + IST_MS);
+  const nowIST = new Date(Date.now() + IST_OFFSET_MS);
   const s = new Date(nowIST); s.setUTCHours(0, 0, 0, 0);
   const e = new Date(nowIST); e.setUTCHours(23, 59, 59, 999);
-  return { start: new Date(s.getTime() - IST_MS), end: new Date(e.getTime() - IST_MS) };
+  return { start: new Date(s.getTime() - IST_OFFSET_MS), end: new Date(e.getTime() - IST_OFFSET_MS) };
+}
+
+// Given a "YYYY-MM-DD" calendar date, returns the [start, end] UTC instants bounding
+// that IST calendar day — the SAME bucket appointments for that date must land in.
+// Every place that assigns or looks up queueNumber/queuePosition "for a given date"
+// goes through this (or istDateKey below) so desktop, kiosk, and preview requests
+// always agree on which appointments share a day, regardless of the input's shape
+// (a plain "YYYY-MM-DD" string vs. an already-resolved appointment.date instant).
+function istDayRange(dateStr: string): { start: Date; end: Date } {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const start = new Date(Date.UTC(y, mo - 1, d) - IST_OFFSET_MS);
+  return { start, end: new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1) };
+}
+
+// Inverse of istDayRange: given an appointment's stored `date` instant, returns the
+// "YYYY-MM-DD" IST calendar date it belongs to.
+function istDateKey(instant: Date): string {
+  return new Date(instant.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+// Extends a subscription/trial end date by one plan period. Renews from the existing
+// end date when it's still in the future (a renewal before expiry keeps the paid-for
+// remaining time instead of discarding it); otherwise renews from now.
+function extendPlanEnd(currentEndsAt: Date | null | undefined, planType: string | null | undefined, days?: number): Date {
+  const base = currentEndsAt && currentEndsAt > new Date() ? new Date(currentEndsAt) : new Date();
+  if (days != null) base.setDate(base.getDate() + days);
+  else if (planType === "quarterly") base.setMonth(base.getMonth() + 3);
+  else if (planType === "annual") base.setFullYear(base.getFullYear() + 1);
+  else base.setMonth(base.getMonth() + 1);
+  return base;
 }
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
@@ -108,7 +147,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const id = Number(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid patient ID" });
+      // Capture which doctors' queues this touches before the appointments are gone,
+      // so their cached public boards/SSE clients get refreshed instead of going stale.
+      const affectedDoctors = await db.selectDistinct({ doctorId: appointments.doctorId })
+        .from(appointments)
+        .where(and(eq(appointments.clinicId, req.session.clinicId!), eq(appointments.patientId, id)));
       await storage(req).deletePatient(id);
+      affectedDoctors.forEach(d => broadcastQueueUpdate(d.doctorId));
       res.json({ success: true });
     } catch (err) {
       console.error(err);
@@ -169,7 +214,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!doctor) return res.status(404).json({ message: "Doctor not found" });
       const { name, ...profileUpdates } = req.body;
       if (name) await storage(req).updateUser(userId, { name });
-      res.json(await storage(req).updateDoctorProfile(userId, profileUpdates));
+      const updated = await storage(req).updateDoctorProfile(userId, profileUpdates);
+      // avgConsultationTime/isAvailable are embedded in the cached public queue board
+      // (used for "estimated wait"), so a profile edit must refresh it too.
+      broadcastQueueUpdate(userId);
+      res.json(updated);
     } catch (err) {
       res.status(400).json({ message: "Failed to update doctor profile" });
     }
@@ -181,6 +230,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const doctor = await storage(req).getUser(userId);
       if (!doctor) return res.status(404).json({ message: "Doctor not found" });
       await storage(req).deleteDoctor(userId);
+      broadcastQueueUpdate(userId);
       res.json({ success: true });
     } catch (err) {
       console.error(err);
@@ -214,8 +264,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const data = api.appointments.create.input.parse(req.body);
       const appointmentDate = new Date(data.date);
-      const yesterday = dayRangeIST().start;
-      if (appointmentDate < yesterday && data.status !== "checked_in") {
+      const todayStartIST = dayRangeIST().start;
+      if (appointmentDate < todayStartIST && data.status !== "checked_in") {
         return res.status(400).json({ message: "Cannot book appointments in the past" });
       }
 
@@ -231,8 +281,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         return res.status(400).json({ message: `Dr. ${name} is currently unavailable and not accepting appointments.` });
       }
 
-      const apptDateOnly = new Date(data.date); apptDateOnly.setHours(0, 0, 0, 0);
-      const apptEndOfDay = new Date(apptDateOnly); apptEndOfDay.setHours(23, 59, 59, 999);
+      // Bucket by IST calendar day (not server-local setHours, which corrupts the
+      // bucket whenever the server's TZ differs from IST — see istDayRange).
+      const { start: apptDateOnly, end: apptEndOfDay } = istDayRange(istDateKey(appointmentDate));
 
       let appt: any;
       if (data.isQuickCheck) {
@@ -294,6 +345,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { clinicId: _cid, patientId: _pid, ...updates } = req.body;
       const clinicId = req.session.clinicId!;
 
+      // Unlike creation (which validates doctorId belongs to this clinic), an update
+      // could otherwise reassign an appointment to an arbitrary doctor id — including
+      // one from a different clinic — so re-check it here too.
+      if (updates.doctorId !== undefined) {
+        const targetDoctor = await storage(req).getUser(updates.doctorId);
+        if (!targetDoctor || targetDoctor.role !== "doctor") {
+          return res.status(403).json({ message: "Doctor not found in this clinic" });
+        }
+      }
+
       // Drizzle's timestamp columns expect a Date instance, not the ISO string
       // that comes over the wire as JSON — coerce it or every reschedule 500s.
       if (updates.date !== undefined) {
@@ -327,8 +388,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           const doctorId = existing.doctorId;
           await tx.execute(sql`SELECT pg_advisory_xact_lock(${clinicId}::int, hashtext(${doctorId})::int)`);
 
-          const dayStart = new Date(updates.date); dayStart.setHours(0, 0, 0, 0);
-          const dayEnd = new Date(updates.date); dayEnd.setHours(23, 59, 59, 999);
+          const { start: dayStart, end: dayEnd } = istDayRange(istDateKey(updates.date));
           const [maxRow] = await tx.select({
             maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
             maxPos: sql<number>`COALESCE(MAX(${appointments.queuePosition}), 0)::int`,
@@ -396,13 +456,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/appointments/queue-preview", requireAuth, async (req, res) => {
     try {
       const { doctorId, date: dateParam } = req.query as { doctorId?: string; date?: string };
-      if (!doctorId || !dateParam) return res.status(400).json({ message: "doctorId and date are required" });
+      if (!doctorId || !dateParam || !/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+        return res.status(400).json({ message: "doctorId and a valid date (YYYY-MM-DD) are required" });
+      }
 
       const clinicId = req.session.clinicId!;
-      const [y, mo, d] = dateParam.split("-").map(Number);
-      const targetDate = new Date(y, mo - 1, d);
-      const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
-      const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
+      // Same IST-day bucket the create/reschedule handlers use, so this preview always
+      // matches the queue number actually assigned when the appointment is booked.
+      const { start: targetStart, end: targetEnd } = istDayRange(dateParam);
 
       const [maxRow] = await db.select({
         maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
@@ -440,12 +501,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (
         !Array.isArray(orderedAppointmentIds) ||
         orderedAppointmentIds.length === 0 ||
-        !orderedAppointmentIds.every((id: unknown) => Number.isInteger(id))
+        !orderedAppointmentIds.every((id: unknown) => Number.isInteger(id)) ||
+        new Set(orderedAppointmentIds).size !== orderedAppointmentIds.length
       ) {
-        return res.status(400).json({ message: "orderedAppointmentIds must be a non-empty array of integers" });
+        return res.status(400).json({ message: "orderedAppointmentIds must be a non-empty array of unique integers" });
       }
 
+      const clinicId = req.session.clinicId!;
       let doctorId: string | null = null;
+      let validationError: string | null = null;
 
       await db.transaction(async (tx) => {
         const existing = await tx
@@ -453,10 +517,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           .from(appointments)
           .where(and(
             inArray(appointments.id, orderedAppointmentIds),
-            eq(appointments.clinicId, req.session.clinicId!)
+            eq(appointments.clinicId, clinicId)
           ));
 
-        if (existing.length > 0) doctorId = existing[0].doctorId;
+        // Every id must resolve within this clinic, and all must belong to the same
+        // doctor — otherwise the position-pool reassignment below would merge two
+        // different doctors' queues and corrupt both.
+        if (existing.length !== orderedAppointmentIds.length) {
+          validationError = "One or more appointments were not found";
+          return;
+        }
+        const doctorIds = new Set(existing.map(a => a.doctorId));
+        if (doctorIds.size > 1) {
+          validationError = "All appointments must belong to the same doctor";
+          return;
+        }
+        doctorId = existing[0].doctorId;
+
+        // Same advisory lock used everywhere else queue positions are assigned, so a
+        // reorder can never interleave with a concurrent create/reschedule/reorder for
+        // this doctor and produce duplicate positions.
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(${clinicId}::int, hashtext(${doctorId})::int)`);
 
         // Re-use the same pool of position values (sorted) and re-assign them
         // to the new order so no other patients' positions are displaced.
@@ -466,13 +547,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         for (let i = 0; i < orderedAppointmentIds.length; i++) {
           await tx.update(appointments)
-            .set({ queuePosition: sortedPositions[i] ?? i + 1 })
+            .set({ queuePosition: sortedPositions[i] })
             .where(and(
               eq(appointments.id, orderedAppointmentIds[i]),
-              eq(appointments.clinicId, req.session.clinicId!)
+              eq(appointments.clinicId, clinicId)
             ));
         }
       });
+
+      if (validationError) return res.status(400).json({ message: validationError });
 
       // Push real-time update to all SSE clients watching this doctor's queue
       if (doctorId) broadcastQueueUpdate(doctorId);
@@ -486,10 +569,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── PUBLIC QUEUE (no auth) ────────────────────────────────────────────────
 
+  // Resolves a patient's private token to their own identity + static booking info.
+  // Fetched once per page load (not polled) — live queue position/status is derived
+  // client-side from the shared /api/public-queue/:doctorId board instead, so this
+  // no longer needs to scan the doctor's full day of appointments per request.
   app.get("/api/queue/:token", async (req, res) => {
     try {
       const token = req.params.token;
-      const { start: today, end: endOfDay } = dayRangeIST();
+      const { start: today } = dayRangeIST();
 
       const result = await db.transaction(async (tx) => {
         const [appt] = await tx.select().from(appointments).where(eq(appointments.queueToken, token));
@@ -504,47 +591,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         // Link expires when appointment date is in the past and not yet completed
         const apptDate = new Date(appt.date); apptDate.setHours(0, 0, 0, 0);
-        if (apptDate < today && appt.status !== "completed") {
-          return {
-            expired: true,
-            status: appt.status,
-            patientName: patient.name,
-            doctorName: doctor.name || doctor.firstName || "Doctor",
-            position: -1,
-            aheadCount: -1,
-            queueNumber: appt.queueNumber,
-            queuePosition: appt.queuePosition,
-          };
-        }
-
-        // Scope to the appointment's clinic so position counts stay per-clinic
-        const allDoctorAppts = await tx.select().from(appointments)
-          .where(and(
-            eq(appointments.doctorId, appt.doctorId),
-            eq(appointments.clinicId, appt.clinicId!),
-            gte(appointments.date, today),
-            lte(appointments.date, endOfDay)
-          ))
-          .orderBy(appointments.queuePosition);
-
-        // Only count patients still actively waiting (booked or paid/checked_in).
-        // Excluding in_progress means: once the doctor starts seeing the patient
-        // ahead of you, your position immediately reflects that you are next.
-        const aheadCount = allDoctorAppts.filter(
-          (a: any) => a.queuePosition !== null &&
-            a.queuePosition! < (appt.queuePosition || 0) &&
-            (a.status === "booked" || a.status === "checked_in")
-        ).length;
-
-        const isDone = appt.status === "completed" || appt.status === "cancelled" || appt.status === "no_show";
+        const expired = apptDate < today && appt.status !== "completed";
 
         return {
-          expired: false,
+          id: appt.id,
+          expired,
           patientName: patient.name,
           doctorName: doctor.name || doctor.firstName || "Doctor",
           doctorId: appt.doctorId,
-          position: isDone ? 0 : aheadCount + 1,
-          aheadCount: isDone ? 0 : aheadCount,
           status: appt.status,
           queueNumber: appt.queueNumber,
           queuePosition: appt.queuePosition,
@@ -563,15 +617,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/public-queue/:doctorId", async (req, res) => {
     try {
       const doctorId = req.params.doctorId;
+
+      const cached = publicQueueCache.get(doctorId);
+      if (cached && Date.now() - cached.ts < PUBLIC_QUEUE_CACHE_TTL_MS) {
+        return res.json(cached.data);
+      }
+
       const { start: today, end: endOfDay } = dayRangeIST();
 
-      const [doctorRow] = await db.select().from(users)
+      // Explicit column projection — this is a no-auth endpoint read by every patient's
+      // browser and the waiting-room TV, so it must never leak passwordHash/email
+      // (bare `.select()` on `users` pulls every column) or, on the appointments side,
+      // each patient's private queueToken/reason/notes/vitals.
+      const [doctorRow] = await db.select({
+        id: users.id,
+        name: users.name,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        clinicId: users.clinicId,
+        specialization: doctorProfiles.specialization,
+        avgConsultationTime: doctorProfiles.avgConsultationTime,
+      }).from(users)
         .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
         .where(and(eq(users.id, doctorId), eq(users.role, "doctor")));
       if (!doctorRow) return res.status(404).json({ message: "Doctor not found" });
 
-      const clinicId = doctorRow.users.clinicId!;
-      const todaysAppts = await db.select().from(appointments)
+      const clinicId = doctorRow.clinicId!;
+      const todaysAppts = await db.select({
+        id: appointments.id,
+        queueNumber: appointments.queueNumber,
+        queuePosition: appointments.queuePosition,
+        status: appointments.status,
+        patientName: patients.name,
+      }).from(appointments)
         .leftJoin(patients, and(eq(patients.id, appointments.patientId), eq(patients.clinicId, clinicId)))
         .where(and(
           eq(appointments.doctorId, doctorId),
@@ -581,13 +659,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         ))
         .orderBy(appointments.queuePosition);
 
-      res.json({
-        doctor: { ...doctorRow.users, doctorProfile: doctorRow.doctor_profiles || null },
+      const payload = {
+        doctor: {
+          id: doctorRow.id,
+          name: doctorRow.name,
+          firstName: doctorRow.firstName,
+          lastName: doctorRow.lastName,
+          doctorProfile: { specialization: doctorRow.specialization, avgConsultationTime: doctorRow.avgConsultationTime },
+        },
         queue: todaysAppts.map(r => ({
-          ...r.appointments,
-          patientName: r.patients?.name || "Patient",
+          id: r.id,
+          queueNumber: r.queueNumber,
+          queuePosition: r.queuePosition,
+          status: r.status,
+          patientName: r.patientName || "Patient",
         })),
-      });
+      };
+      publicQueueCache.set(doctorId, { data: payload, ts: Date.now() });
+      res.json(payload);
     } catch (err) {
       res.status(500).json({ message: "Failed to get public queue" });
     }
@@ -627,8 +716,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const doctorId = req.params.id;
       const { delayMinutes } = req.body;
-      const today = new Date(); today.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(today); endOfDay.setHours(23, 59, 59, 999);
+      const { start: today, end: endOfDay } = dayRangeIST();
 
       const waitingAppts = await db.select().from(appointments)
         .where(and(
@@ -797,6 +885,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const data = insertBillSchema.parse(req.body);
       const appt = await storage(req).getAppointment(data.appointmentId);
       if (!appt) return res.status(403).json({ message: "Appointment not found in this clinic" });
+      // The patientId on the bill must match the appointment's own patient — otherwise
+      // an unrelated (or cross-clinic) patientId in the request body would silently
+      // misattribute this bill's billing history to the wrong patient.
+      if (data.patientId !== appt.patientId) {
+        return res.status(400).json({ message: "patientId does not match the appointment's patient" });
+      }
       res.status(201).json(await storage(req).createBill(data));
     } catch (err: any) {
       // PostgreSQL unique_violation — bills have a unique index on appointmentId
@@ -891,6 +985,69 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     } catch (err) {
       console.error(err);
       res.status(500).json({ message: "Failed to delete prescription" });
+    }
+  });
+
+  // ── DENTAL CHART ──────────────────────────────────────────────────────────
+  // Opt-in module — gated client-side on clinic_settings["modules"].dental so it stays
+  // invisible to the non-dental clinics that make up most of this app's user base.
+
+  app.get("/api/dental-charts/:patientId", requireAuth, async (req, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const [patient] = await db.select().from(patients)
+        .where(and(eq(patients.id, patientId), eq(patients.clinicId, req.session.clinicId!)));
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+      const chart = await storage(req).getDentalChart(patientId);
+      res.json(chart || { patientId, dentitionType: "permanent", teeth: {}, treatmentLog: [], notes: null });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch dental chart" });
+    }
+  });
+
+  app.put("/api/dental-charts/:patientId", requireAuth, async (req, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const [patient] = await db.select().from(patients)
+        .where(and(eq(patients.id, patientId), eq(patients.clinicId, req.session.clinicId!)));
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+      const data = insertDentalChartSchema.omit({ clinicId: true, patientId: true }).partial().parse(req.body);
+      const chart = await storage(req).upsertDentalChart(patientId, data);
+      res.json(chart);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      res.status(500).json({ message: "Failed to save dental chart" });
+    }
+  });
+
+  // ── ORTHO / PHYSIO BODY CHART ─────────────────────────────────────────────
+  // Opt-in module — gated client-side on clinic_settings["modules"].ortho, same pattern as dental.
+
+  app.get("/api/body-charts/:patientId", requireAuth, async (req, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const [patient] = await db.select().from(patients)
+        .where(and(eq(patients.id, patientId), eq(patients.clinicId, req.session.clinicId!)));
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+      const chart = await storage(req).getBodyChart(patientId);
+      res.json(chart || { patientId, regions: {}, treatmentLog: [], notes: null });
+    } catch (err) {
+      res.status(500).json({ message: "Failed to fetch body chart" });
+    }
+  });
+
+  app.put("/api/body-charts/:patientId", requireAuth, async (req, res) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const [patient] = await db.select().from(patients)
+        .where(and(eq(patients.id, patientId), eq(patients.clinicId, req.session.clinicId!)));
+      if (!patient) return res.status(404).json({ message: "Patient not found" });
+      const data = insertBodyChartSchema.omit({ clinicId: true, patientId: true }).partial().parse(req.body);
+      const chart = await storage(req).upsertBodyChart(patientId, data);
+      res.json(chart);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      res.status(500).json({ message: "Failed to save body chart" });
     }
   });
 
@@ -1194,18 +1351,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!tokenRow) return res.status(404).json({ message: "Invalid registration link" });
       const clinicId = tokenRow.clinicId;
 
-      const now = new Date();
-      const todayMidnight = new Date(now); todayMidnight.setHours(0, 0, 0, 0);
-      let targetDate: Date;
-      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-        const [y, mo, d] = dateParam.split("-").map(Number);
-        targetDate = new Date(y, mo - 1, d);
-        if (targetDate < todayMidnight) targetDate = new Date(todayMidnight);
-      } else {
-        targetDate = new Date(todayMidnight);
-      }
-      const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
-      const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
+      // Same IST-day bucket the kiosk registration handler below (and desktop
+      // create/reschedule) use, so this preview always matches the number actually
+      // assigned — and the same bucket a walk-in registered after midnight IST lands in.
+      const { start: todayStartIST } = dayRangeIST();
+      const dateKey = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : istDateKey(new Date());
+      const requestedRange = istDayRange(dateKey);
+      const { start: targetStart, end: targetEnd } = requestedRange.start < todayStartIST
+        ? dayRangeIST()
+        : requestedRange;
 
       const [maxRow] = await db.select({
         maxNum: sql<number>`COALESCE(MAX(${appointments.queueNumber}), 0)::int`,
@@ -1297,24 +1451,18 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!doctor) return res.status(404).json({ message: "Doctor not found" });
       const doctorName = doctor.name || [doctor.firstName, doctor.lastName].filter(Boolean).join(" ") || "Doctor";
 
-      // Resolve the target booking date — reject past dates
-      const now = new Date();
-      const todayMidnight = new Date(now); todayMidnight.setHours(0, 0, 0, 0);
-      let targetDate: Date;
-      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-        const [y, mo, d] = dateParam.split("-").map(Number);
-        targetDate = new Date(y, mo - 1, d);
-        if (targetDate < todayMidnight) {
-          return res.status(400).json({ message: "Cannot book appointments in the past" });
-        }
-      } else {
-        targetDate = new Date(todayMidnight);
+      // Resolve the target booking date — reject past dates. Uses the same IST-day
+      // bucket as desktop create/reschedule and the kiosk preview above, so a walk-in
+      // registered at 2 AM IST lands in "today," not the UTC-previous day, and never
+      // collides with a desktop-booked queue number for the same clinical day.
+      const { start: todayStartIST } = dayRangeIST();
+      const dateKey = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : istDateKey(new Date());
+      const { start: targetStart, end: targetEnd } = istDayRange(dateKey);
+      if (targetStart < todayStartIST) {
+        return res.status(400).json({ message: "Cannot book appointments in the past" });
       }
-
-      const targetStart = new Date(targetDate); targetStart.setHours(0, 0, 0, 0);
-      const targetEnd = new Date(targetDate); targetEnd.setHours(23, 59, 59, 999);
-      const appointmentDate = new Date(targetDate);
-      appointmentDate.setHours(9, 0, 0, 0);
+      // Store the appointment at 9 AM IST on the target day.
+      const appointmentDate = new Date(targetStart.getTime() + 9 * 60 * 60 * 1000);
 
       // All mutating DB ops run inside a single transaction with two advisory locks:
       //   Lock 1 (clinicId, hash(phone)) — prevents concurrent duplicate patient creation
@@ -1389,6 +1537,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (result.alreadyRegistered) {
         return res.json({
           alreadyRegistered: true,
+          id: result.appt.id,
           patientName: result.patient.name,
           doctorName,
           queueNumber: result.appt.queueNumber,
@@ -1402,6 +1551,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       res.status(201).json({
         alreadyRegistered: false,
+        id: result.appt.id,
         patientName: result.patient.name,
         doctorName,
         queueNumber: result.appt.queueNumber,
@@ -1421,8 +1571,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/pharmacy/stats", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+      const { start: todayStart, end: todayEnd } = dayRangeIST();
+      // First-of-month boundary in IST, not server-local (UTC) — same reasoning as
+      // dayRangeIST: a server running in UTC would otherwise start the month ~5.5h early.
+      const nowIST = new Date(Date.now() + IST_OFFSET_MS);
+      const monthStart = new Date(Date.UTC(nowIST.getUTCFullYear(), nowIST.getUTCMonth(), 1) - IST_OFFSET_MS);
       const thirtyDaysFromNow = new Date(); thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
       const thirtyDaysStr = thirtyDaysFromNow.toISOString().split("T")[0];
 
@@ -1448,7 +1601,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
           .from(pharmacyBills)
           .where(and(eq(pharmacyBills.clinicId, clinicId),
-            gte(pharmacyBills.createdAt, new Date(new Date().getFullYear(), new Date().getMonth(), 1)))),
+            gte(pharmacyBills.createdAt, monthStart))),
       ]);
 
       res.json({
@@ -1487,10 +1640,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/medicines", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty } = req.body;
-      const [med] = await db.insert(medicines).values({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty, clinicId }).returning();
+      // Rejects negative price/stock/GST — previously unvalidated, letting negative
+      // costPrice/sellingPrice/stockQty into the DB and corrupting downstream math.
+      const data = insertMedicineSchema.omit({ clinicId: true }).parse(req.body);
+      const [med] = await db.insert(medicines).values({ ...data, clinicId }).returning();
       res.json(med);
     } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: err?.message || "Failed to create medicine" });
     }
   });
@@ -1500,13 +1656,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const clinicId = req.session.clinicId!;
       const { id } = req.params;
-      const { name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty } = req.body;
+      const data = insertMedicineSchema.omit({ clinicId: true }).partial().parse(req.body);
       const [med] = await db.update(medicines)
-        .set({ name, genericName, category, manufacturer, batchNo, expiryDate, costPrice, sellingPrice, stockQty, minStockQty, unit, hsnCode, gstPercent, supplierName, reorderQty })
+        .set(data)
         .where(and(eq(medicines.id, Number(id)), eq(medicines.clinicId, clinicId))).returning();
       if (!med) return res.status(404).json({ message: "Medicine not found" });
       res.json(med);
     } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: err?.message || "Failed to update medicine" });
     }
   });
@@ -1558,27 +1715,82 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/bills", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const { items, ...rest } = req.body;
+      const { items, discountPercent: rawDiscountPercent, patientId: rawPatientId, ...rest } = req.body;
+
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "Bill must have at least one item" });
+      }
+      const discountPercent = Math.min(100, Math.max(0, Number(rawDiscountPercent) || 0));
+      const patientId = rawPatientId != null ? Number(rawPatientId) : null;
+      if (patientId != null) {
+        const [patient] = await db.select({ id: patients.id }).from(patients)
+          .where(and(eq(patients.id, patientId), eq(patients.clinicId, clinicId)));
+        if (!patient) return res.status(403).json({ message: "Patient not found in this clinic" });
+      }
+
+      const todayIST = istDateKey(new Date());
+
       const bill = await db.transaction(async (tx) => {
-        for (const item of (items as any[])) {
-          if (!item.medicineId) continue;
-          const [med] = await tx.select({ stockQty: medicines.stockQty, name: medicines.name })
-            .from(medicines)
-            .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
-          if (!med || item.qty > med.stockQty) {
-            throw Object.assign(new Error(`Insufficient stock for ${med?.name ?? "item"}`), { isStockError: true });
+        let subtotal = 0;
+        let gstTotal = 0;
+        const resolvedItems: any[] = [];
+
+        for (const item of items as any[]) {
+          const qty = Number(item.qty);
+          if (!item.medicineId || !Number.isInteger(qty) || qty <= 0) {
+            throw Object.assign(new Error("Each item needs a valid medicine and a positive quantity"), { isStockError: true });
           }
+          // Row lock so two concurrent bills for the same medicine can't both read the
+          // same stockQty, both pass the check below, and both succeed — oversold stock.
+          const [med] = await tx.select({
+            stockQty: medicines.stockQty, name: medicines.name, unit: medicines.unit,
+            sellingPrice: medicines.sellingPrice, gstPercent: medicines.gstPercent, expiryDate: medicines.expiryDate,
+          }).from(medicines)
+            .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)))
+            .for("update");
+          if (!med) throw Object.assign(new Error("Medicine not found"), { isStockError: true });
+          if (qty > med.stockQty) {
+            throw Object.assign(new Error(`Insufficient stock for ${med.name}`), { isStockError: true });
+          }
+          if (med.expiryDate && med.expiryDate < todayIST) {
+            throw Object.assign(new Error(`${med.name} is expired and cannot be dispensed`), { isStockError: true });
+          }
+
           await tx.update(medicines)
-            .set({ stockQty: sql`${medicines.stockQty} - ${item.qty}` })
+            .set({ stockQty: sql`${medicines.stockQty} - ${qty}` })
             .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
+
+          // Price/GST/totals are recomputed from the medicine record here, never taken
+          // from the client — otherwise any authenticated user could bill an arbitrary
+          // amount by editing the request body.
+          const base = med.sellingPrice * qty;
+          const gstAmount = Math.round(base * (med.gstPercent ?? 0) / 100);
+          subtotal += base;
+          gstTotal += gstAmount;
+          resolvedItems.push({
+            medicineId: item.medicineId, name: med.name, unit: med.unit,
+            sellingPrice: med.sellingPrice, gstPercent: med.gstPercent,
+            qty, gstAmount, total: base + gstAmount,
+          });
         }
+
+        const discountAmount = Math.round((subtotal + gstTotal) * discountPercent / 100);
+        const totalAmount = subtotal + gstTotal - discountAmount;
+
         const [bill] = await tx.insert(pharmacyBills)
-          .values({ ...rest, items, clinicId }).returning();
+          .values({
+            ...rest,
+            patientId,
+            items: resolvedItems,
+            subtotal, discountPercent, discountAmount, gstTotal, totalAmount,
+            clinicId,
+          }).returning();
         return bill!;
       });
       res.json(bill);
     } catch (err: any) {
       if (err?.isStockError) return res.status(400).json({ message: err.message });
+      console.error(err);
       res.status(400).json({ message: err?.message || "Failed to create pharmacy bill" });
     }
   });
@@ -1727,11 +1939,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/pharmacy/closing/today", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
-      // IST-aware date string
-      const istNow = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-      const todayStr = istNow.toISOString().split("T")[0];
+      // Both halves of this response must agree on the same IST calendar day — they
+      // previously didn't (bill/return totals used server-local/UTC boundaries while
+      // the closing-record lookup used IST), so sales made 00:00-05:30 IST were
+      // attributed to the wrong day between the two.
+      const { start: todayStart, end: todayEnd } = dayRangeIST();
+      const todayStr = istDateKey(new Date());
 
       const [dayBills, dayReturns, existing] = await Promise.all([
         db.select({ paymentMethod: pharmacyBills.paymentMethod, totalAmount: pharmacyBills.totalAmount })
@@ -1798,10 +2011,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.get("/api/pharmacy/gst-export", requireAuth, async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      const month = (req.query.month as string) || istDateKey(new Date()).slice(0, 7);
       const [year, mon] = month.split("-").map(Number);
-      const from = new Date(year, mon - 1, 1);
-      const to = new Date(year, mon, 0, 23, 59, 59, 999);
+      // IST month boundaries, not server-local — bookend via istDayRange on day 1 of
+      // this month and day 1 of next month, so it's correct regardless of days-in-month.
+      const from = istDayRange(`${month}-01`).start;
+      const nextMonth = mon === 12 ? `${year + 1}-01` : `${year}-${String(mon + 1).padStart(2, "0")}`;
+      const to = new Date(istDayRange(`${nextMonth}-01`).start.getTime() - 1);
 
       const [billRows, medRows] = await Promise.all([
         db.select({ items: pharmacyBills.items })
@@ -1944,7 +2160,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/settings/:key", requireAuth, async (req, res) => {
     try {
       const { key } = req.params;
-      if (!["whatsapp", "sms", "clinicProfile"].includes(key)) return res.status(400).json({ message: "Unknown settings key" });
+      if (!["whatsapp", "sms", "clinicProfile", "modules"].includes(key)) return res.status(400).json({ message: "Unknown settings key" });
       const existing = (await storage(req).getSetting(key)) || {};
       const merged: Record<string, any> = { ...existing };
       for (const [field, val] of Object.entries(req.body)) {
@@ -2158,9 +2374,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const now = new Date();
       const allClinics = await db.select().from(clinics);
       const total = allClinics.length;
-      const trial = allClinics.filter(c => c.planStatus === "trial" && c.trialEndsAt && c.trialEndsAt > now).length;
-      const active = allClinics.filter(c => c.planStatus === "active").length;
+      const trial = allClinics.filter(c => c.planStatus === "trial" && (!c.trialEndsAt || c.trialEndsAt > now)).length;
+      // Excludes clinics whose subscription has lapsed but haven't been lazily synced to
+      // "expired" yet (sync only happens when that clinic's own session hits an API
+      // route) — without this exclusion those clinics were counted as both active AND
+      // expired below, inflating both totals past the true clinic count.
+      const active = allClinics.filter(c => c.planStatus === "active" && (!c.subscriptionEndsAt || c.subscriptionEndsAt >= now)).length;
       const expired = allClinics.filter(c =>
+        c.planStatus === "expired" || c.planStatus === "cancelled" ||
         (c.planStatus === "trial" && c.trialEndsAt && c.trialEndsAt < now) ||
         (c.planStatus === "active" && c.subscriptionEndsAt && c.subscriptionEndsAt < now)
       ).length;
@@ -2206,28 +2427,39 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/admin/payments/:id", requireSuperAdmin, async (req, res) => {
     try {
       const { status, notes } = req.body;
-      const id = Number(req.params.id);
-      const [current] = await db.select().from(clinicPayments).where(eq(clinicPayments.id, id));
-      if (!current) return res.status(404).json({ message: "Payment not found" });
-      if (current.status !== "pending") return res.status(400).json({ message: "Only pending payments can be approved or rejected" });
-      const [payment] = await db.update(clinicPayments)
-        .set({ status, notes })
-        .where(eq(clinicPayments.id, id))
-        .returning();
-      if (!payment) return res.status(404).json({ message: "Payment not found" });
-
-      // Activate clinic when payment approved
-      if (status === "approved") {
-        const subEnds = new Date();
-        if (payment.planType === "quarterly") subEnds.setMonth(subEnds.getMonth() + 3);
-        else if (payment.planType === "annual") subEnds.setFullYear(subEnds.getFullYear() + 1);
-        else subEnds.setMonth(subEnds.getMonth() + 1);
-        await db.update(clinics)
-          .set({ planStatus: "active", subscriptionEndsAt: subEnds })
-          .where(eq(clinics.id, payment.clinicId));
+      if (!["approved", "rejected"].includes(status)) {
+        return res.status(400).json({ message: "status must be 'approved' or 'rejected'" });
       }
+      const id = Number(req.params.id);
+
+      const payment = await db.transaction(async (tx) => {
+        // Row lock so two concurrent approve/reject requests for the same payment can't
+        // both pass the pending-status check and both activate the clinic.
+        const [current] = await tx.select().from(clinicPayments).where(eq(clinicPayments.id, id)).for("update");
+        if (!current) throw Object.assign(new Error("Payment not found"), { code: "NOT_FOUND" });
+        if (current.status !== "pending") throw Object.assign(new Error("Only pending payments can be approved or rejected"), { code: "NOT_PENDING" });
+
+        const [updated] = await tx.update(clinicPayments)
+          .set({ status, notes })
+          .where(eq(clinicPayments.id, id))
+          .returning();
+
+        // Activate clinic when payment approved — same transaction as the status update
+        // so a crash between the two can't leave the payment "approved" but the clinic
+        // still expired/trial.
+        if (status === "approved") {
+          const [clinic] = await tx.select().from(clinics).where(eq(clinics.id, updated!.clinicId)).for("update");
+          const subEnds = extendPlanEnd(clinic?.planStatus === "active" ? clinic.subscriptionEndsAt : null, updated!.planType);
+          await tx.update(clinics)
+            .set({ planStatus: "active", subscriptionEndsAt: subEnds })
+            .where(eq(clinics.id, updated!.clinicId));
+        }
+        return updated!;
+      });
       res.json(payment);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "NOT_FOUND") return res.status(404).json({ message: err.message });
+      if (err?.code === "NOT_PENDING") return res.status(400).json({ message: err.message });
       res.status(500).json({ message: "Failed to update payment" });
     }
   });
@@ -2238,12 +2470,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const { clinicId, planType, amount, utr, notes } = req.body;
       if (!clinicId || !planType) return res.status(400).json({ message: "clinicId and planType are required" });
 
-      const subEnds = new Date();
-      if (planType === "quarterly") subEnds.setMonth(subEnds.getMonth() + 3);
-      else if (planType === "annual") subEnds.setFullYear(subEnds.getFullYear() + 1);
-      else subEnds.setMonth(subEnds.getMonth() + 1);
-
       const amountPaise = Math.round(Number(amount) || 0);
+      if (amountPaise <= 0) return res.status(400).json({ message: "amount must be greater than zero" });
+
+      const [clinic] = await db.select().from(clinics).where(eq(clinics.id, Number(clinicId)));
+      if (!clinic) return res.status(404).json({ message: "Clinic not found" });
+      // Renewing before expiry keeps the remaining paid time instead of discarding it.
+      const subEnds = extendPlanEnd(clinic.planStatus === "active" ? clinic.subscriptionEndsAt : null, planType);
 
       const [payment] = await db.insert(clinicPayments).values({
         clinicId: Number(clinicId),
@@ -2271,15 +2504,24 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const id = Number(req.params.id);
       const { action, days, plan } = req.body;
 
+      const [clinic] = await db.select().from(clinics).where(eq(clinics.id, id));
+      if (!clinic) return res.status(404).json({ message: "Clinic not found" });
+
       let updates: Record<string, any> = {};
       if (action === "activate") {
-        const subEnds = new Date();
-        if (plan === "quarterly") subEnds.setMonth(subEnds.getMonth() + 3);
-        else if (plan === "annual") subEnds.setFullYear(subEnds.getFullYear() + 1);
-        else subEnds.setMonth(subEnds.getMonth() + 1);
+        // Renewing before expiry keeps the remaining paid time instead of discarding it.
+        const subEnds = extendPlanEnd(clinic.planStatus === "active" ? clinic.subscriptionEndsAt : null, plan);
         updates = { planStatus: "active", subscriptionEndsAt: subEnds };
       } else if (action === "extend-trial") {
-        const trialEnds = new Date(); trialEnds.setDate(trialEnds.getDate() + (days || 7));
+        // Refuse on a currently-active paying clinic — this action used to force
+        // planStatus back to "trial" even for them, orphaning their real
+        // subscriptionEndsAt (isPlanExpired stops consulting it once planStatus isn't
+        // "active"). Also extends from the existing trialEndsAt when still in the
+        // future, so a second click adds time instead of resetting it.
+        if (clinic.planStatus === "active") {
+          return res.status(400).json({ message: "Clinic is on an active paid plan — extending the trial would clobber it" });
+        }
+        const trialEnds = extendPlanEnd(clinic.trialEndsAt, undefined, days || 7);
         updates = { planStatus: "trial", trialEndsAt: trialEnds };
       } else if (action === "expire") {
         updates = { planStatus: "expired" };
@@ -2389,7 +2631,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         passwordHash,
         phone: phone?.trim() || null,
         referralCode,
-        commissionPercent: commissionPercent != null ? Number(commissionPercent) : undefined,
+        commissionPercent: commissionPercent != null ? Math.min(100, Math.max(0, Number(commissionPercent) || 0)) : undefined,
         status: "active",
       }).returning();
 
@@ -2412,7 +2654,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       } else if (status === "active" || status === "inactive") {
         updates.status = status;
       } else {
-        if (commissionPercent != null) updates.commissionPercent = Number(commissionPercent);
+        if (commissionPercent != null) updates.commissionPercent = Math.min(100, Math.max(0, Number(commissionPercent) || 0));
         if (name) updates.name = String(name).trim();
         if (phone !== undefined) updates.phone = phone?.trim() || null;
         if (Object.keys(updates).length === 0) return res.status(400).json({ message: "No valid fields to update" });

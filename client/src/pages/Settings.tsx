@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer, Smartphone, Wifi, WifiOff, Loader2, Users, Plus, Trash2, Edit2, Pill } from "lucide-react";
+import { MessageCircle, MessageSquare, CheckCircle2, AlertCircle, Eye, EyeOff, Save, ChevronRight, CreditCard, Clock, CheckCircle, XCircle, Copy, RefreshCw, Building2, QrCode, ExternalLink, Printer, Smartphone, Wifi, WifiOff, Loader2, Users, Plus, Trash2, Edit2, Pill, Smile, PersonStanding } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
@@ -689,6 +689,7 @@ export default function Settings() {
     clinicName: "", tagline: "", address: "", phone: "", email: "",
     doctorName: "", qualifications: "", registrationNo: "",
   });
+  const [modules, setModules] = useState<{ dental: boolean; ortho: boolean }>({ dental: false, ortho: false });
 
   useEffect(() => {
     if (!settings) return;
@@ -696,6 +697,7 @@ export default function Settings() {
     if (settings.sms) setSms(s => ({ ...s, ...settings.sms }));
     if (settings.clinicProfile) setClinicProfile(s => ({ ...s, ...settings.clinicProfile }));
     else if (clinic?.name && !clinicProfile.clinicName) setClinicProfile(s => ({ ...s, clinicName: clinic.name }));
+    if (settings.modules) setModules(m => ({ ...m, ...settings.modules }));
   }, [settings]);
 
   const saveMutation = useMutation({
@@ -711,7 +713,7 @@ export default function Settings() {
     },
     onSuccess: (_, { key }) => {
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
-      const labels: Record<string, string> = { whatsapp: "WhatsApp", sms: "SMS", clinicProfile: "Clinic profile" };
+      const labels: Record<string, string> = { whatsapp: "WhatsApp", sms: "SMS", clinicProfile: "Clinic profile", modules: "Modules" };
       toast({ title: `${labels[key] || "Settings"} saved` });
     },
     onError: (err: Error) => {
@@ -725,6 +727,18 @@ export default function Settings() {
   });
 
   const hasPending = payments.some((p: any) => p.status === "pending");
+
+  function toggleDentalModule() {
+    const next = { ...modules, dental: !modules.dental };
+    setModules(next);
+    saveMutation.mutate({ key: "modules", data: next });
+  }
+
+  function toggleOrthoModule() {
+    const next = { ...modules, ortho: !modules.ortho };
+    setModules(next);
+    saveMutation.mutate({ key: "modules", data: next });
+  }
 
   const tabs: { id: Tab; label: string; icon: typeof MessageCircle; color: string }[] = [
     { id: "clinic", label: "Clinic Profile", icon: Building2, color: "text-teal-700" },
@@ -775,6 +789,62 @@ export default function Settings() {
         {/* Clinic Profile Panel */}
         {activeTab === "clinic" && (
           <div className="space-y-5">
+            <Card className="p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
+                    <Smile className="w-5 h-5 text-teal-700" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-slate-900">Dental Chart Module</h2>
+                    <p className="text-xs text-slate-500">Adds an odontogram &amp; treatment log to patient records — off by default, only relevant for dental practices</p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+                  <div
+                    onClick={toggleDentalModule}
+                    className={cn(
+                      "w-11 h-6 rounded-full relative transition-colors cursor-pointer",
+                      modules.dental ? "bg-teal-600" : "bg-slate-200"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-all",
+                      modules.dental ? "left-5" : "left-0.5"
+                    )} />
+                  </div>
+                </label>
+              </div>
+            </Card>
+
+            <Card className="p-6">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">
+                    <PersonStanding className="w-5 h-5 text-teal-700" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-slate-900">Ortho / Physio Body Chart Module</h2>
+                    <p className="text-xs text-slate-500">Adds a body map &amp; treatment log to patient records — off by default, only relevant for orthopedic &amp; physiotherapy practices</p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none shrink-0">
+                  <div
+                    onClick={toggleOrthoModule}
+                    className={cn(
+                      "w-11 h-6 rounded-full relative transition-colors cursor-pointer",
+                      modules.ortho ? "bg-teal-600" : "bg-slate-200"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-all",
+                      modules.ortho ? "left-5" : "left-0.5"
+                    )} />
+                  </div>
+                </label>
+              </div>
+            </Card>
+
             <Card className="p-6 space-y-5">
               <div className="flex items-center gap-3 pb-1">
                 <div className="w-10 h-10 rounded-xl bg-teal-100 flex items-center justify-center">

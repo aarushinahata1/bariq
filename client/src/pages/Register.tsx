@@ -27,6 +27,7 @@ function todayStr() {
 
 type RegistrationResult = {
   alreadyRegistered: boolean;
+  id: number;
   patientName: string;
   doctorName: string;
   queueNumber: number | null;
@@ -107,30 +108,63 @@ export default function Register() {
     refetchInterval: 10000,
   });
 
-  // Live queue data for success screen (today's bookings only)
-  const isSuccessToday = step === "success" && !!result?.queueToken && selectedDate === todayStr();
-  const { data: liveQueue } = useQuery({
-    queryKey: ["queue", result?.queueToken],
+  // Live queue board for success screen (today's bookings only) — the same shared
+  // board every patient and the waiting-room TV read for this doctor, filtered down
+  // to our own appointment client-side, instead of a per-registration polled query.
+  // Matched by the stable appointment `id` (not `queueToken`, which the public board
+  // never exposes and which is reminted on reschedule) so a same-day reschedule while
+  // this screen is open doesn't break the match.
+  const isSuccessToday = step === "success" && !!result?.id && selectedDate === todayStr();
+  const { data: liveBoard, isFetched: isLiveBoardFetched } = useQuery<{ queue: any[] }>({
+    queryKey: ["public-queue", selectedDoctorId],
     queryFn: async () => {
-      const res = await fetch(`/api/queue/${result!.queueToken}`);
+      const res = await fetch(`/api/public-queue/${selectedDoctorId}`);
       if (!res.ok) return null;
       return res.json();
     },
-    enabled: isSuccessToday,
-    refetchInterval: 10000,
+    enabled: isSuccessToday && !!selectedDoctorId,
+    refetchInterval: 60000, // safety net only — SSE below drives real-time updates
     staleTime: 0,
   });
 
-  // SSE: push live queue updates to the success screen
+  const liveOwnRow = liveBoard?.queue.find((a: any) => a.id === result?.id);
+  // Board loaded but this appointment isn't on it (e.g. rescheduled to another day
+  // right after registering) — distinct from "still loading," which needs different copy.
+  const liveNotInTodayQueue = isLiveBoardFetched && !!liveBoard && !liveOwnRow;
+  const liveAheadCount = liveOwnRow
+    ? liveBoard!.queue.filter((a: any) =>
+        a.queuePosition !== null &&
+        a.queuePosition < (liveOwnRow.queuePosition ?? 0) &&
+        (a.status === "booked" || a.status === "checked_in")
+      ).length
+    : undefined;
+
+  // SSE: push live queue updates to the success screen.
+  // Auto-reconnects on error with a 5-second delay so live updates survive transient drops.
   useEffect(() => {
     if (!isSuccessToday || !selectedDoctorId) return;
-    const es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
-    es.onmessage = (e) => {
-      if (e.data === "connected") return;
-      queryClient.invalidateQueries({ queryKey: ["queue", result?.queueToken] });
+    let es: EventSource;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
+      es.onmessage = (e) => {
+        if (e.data === "connected") return;
+        queryClient.invalidateQueries({ queryKey: ["public-queue", selectedDoctorId] });
+      };
+      es.onerror = () => {
+        es.close();
+        reconnectTimer = setTimeout(connect, 5000);
+      };
     };
-    return () => es.close();
-  }, [isSuccessToday, selectedDoctorId, result?.queueToken, queryClient]);
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [isSuccessToday, selectedDoctorId, queryClient]);
 
   const doctors = info?.doctors ?? [];
 
@@ -256,19 +290,21 @@ export default function Register() {
                 {/* Live queue position (today only) */}
                 {selectedDate === todayStr() && (
                   <div className="mt-4 pt-4 border-t border-white/20">
-                    {liveQueue ? (
-                      liveQueue.status === "completed" ? (
+                    {liveOwnRow ? (
+                      liveOwnRow.status === "completed" ? (
                         <p className="text-green-200 font-bold text-sm">Consultation complete!</p>
-                      ) : liveQueue.status === "in_progress" ? (
+                      ) : liveOwnRow.status === "in_progress" ? (
                         <p className="text-teal-100 font-bold text-sm animate-pulse">With doctor now</p>
-                      ) : liveQueue.position === 1 ? (
+                      ) : liveAheadCount === 0 ? (
                         <p className="text-amber-200 font-bold text-sm">You're up next!</p>
                       ) : (
                         <p className="text-teal-100/80 text-sm">
-                          <span className="font-bold text-white text-lg">{liveQueue.aheadCount}</span>{" "}
-                          {liveQueue.aheadCount === 1 ? "person" : "people"} ahead of you
+                          <span className="font-bold text-white text-lg">{liveAheadCount}</span>{" "}
+                          {liveAheadCount === 1 ? "person" : "people"} ahead of you
                         </p>
                       )
+                    ) : liveNotInTodayQueue ? (
+                      <p className="text-teal-100/60 text-xs">Live position unavailable — check with reception</p>
                     ) : (
                       <div className="flex items-center justify-center gap-1.5">
                         <div className="w-1.5 h-1.5 bg-teal-300/50 rounded-full animate-pulse" />

@@ -535,11 +535,14 @@ export default function DoctorConsole() {
     refetchInterval: 15000,
   });
 
-  // Clinic profile (for print)
-  const { data: clinicProfile } = useQuery({
-    queryKey: ["/api/settings/clinicProfile"],
-    queryFn: () => fetch("/api/settings/clinicProfile", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
+  // Clinic profile (for print) — there is no /api/settings/:key GET route (only
+  // PATCH), so fetching that path always 404s and silently falls back to {}; the
+  // clinic profile actually lives under the /api/settings.clinicProfile key.
+  const { data: settings } = useQuery<Record<string, any>>({
+    queryKey: ["/api/settings"],
+    queryFn: () => fetch("/api/settings", { credentials: "include" }).then(r => r.ok ? r.json() : {}),
   });
+  const clinicProfile = settings?.clinicProfile;
 
   // SSE for real-time updates — auto-reconnects on drop (Render 30s proxy timeout, etc.)
   useEffect(() => {

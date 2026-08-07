@@ -244,6 +244,7 @@ export default function Doctors() {
                 </span>
                 <Switch
                   checked={doc.doctorProfile?.isAvailable ?? true}
+                  disabled={updateProfile.isPending}
                   onCheckedChange={(checked) => handleEmergencyToggle(doc.id, checked)}
                 />
               </div>
@@ -394,11 +395,10 @@ function CreateDoctorDialog({ open, onOpenChange }: { open: boolean, onOpenChang
   
   const form = useForm<CreateDoctorValues>({
     resolver: zodResolver(createDoctorSchema),
-    defaultValues: { 
-      email: "", 
-      name: "", 
-      role: "doctor", 
-      specialization: "", 
+    defaultValues: {
+      email: "",
+      name: "",
+      specialization: "",
       avgConsultationTime: 15,
       availability: DEFAULT_AVAILABILITY
     }

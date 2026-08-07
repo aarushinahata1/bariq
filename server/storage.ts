@@ -1,11 +1,12 @@
 import { db } from "./db";
 import {
   users, patients, appointments, doctorProfiles, notifications, prescriptions, bills, clinicSettings,
-  clinics, clinicPayments,
+  clinics, clinicPayments, dentalCharts, bodyCharts,
   type User, type UpsertUser, type Patient, type InsertPatient,
   type Appointment, type InsertAppointment, type DoctorProfile,
   type Notification, type Prescription, type InsertPrescription,
   type Bill, type InsertBill, type ClinicSetting, type Clinic, type ClinicPayment,
+  type DentalChart, type InsertDentalChart, type BodyChart, type InsertBodyChart,
 } from "@shared/schema";
 import { eq, and, desc, sql, gte, lte, like, or, inArray } from "drizzle-orm";
 import { format } from "date-fns";
@@ -66,24 +67,30 @@ export class DatabaseStorage {
     return row;
   }
 
-  async getDoctors(): Promise<(User & { doctorProfile: DoctorProfile | null })[]> {
+  async getDoctors(): Promise<(Omit<User, "passwordHash"> & { doctorProfile: DoctorProfile | null })[]> {
     const rows = await db
       .select()
       .from(users)
       .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
       .where(and(eq(users.role, "doctor"), eq(users.clinicId, this.clinicId)));
-    return rows.map(r => ({ ...r.users, doctorProfile: r.doctor_profiles || null }));
+    return rows.map(r => {
+      const { passwordHash, ...safeUser } = r.users;
+      return { ...safeUser, doctorProfile: r.doctor_profiles || null };
+    });
   }
 
-  async createDoctor(userInput: UpsertUser, profile?: any): Promise<User> {
-    return await db.transaction(async (tx) => {
-      const [user] = await tx.insert(users).values({ ...userInput, clinicId: this.clinicId }).returning();
+  async createDoctor(userInput: UpsertUser, profile?: any): Promise<Omit<User, "passwordHash">> {
+    const user = await db.transaction(async (tx) => {
+      // role is forced here, not trusted from userInput — see insertUserSchema.
+      const [row] = await tx.insert(users).values({ ...userInput, clinicId: this.clinicId, role: "doctor" }).returning();
       const profileData = profile
-        ? { ...profile, userId: user!.id }
-        : { userId: user!.id, specialization: "General Practice" };
+        ? { ...profile, userId: row!.id }
+        : { userId: row!.id, specialization: "General Practice" };
       await tx.insert(doctorProfiles).values(profileData);
-      return user!;
+      return row!;
     });
+    const { passwordHash, ...safeUser } = user;
+    return safeUser;
   }
 
   async createDoctorProfile(profile: any): Promise<DoctorProfile> {
@@ -91,12 +98,21 @@ export class DatabaseStorage {
     return row!;
   }
 
+  // doctorProfiles has no clinicId column of its own, so tenant-scoping has to go
+  // through a subquery on users — route-layer callers already pre-check ownership via
+  // getUser(), but this keeps the guarantee here too rather than relying solely on that.
+  private doctorInThisClinic(userId: string) {
+    return inArray(doctorProfiles.userId, db.select({ id: users.id }).from(users)
+      .where(and(eq(users.id, userId), eq(users.clinicId, this.clinicId))));
+  }
+
   async updateDoctorProfile(userId: string, profile: Partial<DoctorProfile>): Promise<DoctorProfile> {
     const [row] = await db.update(doctorProfiles)
       .set(profile)
-      .where(eq(doctorProfiles.userId, userId))
+      .where(and(eq(doctorProfiles.userId, userId), this.doctorInThisClinic(userId)))
       .returning();
-    return row!;
+    if (!row) throw new Error("Doctor not found");
+    return row;
   }
 
   async deleteDoctor(userId: string): Promise<void> {
@@ -109,7 +125,8 @@ export class DatabaseStorage {
           eq(appointments.doctorId, userId),
           sql`${appointments.status} IN ('booked', 'checked_in')`
         ));
-      await tx.delete(doctorProfiles).where(eq(doctorProfiles.userId, userId));
+      await tx.delete(doctorProfiles)
+        .where(and(eq(doctorProfiles.userId, userId), this.doctorInThisClinic(userId)));
       await tx.delete(users)
         .where(and(eq(users.id, userId), eq(users.clinicId, this.clinicId)));
     });
@@ -205,7 +222,7 @@ export class DatabaseStorage {
 
   // ── Appointments ──────────────────────────────────────────────────────────
 
-  async getAppointments(filters: { date?: Date; doctorId?: string; status?: string; patientId?: number }): Promise<(Appointment & { patient: Patient; doctor: User; bill?: Bill | null })[]> {
+  async getAppointments(filters: { date?: Date; doctorId?: string; status?: string; patientId?: number }): Promise<(Appointment & { patient: Patient; doctor: Omit<User, "passwordHash"> | null; bill?: Bill | null })[]> {
     let conditions: any[] = [eq(appointments.clinicId, this.clinicId)];
 
     if (filters.date) {
@@ -232,17 +249,27 @@ export class DatabaseStorage {
       .where(and(...conditions))
       .orderBy(desc(appointments.date));
 
-    return rows.map(r => ({
-      ...r.appointments,
-      patient: {
-        ...r.patients!,
-        source: r.patients?.source || "internal",
-        status: r.patients?.status || "active",
-        funnelStage: r.patients?.funnelStage || "new",
-      },
-      doctor: r.users!,
-      bill: r.bills || null,
-    }));
+    return rows.map(r => {
+      // doctorId is a hard FK but the referenced user can still be deleted (deleteDoctor
+      // only cascades booked/checked_in appointments to "cancelled", not the FK itself),
+      // so this leftJoin can legitimately come back empty — callers must handle null.
+      let doctor: Omit<User, "passwordHash"> | null = null;
+      if (r.users) {
+        const { passwordHash, ...safeDoctor } = r.users;
+        doctor = safeDoctor;
+      }
+      return {
+        ...r.appointments,
+        patient: {
+          ...r.patients!,
+          source: r.patients?.source || "internal",
+          status: r.patients?.status || "active",
+          funnelStage: r.patients?.funnelStage || "new",
+        },
+        doctor,
+        bill: r.bills || null,
+      };
+    });
   }
 
   async getAppointment(id: number): Promise<Appointment | undefined> {
@@ -303,6 +330,46 @@ export class DatabaseStorage {
     return row!;
   }
 
+  // ── Dental Charts ─────────────────────────────────────────────────────────
+
+  async getDentalChart(patientId: number): Promise<DentalChart | undefined> {
+    const [row] = await db.select().from(dentalCharts)
+      .where(and(eq(dentalCharts.patientId, patientId), eq(dentalCharts.clinicId, this.clinicId)));
+    return row;
+  }
+
+  async upsertDentalChart(patientId: number, updates: Partial<InsertDentalChart>): Promise<DentalChart> {
+    const { clinicId: _cid, patientId: _pid, ...rest } = updates as any;
+    const [row] = await db.insert(dentalCharts)
+      .values({ clinicId: this.clinicId, patientId, ...rest, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: dentalCharts.patientId,
+        set: { ...rest, updatedAt: new Date() },
+      })
+      .returning();
+    return row!;
+  }
+
+  // ── Ortho / Physio Body Charts ───────────────────────────────────────────────
+
+  async getBodyChart(patientId: number): Promise<BodyChart | undefined> {
+    const [row] = await db.select().from(bodyCharts)
+      .where(and(eq(bodyCharts.patientId, patientId), eq(bodyCharts.clinicId, this.clinicId)));
+    return row;
+  }
+
+  async upsertBodyChart(patientId: number, updates: Partial<InsertBodyChart>): Promise<BodyChart> {
+    const { clinicId: _cid, patientId: _pid, ...rest } = updates as any;
+    const [row] = await db.insert(bodyCharts)
+      .values({ clinicId: this.clinicId, patientId, ...rest, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: bodyCharts.patientId,
+        set: { ...rest, updatedAt: new Date() },
+      })
+      .returning();
+    return row!;
+  }
+
   // ── Dashboard ─────────────────────────────────────────────────────────────
 
   async getDashboardStats(): Promise<any> {
@@ -345,8 +412,11 @@ export class DatabaseStorage {
     const weeklyData = [];
     let totalRevenue = 0;
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(today); d.setDate(d.getDate() - i); d.setHours(0, 0, 0, 0);
-      const dEnd = new Date(d); dEnd.setHours(23, 59, 59, 999);
+      // `today` is already an IST-midnight instant — subtract whole days by raw ms
+      // instead of setDate()/setHours(), which reset to the server's local (UTC)
+      // midnight and silently shift every bucket ~5.5h off its IST calendar day.
+      const d = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
+      const dEnd = new Date(d.getTime() + 24 * 60 * 60 * 1000 - 1);
       const dayTs = d.getTime();
       const dEndTs = dEnd.getTime();
 
@@ -370,7 +440,9 @@ export class DatabaseStorage {
         ? Math.round(waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length)
         : 0;
 
-      weeklyData.push({ date: format(d, "MMM dd"), patients: dayAppts.length, avgWait, revenue: dayRevenue });
+      // Shift by the IST offset before formatting so the label reflects the IST
+      // calendar date — date-fns' format() reads local (server/UTC) getters otherwise.
+      weeklyData.push({ date: format(new Date(d.getTime() + IST_MS), "MMM dd"), patients: dayAppts.length, avgWait, revenue: dayRevenue });
     }
 
     const totalPending = allBills.filter(b => b.status === "pending").reduce((acc, b) => acc + b.amount, 0);

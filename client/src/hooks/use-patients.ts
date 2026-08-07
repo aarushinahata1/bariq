@@ -64,6 +64,10 @@ export function useDeletePatient() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.patients.list.path] });
+      // Deleting a patient cascades and removes their appointments/bills server-side —
+      // without this, Appointments/Dashboard keep showing now-nonexistent records.
+      queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
     },
   });
 }

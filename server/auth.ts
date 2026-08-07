@@ -26,10 +26,19 @@ function requireEnv(name: string): string {
 const SUPER_ADMIN_EMAIL = requireEnv("SUPER_ADMIN_EMAIL");
 const SUPER_ADMIN_PASSWORD = requireEnv("SUPER_ADMIN_PASSWORD");
 
-// Timing-safe string comparison — prevents timing attacks on password checks
+// A fixed bcrypt hash (of an arbitrary placeholder, cost 10) with no corresponding
+// real account — compared against on login when no clinic/partner matches the given
+// email, purely to burn roughly the same time as a real password check would.
+const DUMMY_BCRYPT_HASH = "$2a$10$CwTycUXWue0Thq9StjUM0uJ8Q4wF5C0Ie6C7z2joNa9DE1NpZ2K5m";
+
+// Timing-safe string comparison — prevents timing attacks on password checks.
+// Hashes both inputs to a fixed-length digest first so there's no length-mismatch
+// branch to time (crypto.timingSafeEqual throws on unequal-length buffers, and an
+// early `a.length !== b.length` return would itself leak length via timing).
 function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  const aHash = crypto.createHash("sha256").update(a).digest();
+  const bHash = crypto.createHash("sha256").update(b).digest();
+  return crypto.timingSafeEqual(aHash, bHash);
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -328,6 +337,11 @@ export function setupAuth(app: Express) {
       // No clinic with this email — try partner login
       const [partner] = await db.select().from(partners).where(eq(partners.email, email.toLowerCase().trim()));
       if (!partner) {
+        // No account at all for this email — run a dummy bcrypt compare so this
+        // response takes roughly as long as the "wrong password" path above instead
+        // of returning near-instantly, which would let an attacker infer account
+        // existence purely from response timing despite the identical error message.
+        await verifyPassword(password, DUMMY_BCRYPT_HASH);
         return res.status(401).json({ message: "Invalid email or password" });
       }
       const partnerValid = await verifyPassword(password, partner.passwordHash);

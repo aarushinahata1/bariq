@@ -49,6 +49,10 @@ export function useUpdateDoctorProfile() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.doctors.list.path] });
+      // Availability/consult-time changes affect Dashboard's "Active Doctor Queues"
+      // widget and any appointment views that show per-doctor wait estimates.
+      queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
     },
   });
 }
@@ -63,6 +67,10 @@ export function useDeleteDoctor() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.doctors.list.path] });
+      // Deleting a doctor cancels their upcoming appointments server-side — without
+      // this, Appointments/Dashboard keep showing them as still booked.
+      queryClient.invalidateQueries({ queryKey: [api.appointments.list.path] });
+      queryClient.invalidateQueries({ queryKey: [api.dashboard.stats.path] });
     },
   });
 }

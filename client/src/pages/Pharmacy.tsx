@@ -1030,6 +1030,7 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
   }, [medicines]);
 
   const in30days = new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0];
+  const todayStr = new Date().toISOString().split("T")[0];
 
   const filtered = useMemo(() => {
     if (!search.trim()) return [];
@@ -1135,17 +1136,28 @@ function BillingTab({ medicines, settings }: { medicines: Medicine[]; settings?:
           {filtered.length > 0 && (
             <div className="border border-slate-200 rounded-xl overflow-hidden divide-y divide-slate-100">
               {filtered.map(m => {
-                const isExpiring = m.expiryDate && m.expiryDate <= in30days;
+                const isExpired = m.expiryDate && m.expiryDate < todayStr;
+                const isExpiring = !isExpired && m.expiryDate && m.expiryDate <= in30days;
                 return (
                   <button
                     key={m.id}
-                    onClick={() => addToCart(m)}
-                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-violet-50 transition-colors text-left"
+                    onClick={() => {
+                      if (isExpired) {
+                        toast({ title: `${m.name} is expired`, description: "Expired stock cannot be dispensed.", variant: "destructive" });
+                        return;
+                      }
+                      addToCart(m);
+                    }}
+                    className={cn(
+                      "w-full flex items-center justify-between px-4 py-3 transition-colors text-left",
+                      isExpired ? "opacity-60 cursor-not-allowed hover:bg-transparent" : "hover:bg-violet-50"
+                    )}
                   >
                     <div>
                       <p className="font-semibold text-slate-800 text-sm">{m.name}</p>
                       <p className="text-xs text-slate-400">
                         {m.genericName ? `${m.genericName} · ` : ""}{m.category} · {m.unit}
+                        {isExpired && <span className="text-red-600 font-semibold"> · EXPIRED {format(new Date(m.expiryDate!), "MMM yy")}</span>}
                         {isExpiring && <span className="text-amber-600"> · Exp {format(new Date(m.expiryDate!), "MMM yy")}</span>}
                       </p>
                     </div>
