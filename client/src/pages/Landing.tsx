@@ -1,10 +1,11 @@
-﻿import { useState } from "react";
+import { useState } from "react";
 import { Link } from "wouter";
 import {
   Activity, Clock, Users, FileText, BarChart3, Shield,
   Star, CheckCircle, ArrowRight, Stethoscope, Zap, MessageCircle,
   Pill, Package, Bell, Heart, Printer, AlertTriangle, Menu, X, Phone, Mail, MapPin,
-  Handshake, IndianRupee, Link2,
+  Handshake, IndianRupee, Link2, QrCode, Wallet, Truck, Layers, Sparkles,
+  ShieldCheck, Globe, Smile, ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -20,59 +21,123 @@ const features = [
   {
     icon: Clock,
     title: "Live Queue Management",
-    desc: "Real-time digital tokens with SSE push updates. Patients track their position from their phone. No more crowded waiting rooms.",
+    desc: "Live digital tokens with instant push updates. Patients track their position from their phone. No more crowded waiting rooms.",
     badge: null,
+  },
+  {
+    icon: QrCode,
+    title: "Kiosk Self Check In",
+    desc: "Patients scan a QR code, enter their phone number, and join the queue themselves. No receptionist typing required at peak hours.",
+    badge: "New",
   },
   {
     icon: Heart,
     title: "Complete Patient Records",
-    desc: "Full medical history per visit: vitals (BP, pulse, SpO₂, temp, weight), diagnoses, prescriptions, and a one-click printable medical summary.",
+    desc: "Full medical history per visit: vitals (BP, pulse, SpO₂, temperature, weight), diagnoses, prescriptions, and a one tap printable medical summary.",
     badge: "New",
   },
   {
     icon: Pill,
     title: "Smart Pharmacy POS",
-    desc: "Full pharmacy billing with FEFO auto-selection. The soonest-expiring batch is always sold first. Batch tracking, GST, and instant print invoices.",
+    desc: "Full pharmacy billing with FEFO auto selection. The batch closest to expiry is always sold first. Batch tracking, GST, and instant print invoices.",
     badge: "New",
   },
   {
     icon: Bell,
-    title: "Expiry & Reorder Alerts",
-    desc: "Live alerts for expired stock, medicines expiring in 7 / 30 / 90 days, and low stock. Print a purchase order for your supplier in one click.",
+    title: "Expiry and Reorder Alerts",
+    desc: "Live alerts for expired stock, medicines nearing expiry in 7, 30, or 90 days, and low stock. Print a purchase order for your supplier in one tap.",
     badge: "New",
   },
   {
     icon: AlertTriangle,
-    title: "Allergy & Safety Alerts",
-    desc: "Patient allergies show as a red banner on every visit. Doctors can't miss it. Blood group, age, gender always visible at a glance.",
+    title: "Allergy and Safety Alerts",
+    desc: "Patient allergies show as a red banner on every visit. Doctors can't miss it. Blood group, age, and gender always visible at a glance.",
+    badge: "New",
+  },
+  {
+    icon: Wallet,
+    title: "Daily Cash Reconciliation",
+    desc: "Close every day with expected versus actual cash, UPI, card, and online totals reconciled in one screen. Catch shortfalls the same day.",
+    badge: "New",
+  },
+  {
+    icon: Truck,
+    title: "Suppliers and Wastage Tracking",
+    desc: "A directory of pharmacy suppliers with payment terms and lead times, plus a clean log of returns and written off stock with the reason and cost.",
     badge: "New",
   },
   {
     icon: FileText,
     title: "Digital Prescriptions",
-    desc: "Doctors write and print prescriptions digitally. Full history per patient. Expand any past Rx, reprint it, or delete it with one tap.",
+    desc: "Doctors write and print prescriptions digitally. Full history per patient. Expand any past prescription, reprint it, or delete it with one tap.",
   },
   {
     icon: Users,
-    title: "Patient CRM",
-    desc: "Full patient profiles with demographics, follow-up reminders, and funnel tracking. Never lose a patient or miss a follow-up again.",
+    title: "Patient CRM and Campaigns",
+    desc: "Full patient profiles with demographics, follow up reminders, funnel tracking, and bulk WhatsApp or SMS campaigns to any patient list.",
   },
   {
     icon: BarChart3,
-    title: "Billing & Analytics",
-    desc: "Automated billing, cash / UPI / card tracking, daily revenue reports. Know exactly where every rupee comes from.",
+    title: "Billing and Analytics",
+    desc: "Automated billing, cash, UPI, and card tracking, and daily revenue reports. Know exactly where every rupee comes from.",
   },
   {
     icon: Shield,
-    title: "Multi-Role Access",
-    desc: "Separate logins for doctors, receptionists, pharmacists, and admin. Each sees only what they need. No confusion, no data leaks.",
+    title: "Role Based Access",
+    desc: "Separate logins for doctors, receptionists, pharmacists, and admins. Each sees only what they need. No confusion, no data leaks.",
+  },
+];
+
+const specialtyModules = [
+  {
+    icon: Smile,
+    title: "Dental Charting",
+    body: "A full tooth by tooth chart for permanent or primary dentition, with condition, surfaces, and a running treatment log per patient.",
+  },
+  {
+    icon: Activity,
+    title: "Ortho and Physio Body Charts",
+    body: "Region by region charting for orthopaedic and physiotherapy practices, with severity and a treatment history over time.",
+  },
+];
+
+const whyBariq = [
+  {
+    icon: Layers,
+    title: "One platform, not five",
+    body: "Queue, patient records, prescriptions, pharmacy, billing, and CRM live in one screen instead of five disconnected tools that never sync with each other.",
+  },
+  {
+    icon: Globe,
+    title: "Built for Indian clinics",
+    body: "GST billing, cash, UPI, and card reconciliation, WhatsApp first patient communication, and queue windows that respect IST. Not a template built for another market.",
+  },
+  {
+    icon: Zap,
+    title: "Real time by default",
+    body: "Every queue update reaches a patient's phone and the waiting room screen instantly over a live connection, not a page they refresh every few minutes.",
+  },
+  {
+    icon: ShieldCheck,
+    title: "Safety built into the visit",
+    body: "Allergy banners and vitals sit inside the patient's record itself, right where a doctor is prescribing, not in a form nobody opens.",
+  },
+  {
+    icon: Sparkles,
+    title: "Pharmacy that thinks ahead",
+    body: "FEFO batch selection, expiry alerts, and one tap reorder mean fewer expired shelves and fewer last minute calls to your supplier.",
+  },
+  {
+    icon: IndianRupee,
+    title: "Fair, human pricing",
+    body: "A plan sized to your clinic instead of a rigid rate card, a real 7 day trial, and no credit card required to start.",
   },
 ];
 
 const testimonials = [
   {
     name: "Dr. Priya Sharma",
-    clinic: "Sharma Multi-Specialty Clinic, Pune",
+    clinic: "Sharma Multispecialty Clinic, Pune",
     text: "Patient wait time dropped from 45 minutes to under 15. Our reception team is half as stressed now.",
   },
   {
@@ -89,20 +154,25 @@ const testimonials = [
 
 const planIncludes = [
   "Live Queue Management",
+  "Kiosk Self Check In",
   "Digital Prescriptions",
   "Smart Pharmacy POS",
   "FEFO Batch Tracking",
-  "Expiry & Reorder Alerts",
+  "Expiry and Reorder Alerts",
   "Allergy Safety Alerts",
   "Patient Vitals per Visit",
   "Printable Medical Records",
-  "Patient CRM & Follow-ups",
-  "Billing & Revenue Reports",
-  "WhatsApp Integration",
-  "Multi-Role Access",
+  "Dental Charting Module",
+  "Ortho and Physio Charting",
+  "Daily Cash Reconciliation",
+  "Supplier and Wastage Log",
+  "Patient CRM and Follow Ups",
+  "Bulk WhatsApp and SMS",
+  "Billing and Revenue Reports",
+  "Role Based Access",
   "Doctor Analytics",
   "Appointment Booking",
-  "Pharmacy Billing & GST",
+  "Pharmacy Billing and GST",
   "Unlimited Staff Accounts",
 ];
 
@@ -115,12 +185,12 @@ const newHighlights = [
   {
     icon: Bell,
     title: "Smart Alerts",
-    body: "Expired stock, low inventory, and near-expiry medicines all flagged in real-time with a live count badge.",
+    body: "Expired stock, low inventory, and near expiry medicines all flagged instantly with a live count badge.",
   },
   {
     icon: Package,
-    title: "One-Click Reorder",
-    body: "Generates a ready-to-print purchase order with suggested quantities based on minimum stock levels and reorder settings.",
+    title: "One Tap Reorder",
+    body: "Generates a ready to print purchase order with suggested quantities based on minimum stock levels and reorder settings.",
   },
   {
     icon: Heart,
@@ -135,7 +205,7 @@ const newHighlights = [
   {
     icon: Printer,
     title: "Print Medical Records",
-    body: "One-click printable patient summary with demographics, visit history, diagnoses, and past prescriptions.",
+    body: "One tap printable patient summary with demographics, visit history, diagnoses, and past prescriptions.",
   },
 ];
 
@@ -143,8 +213,9 @@ const navLinks = [
   { label: "Features", href: "#features" },
   { label: "Pharmacy", href: "#pharmacy" },
   { label: "Patient Records", href: "#records" },
+  { label: "Why BariQ", href: "#why-bariq" },
   { label: "Partners", href: "#partner" },
-  { label: "Testimonials", href: "#testimonials" },
+  { label: "FAQ", href: "#faq" },
   { label: "Contact", href: "#contact" },
 ];
 
@@ -166,13 +237,55 @@ const partnerPerks = [
   },
 ];
 
+const faqs = [
+  {
+    q: "Is there a setup fee or a long term contract?",
+    a: "No. BariQ starts with a free 7 day trial with full platform access and no credit card required. Pricing after that is a plan built around your clinic's size, not a fixed rate card, and there is no long term lock in.",
+  },
+  {
+    q: "Do I need a paid WhatsApp Business API to use WhatsApp features?",
+    a: "No. You can connect WhatsApp Web by scanning a QR code from your own phone, or connect a Meta Business API or Twilio account if you already have one. Either way, patients get queue links and reminders on WhatsApp.",
+  },
+  {
+    q: "Can more than one doctor use BariQ at the same clinic?",
+    a: "Yes. Each doctor gets their own live queue and console, and receptionists, pharmacists, and admins each get their own role with only the access they need.",
+  },
+  {
+    q: "Is patient data secure?",
+    a: "Every clinic's data is kept separate at the database level, staff logins are role based, and passwords are never stored in plain text. Only your own team can see your patients' records.",
+  },
+  {
+    q: "What if my clinic is a dental or physiotherapy practice?",
+    a: "BariQ includes opt in dental charting and ortho and physio body charts, so specialty clinics get the tools they need without cluttering the interface for clinics that do not.",
+  },
+  {
+    q: "How is BariQ different from a paper register or a spreadsheet?",
+    a: "A paper register cannot alert you before a medicine expires, text a patient their queue number, or show a doctor a patient's allergies before they prescribe. BariQ does all of that automatically, from one screen.",
+  },
+];
+
+const faqSchema = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: faqs.map((f) => ({
+    "@type": "Question",
+    name: f.q,
+    acceptedAnswer: { "@type": "Answer", text: f.a },
+  })),
+};
+
 export default function Landing() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [openFaq, setOpenFaq] = useState<number | null>(0);
 
   return (
     <div className="min-h-screen font-sans" style={{ backgroundColor: "#f0f0ea", color: "#111" }}>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
 
-      {/* ── Nav ──────────────────────────────────────────────────── */}
+      {/* Nav */}
       <nav className="sticky top-0 z-50 border-b border-gray-200 bg-[#f0f0ea]/95 backdrop-blur">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
           {/* Logo */}
@@ -240,7 +353,7 @@ export default function Landing() {
         )}
       </nav>
 
-      {/* ── Hero ─────────────────────────────────────────────────── */}
+      {/* Hero */}
       <section className="pt-24 pb-20 px-6">
         <div className="max-w-2xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 border border-gray-300 bg-white/60 text-gray-600 px-4 py-1.5 rounded-full text-sm font-medium mb-8">
@@ -255,7 +368,7 @@ export default function Landing() {
           </h1>
 
           <p className="text-lg text-gray-500 max-w-xl mx-auto mb-10 leading-relaxed">
-            BariQ brings your entire clinic onto one screen: queue, patients, prescriptions, pharmacy, and billing. Focus on care, not paperwork.
+            BariQ is clinic management software that brings your entire clinic onto one screen: queue, patients, prescriptions, pharmacy, and billing. Focus on care, not paperwork.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-5">
@@ -273,7 +386,7 @@ export default function Landing() {
           </div>
 
           <p className="text-sm text-gray-400">
-            7-day free trial · no credit card required · full access from day one
+            7 day free trial · no credit card required · full access from day one
             <span className="mx-3 text-gray-300">|</span>
             <Link href="/login" className="text-teal-700 hover:underline font-medium">
               Already have an account? Sign In →
@@ -292,7 +405,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── What's New ────────────────────────────────────────────── */}
+      {/* What's New */}
       <section className="py-20 px-6 bg-teal-700">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-12">
@@ -300,7 +413,7 @@ export default function Landing() {
               <Zap className="w-3.5 h-3.5" /> Just Shipped
             </div>
             <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-3">
-              New: Smart Pharmacy + Complete Patient Records
+              New: Smart Pharmacy Plus Complete Patient Records
             </h2>
             <p className="text-teal-200 text-lg max-w-2xl mx-auto">
               The features clinics asked for most, now live. No extra cost, no setup needed.
@@ -320,7 +433,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Features ─────────────────────────────────────────────── */}
+      {/* Features */}
       <section id="features" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
@@ -328,7 +441,7 @@ export default function Landing() {
               Everything a clinic actually needs
             </h2>
             <p className="text-gray-500 text-lg max-w-xl mx-auto">
-              Built from the ground up for Indian clinics, whether you run a single room or a multi-doctor practice.
+              Built from the ground up for Indian clinics, whether you run a solo practice or a clinic with many doctors.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -350,8 +463,36 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Pharmacy deep-dive ────────────────────────────────────── */}
-      <section id="pharmacy" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+      {/* Specialty modules */}
+      <section className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12">
+            <div className="inline-flex items-center gap-2 bg-teal-50 border border-teal-100 text-teal-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-5">
+              <Layers className="w-3.5 h-3.5" /> Specialty Modules
+            </div>
+            <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
+              Extra tools for specialty clinics
+            </h2>
+            <p className="text-gray-500 text-lg max-w-xl mx-auto">
+              Dental and orthopaedic or physiotherapy practices get dedicated charting on top of everything else. Turn them on only if you need them.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-3xl mx-auto">
+            {specialtyModules.map((m) => (
+              <div key={m.title} className="bg-white rounded-2xl p-7 border border-gray-100 shadow-sm">
+                <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center mb-5">
+                  <m.icon className="w-5 h-5 text-teal-700" />
+                </div>
+                <h3 className="text-base font-bold text-gray-900 mb-2">{m.title}</h3>
+                <p className="text-gray-500 text-sm leading-relaxed">{m.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Pharmacy deep dive */}
+      <section id="pharmacy" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div>
@@ -362,14 +503,15 @@ export default function Landing() {
                 Stop losing money on expired stock
               </h2>
               <p className="text-gray-500 text-base leading-relaxed mb-8">
-                BariQ's pharmacy automatically applies FEFO (First Expiry, First Out). The closest-to-expiry batch is always sold first. Combined with live alerts and smart reorder suggestions, you'll never be caught off guard again.
+                BariQ's pharmacy automatically applies FEFO (First Expiry, First Out). The batch closest to expiry is always sold first. Combined with live alerts and smart reorder suggestions, you'll never be caught off guard again.
               </p>
               <div className="space-y-4">
                 {[
-                  { icon: Bell, text: "Live alerts for expired, near-expiry (7 / 30 / 90 days), and low-stock medicines" },
-                  { icon: Package, text: "Suggested reorder quantities with supplier info. Print a purchase order in one click." },
-                  { icon: Pill, text: "FEFO auto-selection in billing. No manual batch picking required." },
-                  { icon: BarChart3, text: "Batch tracking, GST billing, and daily pharmacy revenue reports" },
+                  { icon: Bell, text: "Live alerts for expired stock, medicines nearing expiry in 7, 30, or 90 days, and low stock levels" },
+                  { icon: Package, text: "Suggested reorder quantities with supplier info. Print a purchase order in one tap." },
+                  { icon: Pill, text: "FEFO batch selection happens automatically during billing. No manual batch picking required." },
+                  { icon: Truck, text: "A supplier directory with payment terms and lead times, plus a returns and wastage log with cost impact" },
+                  { icon: Wallet, text: "Daily cash, UPI, card, and online reconciliation, and GST ready billing and revenue reports" },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex items-start gap-3">
                     <div className="w-7 h-7 rounded-lg bg-teal-50 flex items-center justify-center shrink-0 mt-0.5">
@@ -406,8 +548,8 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Patient Records deep-dive ─────────────────────────────── */}
-      <section id="records" className="py-20 px-6">
+      {/* Patient Records deep dive */}
+      <section id="records" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 order-2 lg:order-1">
@@ -441,7 +583,7 @@ export default function Landing() {
                 </div>
                 <p className="text-xs font-bold text-purple-700 mb-2">Dx: Hypertension Stage 1</p>
                 <div className="space-y-1">
-                  {["Amlodipine 5mg · 1–0–0 · 30 days", "Telma 40mg · 0–0–1 · 30 days"].map(m => (
+                  {["Amlodipine 5mg · Morning · 30 days", "Telma 40mg · Night · 30 days"].map(m => (
                     <div key={m} className="text-xs text-purple-900">{m}</div>
                   ))}
                   <div className="text-xs text-purple-500">+1 more medicine</div>
@@ -466,7 +608,7 @@ export default function Landing() {
                   { icon: AlertTriangle, text: "Allergy banner on every visit. Never prescribe something a patient reacts to." },
                   { icon: Activity, text: "Record BP, pulse, SpO₂, temperature, weight, and height per appointment" },
                   { icon: FileText, text: "View, expand, print, or delete any past prescription in two clicks" },
-                  { icon: Printer, text: "One-click printable medical summary with full visit history for referrals" },
+                  { icon: Printer, text: "A printable medical summary in one tap, with full visit history for referrals" },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex items-start gap-3">
                     <div className="w-7 h-7 rounded-lg bg-teal-50 flex items-center justify-center shrink-0 mt-0.5">
@@ -481,7 +623,35 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Partner Program ──────────────────────────────────────── */}
+      {/* Why BariQ */}
+      <section id="why-bariq" className="py-20 px-6">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-14">
+            <div className="inline-flex items-center gap-2 bg-teal-50 border border-teal-100 text-teal-700 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider mb-5">
+              <Sparkles className="w-3.5 h-3.5" /> Why BariQ
+            </div>
+            <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
+              Why clinics choose BariQ over paper and generic software
+            </h2>
+            <p className="text-gray-500 text-lg max-w-xl mx-auto">
+              Most clinics land here after outgrowing a paper register or a handful of tools that never agree with each other. Here is what actually changes.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {whyBariq.map((w) => (
+              <div key={w.title} className="bg-white rounded-2xl p-7 border border-gray-100 shadow-sm">
+                <div className="w-12 h-12 rounded-xl bg-teal-50 flex items-center justify-center mb-5">
+                  <w.icon className="w-5 h-5 text-teal-700" />
+                </div>
+                <h3 className="text-base font-bold text-gray-900 mb-2">{w.title}</h3>
+                <p className="text-gray-500 text-sm leading-relaxed">{w.body}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Partner Program */}
       <section id="partner" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
@@ -492,7 +662,7 @@ export default function Landing() {
               Become a BariQ Partner
             </h2>
             <p className="text-gray-500 text-lg max-w-xl mx-auto">
-              Know clinics that could use BariQ? Refer them, track them, and earn commission — all from your own partner dashboard.
+              Know clinics that could use BariQ? Refer them, track them, and earn commission, all from your own partner dashboard.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
@@ -517,15 +687,15 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Testimonials ─────────────────────────────────────────── */}
-      <section id="testimonials" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
+      {/* Testimonials */}
+      <section id="testimonials" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-3">
               120+ clinics trust BariQ
             </h2>
             <p className="text-gray-500 text-lg">
-              From small practices in Tier-2 cities to busy multi-doctor hospitals
+              From small practices in smaller Indian cities to busy hospitals with many doctors
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -547,12 +717,12 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── What's Included ──────────────────────────────────────── */}
-      <section className="py-20 px-6">
+      {/* What's Included */}
+      <section className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-12">
             <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
-              Everything included. No hidden add-ons.
+              Everything included. No hidden extras.
             </h2>
             <p className="text-gray-500 text-lg max-w-xl mx-auto">
               Every BariQ clinic gets the complete platform: queue, pharmacy, patient records, prescriptions, billing, and analytics.
@@ -571,7 +741,41 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Contact / Pricing CTA ─────────────────────────────────── */}
+      {/* FAQ */}
+      <section id="faq" className="py-20 px-6">
+        <div className="max-w-3xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-4">
+              Frequently asked questions
+            </h2>
+            <p className="text-gray-500 text-lg">
+              Everything clinics usually ask before switching to BariQ
+            </p>
+          </div>
+          <div className="space-y-3">
+            {faqs.map((f, i) => {
+              const isOpen = openFaq === i;
+              return (
+                <div key={f.q} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <button
+                    onClick={() => setOpenFaq(isOpen ? null : i)}
+                    className="w-full flex items-center justify-between gap-4 text-left px-6 py-5"
+                    aria-expanded={isOpen}
+                  >
+                    <span className="font-bold text-gray-900 text-sm sm:text-base">{f.q}</span>
+                    <ChevronDown className={`w-4 h-4 text-teal-600 shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {isOpen && (
+                    <p className="px-6 pb-5 text-gray-500 text-sm leading-relaxed">{f.a}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* Contact / Pricing CTA */}
       <section id="contact" className="py-20 px-6" style={{ backgroundColor: "#f8f8f4" }}>
         <div className="max-w-3xl mx-auto text-center">
           <div className="inline-flex items-center gap-2 bg-teal-50 border border-teal-100 text-teal-700 px-4 py-1.5 rounded-full text-sm font-semibold mb-6">
@@ -606,7 +810,7 @@ export default function Landing() {
               <MessageCircle className="w-5 h-5" />
               <div className="text-left">
                 <p className="text-sm font-bold">WhatsApp Us</p>
-                <p className="text-teal-200 text-xs">Quick response · Mon–Sat</p>
+                <p className="text-teal-200 text-xs">Quick response, Monday to Saturday</p>
               </div>
             </a>
             <a href="mailto:business@tirthontech.com"
@@ -614,7 +818,7 @@ export default function Landing() {
               <Mail className="w-5 h-5 text-teal-700" />
               <div className="text-left">
                 <p className="text-sm font-bold">Email Us</p>
-                <p className="text-gray-400 text-xs">We reply within 24 hrs</p>
+                <p className="text-gray-400 text-xs">We reply within 24 hours</p>
               </div>
             </a>
           </div>
@@ -622,14 +826,14 @@ export default function Landing() {
           <p className="text-sm text-gray-400">
             Or{" "}
             <Link href="/signup" className="text-teal-700 font-semibold hover:underline">
-              start your 7-day free trial
-            </Link>{" "}
-            No payment required, full platform access from day one.
+              start your free 7 day trial
+            </Link>
+            . No payment required, full platform access from day one.
           </p>
         </div>
       </section>
 
-      {/* ── Final CTA ────────────────────────────────────────────── */}
+      {/* Final CTA */}
       <section className="py-20 px-6">
         <div className="max-w-2xl mx-auto">
           <div className="bg-white rounded-3xl border border-gray-100 shadow-sm p-12 text-center">
@@ -659,7 +863,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Footer ───────────────────────────────────────────────── */}
+      {/* Footer */}
       <footer className="border-t border-gray-200 px-6 py-10">
         <div className="max-w-6xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
@@ -681,7 +885,8 @@ export default function Landing() {
                   { label: "Features", href: "#features" },
                   { label: "Pharmacy", href: "#pharmacy" },
                   { label: "Patient Records", href: "#records" },
-                  { label: "Testimonials", href: "#testimonials" },
+                  { label: "Why BariQ", href: "#why-bariq" },
+                  { label: "FAQ", href: "#faq" },
                 ].map(l => (
                   <a key={l.label} href={l.href} className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">{l.label}</a>
                 ))}
@@ -732,7 +937,7 @@ export default function Landing() {
         </div>
       </footer>
 
-      {/* ── Floating WhatsApp bubble ──────────────────────────────── */}
+      {/* Floating WhatsApp bubble */}
       <a
         href={WHATSAPP}
         target="_blank"

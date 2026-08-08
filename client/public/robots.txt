@@ -1,0 +1,22 @@
+User-agent: *
+Allow: /
+Allow: /signup
+Allow: /login
+Allow: /partner-signup
+
+# Authenticated app screens and per clinic dynamic links have nothing to index
+# and would otherwise show up as thin or duplicate content in search results.
+Disallow: /dashboard
+Disallow: /patients
+Disallow: /crm
+Disallow: /appointments
+Disallow: /doctors
+Disallow: /queue
+Disallow: /settings
+Disallow: /pharmacy
+Disallow: /doctor-console
+Disallow: /partner-dashboard
+Disallow: /super-admin
+Disallow: /register/
+
+Sitemap: https://bariq.tirthontech.com/sitemap.xml
