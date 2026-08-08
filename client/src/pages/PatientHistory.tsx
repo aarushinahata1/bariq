@@ -1102,10 +1102,10 @@ export default function PatientHistory() {
                             <Clock className="w-3 h-3" />
                             {format(new Date(apt.date), "hh:mm a")}
                           </div>
-                          {apt.queuePosition && (
+                          {(apt.queueNumber ?? apt.queuePosition) && (
                             <div className="flex items-center gap-1.5">
                               <ChevronRight className="w-3 h-3" />
-                              Queue #{apt.queuePosition}
+                              Queue #{apt.queueNumber ?? apt.queuePosition}
                             </div>
                           )}
                         </div>

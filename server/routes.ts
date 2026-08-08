@@ -350,7 +350,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       let appt: any;
       if (data.isQuickCheck) {
-        appt = await storage(req).createAppointment({ ...data, queueNumber: null, queuePosition: null, queueToken: null } as any);
+        appt = await storage(req).createAppointment({ ...data, queueNumber: null, queuePosition: null } as any);
       } else {
         // Advisory lock on (clinicId, doctorId) serializes concurrent queue-position assignments
         // for the same doctor so two simultaneous requests never get identical positions.
@@ -387,7 +387,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             clinicId: req.session.clinicId!,
             queueNumber: (maxRow?.maxNum ?? 0) + 1,
             queuePosition: (maxRow?.maxPos ?? 0) + 1,
-            queueToken: nanoid(8),
           }).returning();
           return row!;
         });
@@ -441,8 +440,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       if (updates.date !== undefined) {
         // Rescheduling moves the appointment to a different day's queue, so it needs
-        // a fresh queue number/position/token scoped to that day — otherwise the
-        // patient's token is wiped and never replaced (dead queue link).
+        // a fresh queue number/position scoped to that new day.
         updated = await db.transaction(async (tx) => {
           const [existing] = await tx.select().from(appointments)
             .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)));
@@ -464,7 +462,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
           setClause.queueNumber = (maxRow?.maxNum ?? 0) + 1;
           setClause.queuePosition = (maxRow?.maxPos ?? 0) + 1;
-          setClause.queueToken = nanoid(8);
           // Clear stale timing fields from whatever day this appointment was on before
           if (setClause.checkInTime === undefined) setClause.checkInTime = null;
           if (setClause.consultationStartTime === undefined) setClause.consultationStartTime = null;
@@ -632,52 +629,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── PUBLIC QUEUE (no auth) ────────────────────────────────────────────────
 
-  // Resolves a patient's private token to their own identity + static booking info.
-  // Fetched once per page load (not polled) — live queue position/status is derived
-  // client-side from the shared /api/public-queue/:doctorId board instead, so this
-  // no longer needs to scan the doctor's full day of appointments per request.
-  app.get("/api/queue/:token", async (req, res) => {
-    try {
-      const token = req.params.token;
-      const { start: today } = dayRangeIST();
-
-      const result = await db.transaction(async (tx) => {
-        const [appt] = await tx.select().from(appointments).where(eq(appointments.queueToken, token));
-        if (!appt) return null;
-
-        // Always scope patient and doctor to the appointment's own clinic
-        const [patient] = await tx.select().from(patients)
-          .where(and(eq(patients.id, appt.patientId), eq(patients.clinicId, appt.clinicId!)));
-        const [doctor] = await tx.select().from(users)
-          .where(and(eq(users.id, appt.doctorId), eq(users.clinicId, appt.clinicId!)));
-        if (!patient || !doctor) return null;
-
-        // Link expires when appointment date is before today's IST calendar day and not
-        // yet completed. Compare the raw instant directly against today's IST-midnight
-        // boundary — do NOT re-zero it with setHours(), which resets to the server's
-        // local time (UTC) and silently misclassifies same-day IST appointments as
-        // expired depending on what time they were booked (the exact bug this replaced).
-        const expired = new Date(appt.date) < today && appt.status !== "completed";
-
-        return {
-          id: appt.id,
-          expired,
-          patientName: patient.name,
-          doctorName: doctor.name || doctor.firstName || "Doctor",
-          doctorId: appt.doctorId,
-          status: appt.status,
-          queueNumber: appt.queueNumber,
-          queuePosition: appt.queuePosition,
-        };
-      });
-
-      if (!result) return res.status(404).json({ message: "Queue not found" });
-      res.json(result);
-    } catch (err) {
-      res.status(500).json({ message: "Failed to get queue status" });
-    }
-  });
-
   // ── PUBLIC DOCTOR QUEUE DISPLAY ───────────────────────────────────────────
 
   app.get("/api/public-queue/:doctorId", async (req, res) => {
@@ -694,7 +645,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       // Explicit column projection — this is a no-auth endpoint read by every patient's
       // browser and the waiting-room TV, so it must never leak passwordHash/email
       // (bare `.select()` on `users` pulls every column) or, on the appointments side,
-      // each patient's private queueToken/reason/notes/vitals.
+      // each patient's private reason/notes/vitals.
       const [doctorRow] = await db.select({
         id: users.id,
         name: users.name,
@@ -889,7 +840,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         currentAppointment = {
           id: appt.id,
           queueNumber: appt.queueNumber,
-          queueToken: appt.queueToken,
           reason: appt.reason,
           notes: appt.notes,
           consultationStartTime: appt.consultationStartTime,
@@ -1625,29 +1575,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           lte(appointments.date, targetEnd),
         ));
 
-        const queueToken = nanoid(8);
         const [newAppt] = await tx.insert(appointments).values({
           clinicId, patientId: patient.id, doctorId,
           date: appointmentDate, status: "booked",
           reason: reason?.trim() || null,
           queueNumber: (maxRow?.maxNum ?? 0) + 1,
           queuePosition: (maxRow?.maxPos ?? 0) + 1,
-          queueToken,
         }).returning();
 
         return { alreadyRegistered: false as const, patient, appt: newAppt! };
       });
 
+      // No per-patient link/token here — the client builds the shared
+      // /queue/:doctorId?n=:queueNumber board link itself from these two fields.
       if (result.alreadyRegistered) {
         return res.json({
           alreadyRegistered: true,
           id: result.appt.id,
           patientName: result.patient.name,
           doctorName,
+          doctorId,
           queueNumber: result.appt.queueNumber,
           queuePosition: result.appt.queuePosition,
-          queueToken: result.appt.queueToken,
-          queueUrl: `${req.protocol}://${req.get("host")}/patient-queue/${result.appt.queueToken}`,
         });
       }
 
@@ -1658,10 +1607,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         id: result.appt.id,
         patientName: result.patient.name,
         doctorName,
+        doctorId,
         queueNumber: result.appt.queueNumber,
         queuePosition: result.appt.queuePosition,
-        queueToken: result.appt.queueToken,
-        queueUrl: `${req.protocol}://${req.get("host")}/patient-queue/${result.appt.queueToken}`,
       });
     } catch (err) {
       console.error(err);

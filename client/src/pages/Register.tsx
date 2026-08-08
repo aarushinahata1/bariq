@@ -30,10 +30,9 @@ type RegistrationResult = {
   id: number;
   patientName: string;
   doctorName: string;
+  doctorId: string;
   queueNumber: number | null;
   queuePosition: number | null;
-  queueToken: string | null;
-  queueUrl: string;
 };
 
 // Build quick-pick date options: today + next 6 days
@@ -111,9 +110,9 @@ export default function Register() {
   // Live queue board for success screen (today's bookings only) — the same shared
   // board every patient and the waiting-room TV read for this doctor, filtered down
   // to our own appointment client-side, instead of a per-registration polled query.
-  // Matched by the stable appointment `id` (not `queueToken`, which the public board
-  // never exposes and which is reminted on reschedule) so a same-day reschedule while
-  // this screen is open doesn't break the match.
+  // Matched by the stable appointment `id` (not `queueNumber`, which is reminted on
+  // reschedule) so a same-day reschedule while this screen is open doesn't break
+  // the match.
   const isSuccessToday = step === "success" && !!result?.id && selectedDate === todayStr();
   const { data: liveBoard, isFetched: isLiveBoardFetched } = useQuery<{ queue: any[] }>({
     queryKey: ["public-queue", selectedDoctorId],
@@ -216,13 +215,14 @@ export default function Register() {
 
   const selectedDoctor = doctors.find(d => d.id === selectedDoctorId);
 
-  // Built client-side from window.location.origin, not the server's result.queueUrl —
-  // this app is deployed with the frontend (Netlify) and backend (Render) on separate
-  // domains, and the backend only sees its own host via req.get("host"), so a
-  // server-built absolute URL points at the API domain instead of the domain the
-  // patient is actually on. Every other queue-link builder in the app (Queue.tsx,
-  // Appointments.tsx) already derives it this way — this was the one exception.
-  const queueUrl = result?.queueToken ? `${window.location.origin}/patient-queue/${result.queueToken}` : null;
+  // The shared per-doctor board, not a per-patient link — every patient of this
+  // doctor today reuses the same URL, just with their own number in `n` so the
+  // board can highlight their row. Built from window.location.origin (not a
+  // server-returned absolute URL) since the frontend (Netlify) and backend
+  // (Render) are on separate domains and the backend only sees its own host.
+  const queueUrl = result?.queueNumber != null
+    ? `${window.location.origin}/queue/${result.doctorId}?n=${result.queueNumber}`
+    : null;
 
   const waMessage = result
     ? encodeURIComponent(`Hi! I'm ${result.patientName}. Track my queue position:\n${queueUrl}`)
@@ -356,7 +356,7 @@ export default function Register() {
             {/* Track position button (only meaningful for today's bookings) */}
             {queueUrl && selectedDate === todayStr() && (
               <a
-                href={`/patient-queue/${result.queueToken}`}
+                href={queueUrl}
                 className="flex items-center justify-center gap-2 w-full py-3.5 rounded-2xl bg-teal-600 text-white font-bold text-base shadow-lg shadow-teal-200 hover:bg-teal-700 transition-colors"
               >
                 Track Your Position <ChevronRight className="w-5 h-5" />

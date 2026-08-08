@@ -83,7 +83,6 @@ type ConsoleData = {
   currentAppointment: {
     id: number;
     queueNumber: number | null;
-    queueToken: string | null;
     reason: string | null;
     notes: string | null;
     consultationStartTime: string | null;

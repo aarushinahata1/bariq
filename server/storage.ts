@@ -8,7 +8,7 @@ import {
   type Bill, type InsertBill, type ClinicSetting, type Clinic, type ClinicPayment,
   type DentalChart, type InsertDentalChart, type BodyChart, type InsertBodyChart,
 } from "@shared/schema";
-import { eq, and, desc, sql, gte, lte, like, or, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte, like, or, inArray } from "drizzle-orm";
 import { format } from "date-fns";
 
 export class DatabaseStorage {
@@ -247,7 +247,13 @@ export class DatabaseStorage {
       .leftJoin(users, eq(users.id, appointments.doctorId))
       .leftJoin(bills, and(eq(bills.appointmentId, appointments.id), eq(bills.clinicId, this.clinicId)))
       .where(and(...conditions))
-      .orderBy(desc(appointments.date));
+      // `date` alone isn't a reliable sort key: the booking form has no time picker, so
+      // every walk-in appointment on a given day gets the same default time-of-day
+      // (istDateToInstant's 9:00 AM default) and Postgres then breaks that tie in
+      // unspecified/unstable order — which is what made queue numbers look shuffled
+      // in this list. queuePosition (asc; NULLS LAST is Postgres's default for ASC) is
+      // the actual queue order, and id is a final tiebreaker for full determinism.
+      .orderBy(desc(appointments.date), asc(appointments.queuePosition), asc(appointments.id));
 
     return rows.map(r => {
       // doctorId is a hard FK but the referenced user can still be deleted (deleteDoctor

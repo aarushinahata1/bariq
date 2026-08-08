@@ -1,4 +1,4 @@
-import { useRoute } from "wouter";
+import { useRoute, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { useState, useEffect } from "react";
@@ -13,6 +13,14 @@ export default function PublicQueue() {
   const [, params] = useRoute("/queue/:doctorId");
   const doctorId = params?.doctorId;
   const queryClient = useQueryClient();
+
+  // Every patient of this doctor shares this same board URL — there's no per-patient
+  // link. `n` (their own queue number, given to them at booking/check-in) is optional
+  // and purely cosmetic: it just tells THIS browser which row to highlight as "you".
+  // It grants no extra data — the full day's queue is already visible to anyone on
+  // this no-auth board regardless of `n`.
+  const search = useSearch();
+  const myNumber = Number(new URLSearchParams(search).get("n")) || null;
 
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -96,6 +104,13 @@ export default function PublicQueue() {
   const avgConsultTime = doctor.doctorProfile?.avgConsultationTime || 15;
   const totalWaitMins = waitingList.length * avgConsultTime;
 
+  // Personalized "you" banner, only shown when this URL carries `?n=` — everyone
+  // else just sees the plain shared board. queueNumber is stable across a staff
+  // reorder (queuePosition isn't), so this keeps pointing at the right row even
+  // if the doctor's queue gets rearranged while the patient has this open.
+  const myAppt = myNumber != null ? queue.find((a: any) => a.queueNumber === myNumber) : undefined;
+  const myWaitIdx = myAppt ? waitingList.findIndex((a: any) => a.id === myAppt.id) : -1;
+
   return (
     <div className="min-h-screen bg-slate-950 text-white font-sans flex flex-col">
       {/* Header */}
@@ -121,6 +136,31 @@ export default function PublicQueue() {
 
       {/* Main */}
       <div className="flex-1 flex flex-col items-center px-5 sm:px-8 py-10 w-full max-w-4xl mx-auto">
+
+        {/* Personalized "you" banner — only present when this link carries ?n=<queueNumber> */}
+        {myNumber != null && (
+          <div className="w-full max-w-sm bg-gradient-to-br from-teal-600 to-teal-700 rounded-3xl p-6 mb-8 text-center shadow-2xl shadow-teal-900/40 relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none" />
+            <p className="text-teal-100/70 text-[10px] uppercase tracking-[0.2em] font-bold mb-2">Your Token</p>
+            <div className="text-6xl font-black text-white leading-none tracking-tighter mb-3">#{myNumber}</div>
+            {!myAppt ? (
+              <p className="text-teal-100/70 text-sm">Not found in today's queue — check with reception</p>
+            ) : myAppt.status === "completed" ? (
+              <p className="text-green-200 font-bold text-sm">Consultation complete!</p>
+            ) : myAppt.status === "in_progress" ? (
+              <p className="text-teal-100 font-bold text-sm animate-pulse">With the doctor now</p>
+            ) : myWaitIdx === 0 ? (
+              <p className="text-amber-200 font-bold text-sm">You're up next!</p>
+            ) : myWaitIdx > 0 ? (
+              <p className="text-teal-100/80 text-sm">
+                <span className="font-bold text-white text-lg">{myWaitIdx}</span>{" "}
+                {myWaitIdx === 1 ? "person" : "people"} ahead of you
+              </p>
+            ) : (
+              <p className="text-teal-100/60 text-sm">Waiting</p>
+            )}
+          </div>
+        )}
 
         {/* Doctor info */}
         <div className="text-center mb-10">
@@ -200,6 +240,7 @@ export default function PublicQueue() {
               {waitingList.slice(0, 5).map((apt: any, idx: number) => {
                 const isCheckedIn = apt.status === "checked_in";
                 const isFirst = idx === 0;
+                const isMe = myAppt && apt.id === myAppt.id;
                 return (
                   <div
                     key={apt.id}
@@ -209,7 +250,8 @@ export default function PublicQueue() {
                         ? "bg-green-900/20 border-green-700/30"
                         : isFirst
                         ? "bg-amber-900/15 border-amber-700/30"
-                        : "bg-slate-900 border-slate-800/60"
+                        : "bg-slate-900 border-slate-800/60",
+                      isMe && "ring-2 ring-teal-400"
                     )}
                   >
                     <div className="flex items-center gap-4">

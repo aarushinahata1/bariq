@@ -24,7 +24,6 @@ const Appointments = lazy(() => import("@/pages/Appointments"));
 const Doctors = lazy(() => import("@/pages/Doctors"));
 const Queue = lazy(() => import("@/pages/Queue"));
 const PublicQueue = lazy(() => import("@/pages/PublicQueue"));
-const PatientQueue = lazy(() => import("@/pages/PatientQueue"));
 const PatientHistory = lazy(() => import("@/pages/PatientHistory"));
 const Settings = lazy(() => import("@/pages/Settings"));
 const Register = lazy(() => import("@/pages/Register"));
@@ -58,12 +57,11 @@ function Router() {
   const [location] = useLocation();
 
   // Always-public routes — no auth needed, show instantly
-  const isPublicQueueRoute = location.startsWith("/queue/") || location.startsWith("/patient-queue/") || location.startsWith("/register/");
+  const isPublicQueueRoute = location.startsWith("/queue/") || location.startsWith("/register/");
   if (isPublicQueueRoute) {
     return (
       <Switch>
         <Route path="/queue/:doctorId" component={PublicQueue} />
-        <Route path="/patient-queue/:token" component={PatientQueue} />
         <Route path="/register/:token" component={Register} />
       </Switch>
     );
@@ -133,7 +131,6 @@ function Router() {
       <Switch>
         {/* Full-screen pages — no sidebar layout */}
         <Route path="/queue/:doctorId" component={PublicQueue} />
-        <Route path="/patient-queue/:token" component={PatientQueue} />
         {/* All app pages share a single persistent Layout */}
         <Route>
           <Layout>

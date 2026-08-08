@@ -88,7 +88,7 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
 }, (t) => ({
   // Nullable-safe: Postgres allows unlimited NULLs under a unique index, only
-  // non-null duplicates are rejected — same pattern as appointments.queueToken.
+  // non-null duplicates are rejected.
   // Login looks up staff by email alone (no clinic context yet), so this must be
   // globally unique, not just per-clinic.
   emailUniq: uniqueIndex("users_email_unique").on(t.email),
@@ -173,7 +173,6 @@ export const appointments = pgTable("appointments", {
   notes: text("notes"),
   queueNumber: integer("queue_number"),
   queuePosition: integer("queue_position"),
-  queueToken: text("queue_token"),
   isQuickCheck: boolean("is_quick_check").default(false),
   checkInTime: timestamp("check_in_time"),
   consultationStartTime: timestamp("consultation_start_time"),
@@ -183,11 +182,6 @@ export const appointments = pgTable("appointments", {
 }, (t) => ({
   clinicDateIdx: index("appointments_clinic_date_idx").on(t.clinicId, t.date),
   clinicDoctorIdx: index("appointments_clinic_doctor_idx").on(t.clinicId, t.doctorId),
-  // Unique (not just indexed): nanoid(8) collisions are rare but not impossible, and a
-  // collision would silently resolve one patient's queue link to a different patient's
-  // identity. NULL is fine — quick-check appointments store no token, and Postgres
-  // doesn't treat multiple NULLs as duplicates under a unique index.
-  tokenIdx: uniqueIndex("appointments_queue_token_idx").on(t.queueToken),
   patientIdx: index("appointments_patient_id_idx").on(t.clinicId, t.patientId),
 }));
 
@@ -522,7 +516,7 @@ export const insertPatientSchema = createInsertSchema(patients).omit({ id: true,
     return false;
   }, "Enter a valid 10-digit mobile number"),
 });
-export const insertAppointmentSchema = createInsertSchema(appointments).omit({ id: true, createdAt: true, queueNumber: true, queuePosition: true, queueToken: true }).extend({
+export const insertAppointmentSchema = createInsertSchema(appointments).omit({ id: true, createdAt: true, queueNumber: true, queuePosition: true }).extend({
   doctorId: z.string().min(1, "Doctor is required"),
   patientId: z.coerce.number().min(1, "Patient is required"),
   date: z.coerce.date(),

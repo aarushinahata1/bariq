@@ -645,8 +645,10 @@ function SendQueueLinkDialog({ appointment, livePosition }: { appointment: any; 
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const token = appointment.queueToken;
-  const url = `${window.location.origin}/patient-queue/${token}`;
+  // Shared per-doctor board link + this patient's own token number, rather than a
+  // unique per-patient link — every patient of this doctor reuses the same board URL,
+  // so there's no per-appointment token to generate, store, or expire.
+  const url = `${window.location.origin}/queue/${appointment.doctorId}?n=${appointment.queueNumber}`;
   const patientName = appointment.patient?.name || "Patient";
   const patientPhone = appointment.patient?.phone || "";
   const docName = doctorDisplayName(appointment.doctor);
@@ -1104,7 +1106,7 @@ export default function Queue() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="font-bold text-slate-900 truncate">{apt.patient?.name ?? "Unknown"}</p>
-                        {apt.queueToken && (
+                        {apt.queueNumber != null && (
                           <SendQueueLinkDialog appointment={apt} livePosition={idx + 1} />
                         )}
                       </div>

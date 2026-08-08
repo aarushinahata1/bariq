@@ -447,15 +447,15 @@ export default function Appointments() {
                             </div>
                           )}
                         </div>
-                        {apt.queueToken && apt.queuePosition && !["completed", "cancelled", "no_show"].includes(apt.status) && (
+                        {apt.queueNumber != null && !["completed", "cancelled", "no_show"].includes(apt.status) && (
                           <a
-                            href={`/patient-queue/${apt.queueToken}`}
+                            href={`/queue/${apt.doctorId}?n=${apt.queueNumber}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-xs text-teal-700 hover:text-teal-800 hover:underline flex items-center gap-1 mt-1"
                           >
                             <ListOrdered className="w-3 h-3" />
-                            Queue #{apt.queuePosition}
+                            Queue #{apt.queueNumber}
                           </a>
                         )}
                       </div>

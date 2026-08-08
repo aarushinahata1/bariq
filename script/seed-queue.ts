@@ -2,7 +2,6 @@ import pg from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { users, patients, appointments, doctorProfiles } from "../shared/schema";
 import { eq } from "drizzle-orm";
-import { nanoid } from "nanoid";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 const db = drizzle(pool);
@@ -64,7 +63,6 @@ async function seed() {
         reason: p.reason,
         queuePosition: i + 1,
         queueNumber: i + 1,
-        queueToken: nanoid(12),
         checkInTime: new Date(),
       })
       .returning();
