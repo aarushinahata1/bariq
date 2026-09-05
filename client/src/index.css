@@ -125,3 +125,63 @@
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-slate-300 dark:bg-slate-600;
 }
+
+/* Quick-tour (driver.js) — re-skinned to match the app's card/teal design system
+   instead of the library's default look. */
+.driver-overlay {
+  background: hsl(222 47% 11% / 0.55);
+}
+
+.medqueue-tour-popover.driver-popover {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  font-family: var(--font-sans);
+  box-shadow: 0 20px 40px -12px hsl(222 47% 11% / 0.25);
+  padding: 1.25rem;
+}
+
+.medqueue-tour-popover .driver-popover-title {
+  color: hsl(var(--card-foreground));
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.medqueue-tour-popover .driver-popover-description {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.medqueue-tour-popover .driver-popover-progress-text {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+}
+
+.medqueue-tour-popover .driver-popover-navigation-btns button {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  border: none;
+  border-radius: calc(var(--radius) - 0.5rem);
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-shadow: none;
+}
+
+.medqueue-tour-popover .driver-popover-navigation-btns button:hover {
+  background: hsl(var(--primary) / 0.9);
+}
+
+.medqueue-tour-popover .driver-popover-close-btn {
+  color: hsl(var(--muted-foreground));
+}
+
+.medqueue-tour-popover .driver-popover-arrow-side-left.driver-popover-arrow,
+.medqueue-tour-popover .driver-popover-arrow-side-right.driver-popover-arrow,
+.medqueue-tour-popover .driver-popover-arrow-side-top.driver-popover-arrow,
+.medqueue-tour-popover .driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-color: hsl(var(--card));
+}

@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
+import { getSeoForPath, injectSeo } from "./seo";
 
 export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "public");
@@ -10,9 +11,15 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  // Serve index.html itself through the catch-all below (so SEO injection
+  // applies to it too) rather than as a static file match.
+  app.use(express.static(distPath, { index: false }));
 
-  app.use("*", (_req, res) => {
-    res.sendFile(path.resolve(distPath, "index.html"));
+  const indexPath = path.resolve(distPath, "index.html");
+
+  app.use("*", (req, res) => {
+    const template = fs.readFileSync(indexPath, "utf-8");
+    const seo = getSeoForPath(req.originalUrl.split("?")[0]);
+    res.set("Content-Type", "text/html").send(seo ? injectSeo(template, seo) : template);
   });
 }

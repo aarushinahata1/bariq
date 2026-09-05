@@ -1036,7 +1036,7 @@ export default function Settings() {
                     <Clock className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
                     <div>
                       <p className="text-sm font-semibold text-amber-800">Payment under review</p>
-                      <p className="text-xs text-amber-700 mt-0.5">Your payment request is being verified. We'll activate your account shortly. Questions? <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="underline">WhatsApp us</a>.</p>
+                      <p className="text-xs text-amber-700 mt-0.5">Your payment request is being verified. We'll activate your account shortly. Questions? <a href="https://wa.me/918989496800" target="_blank" rel="noopener noreferrer" className="underline">WhatsApp us</a>.</p>
                     </div>
                   </div>
                 ) : (
@@ -1103,7 +1103,7 @@ export default function Settings() {
                     </Button>
                     <p className="text-center text-xs text-slate-400">
                       Need help?{" "}
-                      <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">WhatsApp us</a>
+                      <a href="https://wa.me/918989496800" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">WhatsApp us</a>
                     </p>
                   </>
                 )}

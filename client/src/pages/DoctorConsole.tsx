@@ -715,7 +715,7 @@ export default function DoctorConsole() {
       />
 
       {/* Doctor selector */}
-      <div className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
+      <div data-tour="console-doctor-select" className="bg-white border border-gray-100 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
         <div className="flex items-center gap-2 text-sm text-gray-500 font-medium shrink-0">
           <Stethoscope className="w-4 h-4 text-teal-600" />
           Active Doctor:
@@ -779,7 +779,7 @@ export default function DoctorConsole() {
             ) : (
               <>
                 {/* ── Patient card ── */}
-                <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                <div data-tour="console-current-patient" className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
                   <div className="bg-gradient-to-r from-teal-600 to-teal-500 px-5 py-3 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-white">
                       <Activity className="w-4 h-4" />
@@ -918,7 +918,7 @@ export default function DoctorConsole() {
                 </div>
 
                 {/* ── Prescription panel ── */}
-                <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+                <div data-tour="console-prescription-panel" className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
                   <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
                     <div className="flex items-center gap-2 text-sm font-semibold text-gray-700">
                       <Pill className="w-4 h-4 text-teal-600" />

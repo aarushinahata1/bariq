@@ -3,6 +3,7 @@ Allow: /
 Allow: /signup
 Allow: /login
 Allow: /partner-signup
+Allow: /blog
 
 # Authenticated app screens and per clinic dynamic links have nothing to index
 # and would otherwise show up as thin or duplicate content in search results.

@@ -147,8 +147,8 @@ export default function PaymentWall() {
               </div>
               <p className="text-xs text-gray-400">
                 Questions? WhatsApp us at{" "}
-                <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline font-medium">
-                  +91 94245 7591
+                <a href="https://wa.me/918989496800" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline font-medium">
+                  +91 89894 96800
                 </a>
               </p>
             </div>
@@ -161,7 +161,7 @@ export default function PaymentWall() {
                 <h2 className="text-xl font-bold text-gray-900">Activate Your Account</h2>
                 <p className="text-gray-500 text-sm mt-1">
                   Contact us on{" "}
-                  <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 font-medium hover:underline">WhatsApp</a>
+                  <a href="https://wa.me/918989496800" target="_blank" rel="noopener noreferrer" className="text-teal-700 font-medium hover:underline">WhatsApp</a>
                   {" "}to get your custom price, pay via UPI, then submit your UTR below.
                 </p>
               </div>
@@ -277,7 +277,7 @@ export default function PaymentWall() {
 
                 <p className="text-center text-xs text-gray-400">
                   Access is granted within a few hours of payment verification.{" "}
-                  <a href="https://wa.me/91942457591" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">
+                  <a href="https://wa.me/918989496800" target="_blank" rel="noopener noreferrer" className="text-teal-700 hover:underline">
                     WhatsApp support
                   </a>
                 </p>

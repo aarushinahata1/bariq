@@ -46,7 +46,7 @@ export default function Dashboard() {
         {/* Scopes Patients/Completed/Collected below to a reporting period — defaults
             to Today. Avg Wait Time, Pending, and the charts stay live/all-time
             regardless (see the tooltips on those cards). */}
-        <div className="flex items-center gap-1.5 bg-slate-100 rounded-xl p-1">
+        <div data-tour="dashboard-range-switcher" className="flex items-center gap-1.5 bg-slate-100 rounded-xl p-1">
           {RANGE_OPTIONS.map(opt => (
             <button
               key={opt.value}
@@ -62,7 +62,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6">
+      <div data-tour="dashboard-stats" className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6">
         <StatCard
           title={`Patients (${rangeLabel})`}
           value={stats?.dailyPatients || 0}
@@ -96,7 +96,7 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 mt-8">
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
+        <div data-tour="dashboard-volume-chart" className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-100 p-6">
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-lg font-bold font-display text-slate-900">Patient Volume (7 Days)</h3>
             <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-1 rounded-full uppercase">Live</span>

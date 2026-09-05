@@ -2364,12 +2364,12 @@ export default function Pharmacy() {
 
         {/* Tabs */}
         <Tabs value={tab} onValueChange={v => setTab(v as Tab)}>
-          <TabsList className="flex w-full overflow-x-auto rounded-xl gap-0 h-auto p-1">
+          <TabsList data-tour="pharmacy-tabs" className="flex w-full overflow-x-auto rounded-xl gap-0 h-auto p-1">
             <TabsTrigger value="dashboard" className="rounded-lg text-xs gap-1 shrink-0"><BarChart2 className="w-3.5 h-3.5" />Dashboard</TabsTrigger>
             <TabsTrigger value="inventory" className="rounded-lg text-xs gap-1 shrink-0"><Package className="w-3.5 h-3.5" />Inventory</TabsTrigger>
             <TabsTrigger value="billing" className="rounded-lg text-xs gap-1 shrink-0"><ShoppingCart className="w-3.5 h-3.5" />New Bill</TabsTrigger>
             <TabsTrigger value="bills" className="rounded-lg text-xs gap-1 shrink-0"><Clock className="w-3.5 h-3.5" />History</TabsTrigger>
-            <TabsTrigger value="alerts" className="rounded-lg text-xs gap-1 shrink-0 relative">
+            <TabsTrigger value="alerts" data-tour="pharmacy-alerts-tab" className="rounded-lg text-xs gap-1 shrink-0 relative">
               <AlertOctagon className="w-3.5 h-3.5" />Alerts
               {alertCount > 0 && (
                 <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-red-500 text-white text-[9px] font-bold rounded-full flex items-center justify-center">

@@ -14,6 +14,7 @@ import { setupAuth, requireAuth, requireRole, requireSuperAdmin, requirePartner,
 import { nanoid } from "nanoid";
 import bcrypt from "bcryptjs";
 import pg from "pg";
+import { buildSitemapXml } from "./seo";
 
 // Seed 195K medicine names from CSV on first startup (skips if table already populated)
 async function seedMedicineNames() {
@@ -180,6 +181,13 @@ function extendPlanEnd(currentEndsAt: Date | null | undefined, planType: string 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   setupAuth(app);
   startQueueListener();
+
+  // Generated from shared/blog-posts.ts so new posts show up without
+  // hand-editing the sitemap. Registered ahead of static file serving so it
+  // wins over the (now-stale) client/public/sitemap.xml copy in the bundle.
+  app.get("/sitemap.xml", (_req, res) => {
+    res.type("application/xml").send(buildSitemapXml());
+  });
 
   // ── PATIENTS ──────────────────────────────────────────────────────────────
 

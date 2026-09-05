@@ -1,12 +1,34 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useEffect, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Loader2, Menu, X } from "lucide-react";
 import { Button } from "./ui/button";
 import { useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
+import { useRole } from "@/hooks/use-role";
+import { useTour, hasSeenTour } from "@/hooks/use-tour";
+import { getTourSteps, getTourId } from "@/lib/tour/steps";
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { userId, isLoading: authLoading } = useAuth();
+  const { realRole } = useRole();
+  const { start } = useTour();
+
+  useEffect(() => {
+    if (authLoading || !userId) return;
+    const tourId = getTourId(realRole);
+    if (hasSeenTour(userId, tourId)) return;
+
+    // Give the page's own data a moment to load so conditionally-rendered
+    // targets (e.g. the doctor console's current-patient card) have a chance
+    // to exist before we query for them.
+    const timer = setTimeout(() => {
+      start(userId, tourId, getTourSteps(realRole));
+    }, 800);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, userId, realRole]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row font-sans overflow-x-hidden">

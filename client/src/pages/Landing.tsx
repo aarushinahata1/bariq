@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
-const WHATSAPP = "https://wa.me/919424575918";
+const WHATSAPP = "https://wa.me/918989496800";
 
 const stats = [
   { value: "120+", label: "Clinics" },
@@ -216,6 +216,7 @@ const navLinks = [
   { label: "Why BariQ", href: "#why-bariq" },
   { label: "Partners", href: "#partner" },
   { label: "FAQ", href: "#faq" },
+  { label: "Blog", href: "/blog" },
   { label: "Contact", href: "#contact" },
 ];
 
@@ -794,9 +795,9 @@ export default function Landing() {
               <MapPin className="w-4 h-4 text-teal-600 shrink-0" />
               <span>B56, Tilak Nagar, Indore, India</span>
             </div>
-            <a href="tel:+919424575918" className="flex items-center gap-2 hover:text-teal-700 transition-colors">
+            <a href="tel:+918989496800" className="flex items-center gap-2 hover:text-teal-700 transition-colors">
               <Phone className="w-4 h-4 text-teal-600 shrink-0" />
-              <span>+91 94245 75918</span>
+              <span>+91 89894 96800</span>
             </a>
             <a href="mailto:business@tirthontech.com" className="flex items-center gap-2 hover:text-teal-700 transition-colors">
               <Mail className="w-4 h-4 text-teal-600 shrink-0" />
@@ -890,6 +891,7 @@ export default function Landing() {
                 ].map(l => (
                   <a key={l.label} href={l.href} className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">{l.label}</a>
                 ))}
+                <Link href="/blog" className="block text-sm text-gray-400 hover:text-gray-700 transition-colors">Blog</Link>
               </div>
             </div>
             {/* Account */}
@@ -909,9 +911,9 @@ export default function Landing() {
                   <MapPin className="w-3.5 h-3.5 text-teal-600 shrink-0 mt-0.5" />
                   <span>B56, Tilak Nagar, Indore, India</span>
                 </div>
-                <a href="tel:+919424575918" className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-700 transition-colors">
+                <a href="tel:+918989496800" className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-700 transition-colors">
                   <Phone className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                  <span>+91 94245 75918</span>
+                  <span>+91 89894 96800</span>
                 </a>
                 <a href="mailto:business@tirthontech.com" className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-700 transition-colors">
                   <Mail className="w-3.5 h-3.5 text-teal-600 shrink-0" />

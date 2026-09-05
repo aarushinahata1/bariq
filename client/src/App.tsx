@@ -11,6 +11,8 @@ import { Layout } from "@/components/Layout";
 
 const NotFound = lazy(() => import("@/pages/not-found"));
 const Landing = lazy(() => import("@/pages/Landing"));
+const Blog = lazy(() => import("@/pages/Blog"));
+const BlogPost = lazy(() => import("@/pages/BlogPost"));
 const Login = lazy(() => import("@/pages/Login"));
 const Signup = lazy(() => import("@/pages/Signup"));
 const PartnerSignup = lazy(() => import("@/pages/PartnerSignup"));
@@ -63,6 +65,18 @@ function Router() {
       <Switch>
         <Route path="/queue/:doctorId" component={PublicQueue} />
         <Route path="/register/:token" component={Register} />
+      </Switch>
+    );
+  }
+
+  // Blog is public content, indexable regardless of auth state — logged in
+  // users can read it too instead of bouncing to their dashboard.
+  const isBlogRoute = location === "/blog" || location.startsWith("/blog/");
+  if (isBlogRoute) {
+    return (
+      <Switch>
+        <Route path="/blog" component={Blog} />
+        <Route path="/blog/:slug" component={BlogPost} />
       </Switch>
     );
   }

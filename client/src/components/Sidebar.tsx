@@ -13,8 +13,12 @@ import {
   LogOut,
   Pill,
   MonitorSmartphone,
+  HelpCircle,
 } from "lucide-react";
 import { useRole } from "@/hooks/use-role";
+import { useAuth } from "@/hooks/use-auth";
+import { useTour } from "@/hooks/use-tour";
+import { getTourSteps, getTourId } from "@/lib/tour/steps";
 import { Role, ROLE_CONFIGS } from "@/lib/roles";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -52,8 +56,15 @@ const ALL_MENU_ITEMS = [
 export function Sidebar({ onNavigate }: SidebarProps) {
   const [location, navigate] = useLocation();
   const { role, realRole, isAdmin, isPreviewing, setPreviewRole, config } = useRole();
+  const { userId } = useAuth();
+  const { start } = useTour();
   const [roleSwitcherOpen, setRoleSwitcherOpen] = useState(false);
   const qc = useQueryClient();
+
+  function handleTakeTour() {
+    if (!userId) return;
+    start(userId, getTourId(realRole), getTourSteps(realRole));
+  }
 
   async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
@@ -69,7 +80,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
   return (
     <aside className="w-64 bg-teal-800 text-white flex flex-col h-full z-50 overflow-hidden">
       {/* Logo */}
-      <div className="px-5 py-5 flex items-center gap-3 border-b border-teal-700/60">
+      <div data-tour="sidebar-brand" className="px-5 py-5 flex items-center gap-3 border-b border-teal-700/60">
         <div className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0 bg-white/10">
           <img src="/bariq_logo.jpg" alt="BariQ" className="w-full h-full object-cover" />
         </div>
@@ -80,7 +91,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       </div>
 
       {/* Nav */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
+      <nav data-tour="sidebar-nav" className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         {menuItems.map(item => {
           const Icon = item.icon;
           const isActive = item.href === "/dashboard"
@@ -110,7 +121,14 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       </nav>
 
       {/* Logout */}
-      <div className="px-3 pb-1">
+      <div className="px-3 pb-1 space-y-0.5">
+        <button
+          onClick={handleTakeTour}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-teal-200/70 hover:bg-teal-700/60 hover:text-white transition-colors text-sm"
+        >
+          <HelpCircle className="w-4 h-4 flex-shrink-0" style={{ width: "1.125rem", height: "1.125rem" }} />
+          <span>Take a tour</span>
+        </button>
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-teal-200/70 hover:bg-red-500/20 hover:text-red-300 transition-colors text-sm"
@@ -121,7 +139,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
       </div>
 
       {/* Role indicator — a live "Preview as" switcher for admins, a static badge for everyone else */}
-      <div className="p-3 border-t border-teal-700/60">
+      <div data-tour="sidebar-role-badge" className="p-3 border-t border-teal-700/60">
         {isAdmin ? (
           <div className="relative">
             <button
