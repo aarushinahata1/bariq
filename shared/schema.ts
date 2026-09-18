@@ -45,7 +45,10 @@ export const clinicPayments = pgTable("clinic_payments", {
   notes: text("notes"),
   paidAt: timestamp("paid_at"),
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  // Billing history per clinic, and the pending-payment lock taken on submission.
+  clinicIdx: index("clinic_payments_clinic_idx").on(t.clinicId, t.status),
+}));
 
 // ── Session store ─────────────────────────────────────────────────────────────
 
@@ -70,6 +73,10 @@ export const clinicSettings = pgTable("clinic_settings", {
   updatedAt: timestamp("updated_at").$defaultFn(() => new Date()),
 }, (t) => ({
   pk: primaryKey({ columns: [t.clinicId, t.key] }),
+  // Every kiosk/QR page load resolves its clinic by settings KEY alone (the primary
+  // key starts with clinicId, which the caller doesn't know yet), so without this
+  // each scan sequentially scanned the settings of every clinic on the platform.
+  keyIdx: index("clinic_settings_key_idx").on(t.key),
 }));
 
 // ── Staff (doctors / receptionists) ──────────────────────────────────────────
@@ -92,6 +99,9 @@ export const users = pgTable("users", {
   // Login looks up staff by email alone (no clinic context yet), so this must be
   // globally unique, not just per-clinic.
   emailUniq: uniqueIndex("users_email_unique").on(t.email),
+  // Doctor list, staff list and the kiosk's doctor picker all filter clinic+role;
+  // without this they sequentially scan every staff row in the database.
+  clinicRoleIdx: index("users_clinic_role_idx").on(t.clinicId, t.role),
 }));
 
 export const appointmentStatus = ["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"] as const;
@@ -139,6 +149,9 @@ export const patients = pgTable("patients", {
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 }, (t) => ({
   clinicIdx: index("patients_clinic_id_idx").on(t.clinicId),
+  // The patient list pages clinic rows newest-first; the composite lets Postgres
+  // read them straight off the index instead of sorting the whole clinic each time.
+  clinicCreatedIdx: index("patients_clinic_created_idx").on(t.clinicId, t.createdAt),
 }));
 
 // ── Billing ───────────────────────────────────────────────────────────────────
@@ -158,6 +171,10 @@ export const bills = pgTable("bills", {
   clinicIdx: index("bills_clinic_id_idx").on(t.clinicId),
   apptIdx: uniqueIndex("bills_appointment_id_unique").on(t.appointmentId),
   billingDateIdx: index("bills_billing_date_idx").on(t.clinicId, t.billingDate),
+  // Dashboard's outstanding-balance sum and the doctor console's per-patient dues
+  // both filter on these pairs, on every poll.
+  clinicStatusIdx: index("bills_clinic_status_idx").on(t.clinicId, t.status),
+  clinicPatientIdx: index("bills_clinic_patient_idx").on(t.clinicId, t.patientId),
 }));
 
 // ── Appointments ──────────────────────────────────────────────────────────────
@@ -183,6 +200,12 @@ export const appointments = pgTable("appointments", {
   clinicDateIdx: index("appointments_clinic_date_idx").on(t.clinicId, t.date),
   clinicDoctorIdx: index("appointments_clinic_doctor_idx").on(t.clinicId, t.doctorId),
   patientIdx: index("appointments_patient_id_idx").on(t.clinicId, t.patientId),
+  // Queue board, public board, doctor console, queue-number assignment and the
+  // advisory-locked booking path all scope to one doctor's one day — this serves
+  // every one of them from a single index range.
+  clinicDoctorDateIdx: index("appointments_clinic_doctor_date_idx").on(t.clinicId, t.doctorId, t.date),
+  // Drives the patient list's "last appointment status" lateral lookup.
+  patientRecentIdx: index("appointments_patient_recent_idx").on(t.patientId, t.date),
 }));
 
 // ── Notifications ─────────────────────────────────────────────────────────────
@@ -194,7 +217,10 @@ export const notifications = pgTable("notifications", {
   type: text("type").notNull(),
   message: text("message").notNull(),
   sentAt: timestamp("sent_at").$defaultFn(() => new Date()),
-});
+}, (t) => ({
+  // Deleting a patient sweeps their notifications; this is the only access path.
+  clinicPatientIdx: index("notifications_clinic_patient_idx").on(t.clinicId, t.patientId),
+}));
 
 // ── Prescriptions ─────────────────────────────────────────────────────────────
 
@@ -211,6 +237,8 @@ export const prescriptions = pgTable("prescriptions", {
   createdAt: timestamp("created_at").$defaultFn(() => new Date()),
 }, (t) => ({
   apptIdx: uniqueIndex("prescriptions_appointment_id_unique").on(t.appointmentId),
+  // Patient history and the pharmacy's "import from prescription" both read by patient.
+  clinicPatientIdx: index("prescriptions_clinic_patient_idx").on(t.clinicId, t.patientId),
 }));
 
 // ── Dental Charts ─────────────────────────────────────────────────────────────

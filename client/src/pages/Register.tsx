@@ -104,7 +104,7 @@ export default function Register() {
     enabled: !!token && !!selectedDoctorId,
     staleTime: 0,
     gcTime: 0,
-    refetchInterval: 10000,
+    refetchInterval: 30000,
   });
 
   // Live queue board for success screen (today's bookings only) — the same shared
@@ -122,7 +122,7 @@ export default function Register() {
       return res.json();
     },
     enabled: isSuccessToday && !!selectedDoctorId,
-    refetchInterval: 60000, // safety net only — SSE below drives real-time updates
+    refetchInterval: 180000, // safety net only — SSE below drives real-time updates
     staleTime: 0,
   });
 

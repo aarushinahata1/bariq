@@ -31,7 +31,7 @@ export default function Dashboard() {
       if (!res.ok) throw new Error("Failed to load dashboard stats");
       return res.json();
     },
-    refetchInterval: 60000,
+    refetchInterval: 180000,
   });
 
   if (isLoading) return <Loading />;

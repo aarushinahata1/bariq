@@ -61,9 +61,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     queryKey: ["/api/auth/me"],
     queryFn: getQueryFn({ on401: "returnNull" }),
     retry: false,
-    staleTime: 10_000,
+    staleTime: 60_000,
     refetchOnWindowFocus: true,
-    refetchInterval: 60_000,
+    // Plan/role changes are rare, and any 401/402 response invalidates this query
+    // immediately (see queryClient.ts), so polling every minute per open tab bought
+    // nothing but load.
+    refetchInterval: 15 * 60_000,
   });
 
   const isSuperAdmin = (data as any)?.isSuperAdmin === true;

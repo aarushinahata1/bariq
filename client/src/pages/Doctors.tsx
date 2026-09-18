@@ -365,7 +365,7 @@ export default function Doctors() {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove Doctor?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently remove <strong>Dr. {deleteTarget?.name}</strong> from the system. Their upcoming booked appointments will be cancelled. Past appointment records are preserved. This cannot be undone.
+              This will permanently remove <strong>Dr. {deleteTarget?.name}</strong> from the system. This cannot be undone. Doctors who already have appointment records can't be removed — patient history is kept linked to them; mark those doctors "Unavailable" instead.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -376,7 +376,7 @@ export default function Doctors() {
                 if (!deleteTarget) return;
                 deleteDoctor.mutate(deleteTarget.id, {
                   onSuccess: () => { toast({ title: "Doctor removed" }); setDeleteTarget(null); },
-                  onError: () => toast({ title: "Error", description: "Failed to remove doctor", variant: "destructive" }),
+                  onError: (err: Error) => toast({ title: "Error", description: err.message || "Failed to remove doctor", variant: "destructive" }),
                 });
               }}
             >

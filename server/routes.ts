@@ -206,10 +206,19 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch("/api/patients/:id", requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      // Strip clinicId so callers cannot reassign a patient to another clinic
-      const { clinicId: _cid, ...safeUpdates } = req.body;
+      if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid patient ID" });
+      // Strip clinicId so callers cannot reassign a patient to another clinic, then
+      // validate through the same schema creation uses (partial, so a single-field
+      // edit still works). Without this, an update could write an unvalidated phone
+      // or an arbitrary column that creation would have rejected.
+      const { clinicId: _cid, ...rawUpdates } = req.body ?? {};
+      const safeUpdates = api.patients.create.input.partial().parse(rawUpdates);
+      if (Object.keys(safeUpdates).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
       res.json(await storage(req).updatePatient(id, safeUpdates));
     } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: "Failed to update patient" });
     }
   });
@@ -238,7 +247,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       res.status(201).json(await storage(req).createPatient(input));
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
-      throw err;
+      // Express 4 doesn't catch rejections from async handlers, so re-throwing here
+      // left the request hanging and surfaced as an unhandled rejection (fatal on
+      // Node >= 15). Answer the request like every other handler in this file.
+      console.error(err);
+      res.status(500).json({ message: "Failed to create patient" });
     }
   });
 
@@ -303,7 +316,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       await storage(req).deleteDoctor(userId);
       broadcastQueueUpdate(userId);
       res.json({ success: true });
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === "DOCTOR_HAS_HISTORY") {
+        return res.status(409).json({
+          message: `This doctor has ${err.count} appointment record(s) linked to patient history, so the account can't be removed. Switch them to "Unavailable" instead — they stop taking new bookings and disappear from the booking form.`,
+        });
+      }
       console.error(err);
       res.status(500).json({ message: "Failed to delete doctor" });
     }
@@ -325,7 +343,27 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const doctorId = req.query.doctorId as string | undefined;
       const status = req.query.status as string | undefined;
       const patientId = req.query.patientId ? Number(req.query.patientId) : undefined;
-      res.json(await storage(req).getAppointments({ date, doctorId, status, patientId }));
+
+      const parseBound = (v: unknown) => {
+        if (typeof v !== "string" || !v) return undefined;
+        const d = new Date(v);
+        return Number.isNaN(d.getTime()) ? undefined : d;
+      };
+      let from = parseBound(req.query.from);
+      let to = parseBound(req.query.to);
+
+      // Without a time filter this endpoint served the clinic's entire appointment
+      // history in one response — the single largest payload the app produced, and it
+      // grew forever. A request that names no window gets a recent one by default;
+      // the Appointments page passes an explicit from/to for its other tabs.
+      if (!date && !patientId && !from && !to) {
+        const { start: todayStart, end: todayEnd } = dayRangeIST();
+        from = new Date(todayStart.getTime() - 30 * 24 * 60 * 60 * 1000);
+        to = new Date(todayEnd.getTime() + 60 * 24 * 60 * 60 * 1000);
+      }
+      const limit = req.query.limit ? Number(req.query.limit) : undefined;
+
+      res.json(await storage(req).getAppointments({ date, doctorId, status, patientId, from, to, limit }));
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch appointments" });
     }
@@ -412,7 +450,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.patch(api.appointments.update.path, requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { clinicId: _cid, patientId: _pid, ...updates } = req.body;
+      if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid appointment ID" });
+      const { clinicId: _cid, patientId: _pid, ...rawUpdates } = req.body ?? {};
+      // Validate through the shared contract instead of writing req.body straight to
+      // the update. Unvalidated, any string landed in `status` (the enum is TS-only —
+      // the column is plain text, so "foo" persisted and silently dropped the row out
+      // of every queue/dashboard status filter), and unknown keys reached the SET clause.
+      const updates: Record<string, any> = api.appointments.update.input.parse(rawUpdates);
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
       const clinicId = req.session.clinicId!;
 
       // Unlike creation (which validates doctorId belongs to this clinic), an update
@@ -500,6 +547,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (updated.doctorId) broadcastQueueUpdate(updated.doctorId);
       res.json(updated);
     } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       console.error("Failed to update appointment:", err);
       res.status(400).json({ message: "Failed to update appointment" });
     }
@@ -508,14 +556,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.delete("/api/appointments/:id", requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
+      if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid appointment ID" });
       const clinicId = req.session.clinicId!;
       const [existing] = await db.select({ doctorId: appointments.doctorId })
         .from(appointments)
         .where(and(eq(appointments.id, id), eq(appointments.clinicId, clinicId)));
+      if (!existing) return res.status(404).json({ message: "Appointment not found" });
       await storage(req).deleteAppointment(id);
-      if (existing?.doctorId) broadcastQueueUpdate(existing.doctorId);
+      broadcastQueueUpdate(existing.doctorId);
       res.json({ success: true });
     } catch (err) {
+      console.error("Failed to delete appointment:", err);
       res.status(400).json({ message: "Failed to delete appointment" });
     }
   });
@@ -609,9 +660,20 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         // Re-use the same pool of position values (sorted) and re-assign them
         // to the new order so no other patients' positions are displaced.
+        // Quick-check appointments carry a null queuePosition, and the old
+        // `?? 0` collapsed every one of them onto position 0 — a drag involving
+        // two of them left duplicate positions behind, which is exactly the tie
+        // the queue ordering can't resolve. Force the pool strictly increasing so
+        // every appointment in the drag ends up with a distinct position.
+        let lastAssigned = 0;
         const sortedPositions = existing
           .map(a => a.queuePosition ?? 0)
-          .sort((a, b) => a - b);
+          .sort((a, b) => a - b)
+          .map((pos, i) => {
+            const next = i === 0 ? Math.max(pos, 1) : Math.max(pos, lastAssigned + 1);
+            lastAssigned = next;
+            return next;
+          });
 
         for (let i = 0; i < orderedAppointmentIds.length; i++) {
           await tx.update(appointments)
@@ -645,6 +707,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
       const cached = publicQueueCache.get(doctorId);
       if (cached && Date.now() - cached.ts < PUBLIC_QUEUE_CACHE_TTL_MS) {
+        res.set("Cache-Control", "public, max-age=5");
         return res.json(cached.data);
       }
 
@@ -680,9 +743,15 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           eq(appointments.doctorId, doctorId),
           eq(appointments.clinicId, clinicId),
           gte(appointments.date, today),
-          lte(appointments.date, endOfDay)
+          lte(appointments.date, endOfDay),
+          // The board only renders who's with the doctor and who's still waiting;
+          // completed/cancelled/no-show rows were being serialised to every patient's
+          // phone and every waiting-room TV all day for nothing. This is the most
+          // frequently requested endpoint in the app, so the trim compounds.
+          inArray(appointments.status, ["booked", "checked_in", "in_progress"]),
         ))
-        .orderBy(appointments.queuePosition);
+        .orderBy(appointments.queuePosition)
+        .limit(300);
 
       const payload = {
         doctor: {
@@ -701,6 +770,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         })),
       };
       publicQueueCache.set(doctorId, { data: payload, ts: Date.now() });
+      // Matches the in-process cache TTL: repeat loads from the same phone, and any
+      // shared cache in front of the app, answer without reaching Node at all. SSE
+      // still pushes real changes instantly, so this costs no freshness.
+      res.set("Cache-Control", "public, max-age=5");
       res.json(payload);
     } catch (err) {
       res.status(500).json({ message: "Failed to get public queue" });
@@ -731,7 +804,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
     req.on("close", () => {
       clearInterval(ping);
-      sseClients.get(doctorId)?.delete(res);
+      const clients = sseClients.get(doctorId);
+      if (!clients) return;
+      clients.delete(res);
+      // Drop the empty set too: doctorId comes from the URL on a no-auth endpoint, so
+      // leaving one entry per value ever connected with grows this map without bound.
+      if (clients.size === 0) sseClients.delete(doctorId);
     });
   });
 
@@ -740,7 +818,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/doctors/:id/delay", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       const doctorId = req.params.id;
-      const { delayMinutes } = req.body;
+      // This value is interpolated straight into a message patients receive, so an
+      // absent or junk one used to send "delayed by approximately undefined minutes".
+      const delayMinutes = Math.round(Number(req.body?.delayMinutes));
+      if (!Number.isFinite(delayMinutes) || delayMinutes <= 0 || delayMinutes > 600) {
+        return res.status(400).json({ message: "delayMinutes must be between 1 and 600" });
+      }
       const { start: today, end: endOfDay } = dayRangeIST();
 
       const waitingAppts = await db.select().from(appointments)
@@ -784,8 +867,34 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .where(and(eq(users.id, doctorId), eq(users.clinicId, clinicId)));
       if (!doctorRow) return res.status(404).json({ message: "Doctor not found" });
 
-      // Fetch today's full queue for this doctor
-      const todayQueue = await db.select().from(appointments)
+      // Today's queue for this doctor. Explicit projection (not `select()`, which
+      // returns every appointment AND patient column) and capped — this endpoint is
+      // polled all day by every open console.
+      const todayQueue = await db.select({
+        appointments: {
+          id: appointments.id,
+          patientId: appointments.patientId,
+          queueNumber: appointments.queueNumber,
+          queuePosition: appointments.queuePosition,
+          status: appointments.status,
+          reason: appointments.reason,
+          notes: appointments.notes,
+          vitals: appointments.vitals,
+          checkInTime: appointments.checkInTime,
+          consultationStartTime: appointments.consultationStartTime,
+        },
+        patients: {
+          id: patients.id,
+          name: patients.name,
+          phone: patients.phone,
+          email: patients.email,
+          dateOfBirth: patients.dateOfBirth,
+          gender: patients.gender,
+          bloodGroup: patients.bloodGroup,
+          allergies: patients.allergies,
+          address: patients.address,
+        },
+      }).from(appointments)
         .leftJoin(patients, and(eq(patients.id, appointments.patientId), eq(patients.clinicId, clinicId)))
         .where(and(
           eq(appointments.doctorId, doctorId),
@@ -793,7 +902,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           gte(appointments.date, today),
           lte(appointments.date, endOfDay),
         ))
-        .orderBy(appointments.queuePosition);
+        .orderBy(appointments.queuePosition)
+        .limit(500);
 
       // Current patient is the first in_progress appointment
       const currentRow = todayQueue.find(r => r.appointments.status === "in_progress");
@@ -947,17 +1057,43 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
+  const updateBillSchema = z.object({
+    status: z.enum(["pending", "paid", "cancelled"]).optional(),
+    paymentMethod: z.string().max(40).nullish(),
+    notes: z.string().max(2000).nullish(),
+  });
+
   app.patch("/api/bills/:id", requireAuth, async (req, res) => {
     try {
       const id = Number(req.params.id);
-      const { status, paymentMethod, notes } = req.body;
+      if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid bill ID" });
+      // status feeds every revenue figure on the dashboard, so it has to be one of the
+      // three real values — the column is plain text and used to accept anything.
+      const updates = updateBillSchema.parse(req.body ?? {});
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+
+      const [existing] = await db.select({ status: bills.status }).from(bills)
+        .where(and(eq(bills.id, id), eq(bills.clinicId, req.session.clinicId!)));
+      if (!existing) return res.status(404).json({ message: "Bill not found" });
+
+      const setClause: Record<string, any> = { ...updates };
+      // "Collected" on the dashboard sums paid bills by billingDate. A bill raised
+      // as pending keeps its creation date, so settling it later never showed up in
+      // the day it was actually collected — stamp the moment of payment instead.
+      if (updates.status === "paid" && existing.status !== "paid") {
+        setClause.billingDate = new Date();
+      }
+
       const [updated] = await db.update(bills)
-        .set({ status, paymentMethod, notes })
+        .set(setClause)
         .where(and(eq(bills.id, id), eq(bills.clinicId, req.session.clinicId!)))
         .returning();
       if (!updated) return res.status(404).json({ message: "Bill not found" });
       res.json(updated);
     } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
       res.status(400).json({ message: "Failed to update bill" });
     }
   });
@@ -1145,10 +1281,16 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       let sentCount = 0;
       const failures: string[] = [];
 
-      for (const id of patientIds) {
-        const [patient] = await db.select().from(patients)
-          .where(and(eq(patients.id, Number(id)), eq(patients.clinicId, req.session.clinicId!)));
-        if (!patient) continue;
+      // One query for the whole batch instead of a round trip per recipient — a
+      // 500-patient campaign was 500 sequential SELECTs before the first message
+      // even went out.
+      const ids = Array.from(new Set(patientIds.map((id: unknown) => Number(id)).filter(Number.isInteger)));
+      if (ids.length === 0) return res.status(400).json({ message: "Select at least one patient" });
+      const recipients = await db.select({ id: patients.id, name: patients.name, phone: patients.phone })
+        .from(patients)
+        .where(and(inArray(patients.id, ids), eq(patients.clinicId, req.session.clinicId!)));
+
+      for (const patient of recipients) {
 
         const msg = message.replace(/{name}/g, patient.name);
         const digits = patient.phone.replace(/\D/g, "");
@@ -1352,19 +1494,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         .where(and(eq(clinicSettings.clinicId, clinicId), eq(clinicSettings.key, "clinicProfile")));
       const profile = (profileRow?.value as any) || {};
 
-      // Determine the target date — default to today (IST), clamp past dates to today
-      const todayMidnight = dayRangeIST().start;
-      let targetDate: Date;
+      // Determine the target IST calendar day — default to today, clamp past dates to
+      // today. Everything here works in "YYYY-MM-DD" IST keys and istDayRange, the same
+      // bucket the booking handler uses, so the weekday below is the weekday patients
+      // are actually booking into.
+      const todayKey = istDateKey(new Date());
       const dateParam = req.query.date as string | undefined;
-      if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
-        const [y, mo, d] = dateParam.split("-").map(Number);
-        targetDate = new Date(Date.UTC(y, mo - 1, d));
-        if (targetDate < todayMidnight) targetDate = new Date(todayMidnight);
-      } else {
-        targetDate = new Date(todayMidnight);
-      }
+      const requestedKey = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : todayKey;
+      const targetKey = requestedKey < todayKey ? todayKey : requestedKey;
 
-      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][targetDate.getDay()];
+      // getDay() reads the SERVER's timezone off an IST-midnight instant (18:30 UTC the
+      // previous day), so on a UTC server it returned yesterday's weekday — every
+      // kiosk load with no ?date= was filtering doctors against the wrong day's
+      // availability, hiding doctors who were in fact available. Read the weekday in
+      // IST instead, via the UTC getter on the IST-shifted instant.
+      const targetDate = new Date(istDayRange(targetKey).start.getTime() + IST_OFFSET_MS);
+      const dayName = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][targetDate.getUTCDay()];
 
       const doctorRows = await db.select().from(users)
         .leftJoin(doctorProfiles, eq(doctorProfiles.userId, users.id))
@@ -1627,6 +1772,10 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── PHARMACY ──────────────────────────────────────────────────────────────
 
+  // Mirrors the options the POS offers; the daily-closing summary groups on these.
+  const PHARMACY_PAYMENT_METHODS = ["cash", "upi", "card", "online"];
+  const PHARMACY_BILL_STATUSES = ["paid", "pending", "cancelled"];
+
   // GET /api/pharmacy/stats
   app.get("/api/pharmacy/stats", requireAuth, requireRole("admin", "pharmacist"), async (req, res) => {
     try {
@@ -1689,7 +1838,12 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const d = new Date(); d.setDate(d.getDate() + 30);
         conditions.push(sql`${medicines.expiryDate} IS NOT NULL AND ${medicines.expiryDate} <= ${d.toISOString().split("T")[0]} AND ${medicines.expiryDate} >= CURRENT_DATE`);
       }
-      const rows = await db.select().from(medicines).where(and(...conditions)).orderBy(medicines.name);
+      // Bounded like the other list endpoints: the POS filters this set client-side,
+      // so it must stay a single fetch, but it should never become an unbounded scan
+      // for a clinic with a very large catalogue.
+      const rows = await db.select().from(medicines).where(and(...conditions))
+        .orderBy(medicines.name)
+        .limit(5000);
       res.json(rows);
     } catch (err) {
       res.status(500).json({ message: "Failed to fetch medicines" });
@@ -1777,6 +1931,22 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const clinicId = req.session.clinicId!;
       const { items, discountPercent: rawDiscountPercent, patientId: rawPatientId, ...rest } = req.body;
 
+      // Only these columns may come from the client. Spreading `rest` straight into
+      // the insert also carried whatever else was in the body — an `id` (colliding
+      // with the serial primary key) or a `createdAt` that would misdate the bill in
+      // every sales/closing report.
+      const clientFields = {
+        patientName: rest.patientName ?? null,
+        patientPhone: rest.patientPhone ?? null,
+        appointmentId: Number.isInteger(Number(rest.appointmentId)) ? Number(rest.appointmentId) : null,
+        // The closing report buckets the day's takings by exactly these four values,
+        // so anything else would drop a sale out of every bucket while still counting
+        // in total sales — leaving the cash drawer permanently unreconcilable.
+        paymentMethod: PHARMACY_PAYMENT_METHODS.includes(rest.paymentMethod) ? rest.paymentMethod : "cash",
+        status: PHARMACY_BILL_STATUSES.includes(rest.status) ? rest.status : "paid",
+        notes: rest.notes ?? null,
+      };
+
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ message: "Bill must have at least one item" });
       }
@@ -1786,6 +1956,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         const [patient] = await db.select({ id: patients.id }).from(patients)
           .where(and(eq(patients.id, patientId), eq(patients.clinicId, clinicId)));
         if (!patient) return res.status(403).json({ message: "Patient not found in this clinic" });
+      }
+      if (clientFields.appointmentId != null) {
+        const [appt] = await db.select({ id: appointments.id }).from(appointments)
+          .where(and(eq(appointments.id, clientFields.appointmentId), eq(appointments.clinicId, clinicId)));
+        if (!appt) return res.status(403).json({ message: "Appointment not found in this clinic" });
       }
 
       const todayIST = istDateKey(new Date());
@@ -1839,7 +2014,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
         const [bill] = await tx.insert(pharmacyBills)
           .values({
-            ...rest,
+            ...clientFields,
             patientId,
             items: resolvedItems,
             subtotal, discountPercent, discountAmount, gstTotal, totalAmount,
@@ -1929,22 +2104,125 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/returns", requireAuth, requireRole("admin", "pharmacist"), async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const { originalBillId, patientName, patientPhone, items, totalAmount, refundMethod, reason } = req.body;
-      if (!items?.length) return res.status(400).json({ message: "No items to return" });
+      const { originalBillId, patientName, patientPhone, items, refundMethod, reason } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ message: "No items to return" });
+      }
+
       const record = await db.transaction(async (tx) => {
-        for (const item of (items as any[])) {
-          if (!item.medicineId) continue;
-          await tx.update(medicines)
-            .set({ stockQty: sql`${medicines.stockQty} + ${item.qty}` })
-            .where(and(eq(medicines.id, item.medicineId), eq(medicines.clinicId, clinicId)));
+        // The original bill is the source of truth for what may be returned and at
+        // what price. Without this the endpoint credited whatever stockQty the caller
+        // asked for and recorded whatever refund total it was handed — quantities
+        // never sold, or more than were sold, silently inflated inventory and the
+        // refund figures the closing report is built from. Prices are recomputed here
+        // for the same reason POST /api/pharmacy/bills recomputes them.
+        let bill: typeof pharmacyBills.$inferSelect | undefined;
+        if (originalBillId != null) {
+          [bill] = await tx.select().from(pharmacyBills)
+            .where(and(eq(pharmacyBills.id, Number(originalBillId)), eq(pharmacyBills.clinicId, clinicId)));
+          if (!bill) throw Object.assign(new Error("Original bill not found"), { isReturnError: true });
         }
+
+        // How much of each medicine has already been sent back on this bill, so the
+        // same line can't be returned twice.
+        const alreadyReturned = new Map<number, number>();
+        if (bill) {
+          const priorReturns = await tx.select({ items: pharmacyReturns.items })
+            .from(pharmacyReturns)
+            .where(and(eq(pharmacyReturns.clinicId, clinicId), eq(pharmacyReturns.originalBillId, bill.id)));
+          for (const prior of priorReturns) {
+            for (const pi of (prior.items as any[]) ?? []) {
+              if (!pi?.medicineId) continue;
+              alreadyReturned.set(pi.medicineId, (alreadyReturned.get(pi.medicineId) ?? 0) + (Number(pi.qty) || 0));
+            }
+          }
+        }
+
+        const billedByMedicine = new Map<number, any>();
+        for (const bi of ((bill?.items as any[]) ?? [])) {
+          if (!bi?.medicineId) continue;
+          const prev = billedByMedicine.get(bi.medicineId);
+          billedByMedicine.set(bi.medicineId, prev ? { ...bi, qty: prev.qty + bi.qty } : { ...bi });
+        }
+
+        let totalAmount = 0;
+        const resolvedItems: any[] = [];
+
+        for (const item of (items as any[])) {
+          const medicineId = Number(item?.medicineId);
+          const qty = Number(item?.qty);
+          if (!Number.isInteger(medicineId) || !Number.isInteger(qty) || qty <= 0) {
+            throw Object.assign(new Error("Each returned item needs a valid medicine and a positive quantity"), { isReturnError: true });
+          }
+
+          // Row lock, same as the sale path, so two concurrent returns can't both read
+          // the same stock level and double-credit it.
+          const [med] = await tx.select({
+            id: medicines.id, name: medicines.name, unit: medicines.unit,
+            sellingPrice: medicines.sellingPrice, gstPercent: medicines.gstPercent,
+          }).from(medicines)
+            .where(and(eq(medicines.id, medicineId), eq(medicines.clinicId, clinicId)))
+            .for("update");
+          if (!med) throw Object.assign(new Error("Medicine not found"), { isReturnError: true });
+
+          const billedItem = billedByMedicine.get(medicineId);
+          if (bill) {
+            if (!billedItem) {
+              throw Object.assign(new Error(`${med.name} was not on bill #${bill.id}`), { isReturnError: true });
+            }
+            const returnable = (Number(billedItem.qty) || 0) - (alreadyReturned.get(medicineId) ?? 0);
+            if (qty > returnable) {
+              throw Object.assign(
+                new Error(`Only ${Math.max(0, returnable)} ${med.unit}(s) of ${med.name} can still be returned on bill #${bill.id}`),
+                { isReturnError: true },
+              );
+            }
+            alreadyReturned.set(medicineId, (alreadyReturned.get(medicineId) ?? 0) + qty);
+          }
+
+          await tx.update(medicines)
+            .set({ stockQty: sql`${medicines.stockQty} + ${qty}` })
+            .where(and(eq(medicines.id, medicineId), eq(medicines.clinicId, clinicId)));
+
+          // Refund at the price actually charged on the bill; fall back to the current
+          // selling price only for a free-form return with no bill attached.
+          const sellingPrice = billedItem ? Number(billedItem.sellingPrice) || 0 : med.sellingPrice;
+          const gstPercent = billedItem ? Number(billedItem.gstPercent) || 0 : (med.gstPercent ?? 0);
+          const base = sellingPrice * qty;
+          const gstAmount = Math.round(base * gstPercent / 100);
+          const lineTotal = base + gstAmount;
+          totalAmount += lineTotal;
+
+          resolvedItems.push({
+            medicineId, name: med.name, unit: med.unit,
+            sellingPrice, gstPercent, qty, gstAmount, total: lineTotal,
+          });
+        }
+
+        // Refund what the patient actually paid: a bill-level discount applied to the
+        // sale applies to the money coming back out too, otherwise a discounted bill
+        // refunds more than it ever collected.
+        const discountPercent = Math.min(100, Math.max(0, bill?.discountPercent ?? 0));
+        totalAmount -= Math.round(totalAmount * discountPercent / 100);
+
         const [row] = await tx.insert(pharmacyReturns)
-          .values({ clinicId, originalBillId: originalBillId || null, patientName, patientPhone, items, totalAmount, refundMethod, reason })
+          .values({
+            clinicId,
+            originalBillId: bill?.id ?? null,
+            patientName: bill?.patientName ?? patientName ?? null,
+            patientPhone: bill?.patientPhone ?? patientPhone ?? null,
+            items: resolvedItems,
+            totalAmount,
+            refundMethod: PHARMACY_PAYMENT_METHODS.includes(refundMethod) ? refundMethod : "cash",
+            reason: typeof reason === "string" ? reason.slice(0, 2000) : null,
+          })
           .returning();
         return row!;
       });
       res.json(record);
     } catch (err: any) {
+      if (err?.isReturnError) return res.status(400).json({ message: err.message });
+      console.error("[pharmacy returns]", err);
       res.status(400).json({ message: err?.message || "Failed to process return" });
     }
   });
@@ -1967,10 +2245,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/wastage", requireAuth, requireRole("admin", "pharmacist"), async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const { medicineId, medicineName, batchNo, qty, unit, costPrice, reason, notes } = req.body;
+      const { medicineId, medicineName, batchNo, unit, reason, notes } = req.body;
       if (!medicineName) return res.status(400).json({ message: "Medicine name is required" });
-      if (!qty || qty <= 0) return res.status(400).json({ message: "Quantity must be greater than 0" });
-      const totalCost = Math.round((costPrice || 0) * qty);
+      // stockQty and qty are integer columns: a fractional or non-numeric quantity
+      // passed the old `!qty || qty <= 0` check and then failed at the DB with an
+      // opaque error (or, for a fraction, silently skewed the stock decrement).
+      const qty = Number(req.body?.qty);
+      if (!Number.isInteger(qty) || qty <= 0) {
+        return res.status(400).json({ message: "Quantity must be a whole number greater than 0" });
+      }
+      const costPrice = Math.max(0, Math.round(Number(req.body?.costPrice) || 0));
+      const totalCost = costPrice * qty;
       const record = await db.transaction(async (tx) => {
         if (medicineId) {
           const [med] = await tx.select({ stockQty: medicines.stockQty })
@@ -1983,7 +2268,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             .where(and(eq(medicines.id, Number(medicineId)), eq(medicines.clinicId, clinicId)));
         }
         const [row] = await tx.insert(wastageRecords)
-          .values({ clinicId, medicineId: medicineId ? Number(medicineId) : null, medicineName, batchNo: batchNo || null, qty, unit: unit || "Strip", costPrice: costPrice || 0, totalCost, reason: reason || "expired", notes: notes || null })
+          .values({ clinicId, medicineId: medicineId ? Number(medicineId) : null, medicineName, batchNo: batchNo || null, qty, unit: unit || "Strip", costPrice, totalCost, reason: reason || "expired", notes: notes || null })
           .returning();
         return row!;
       });
@@ -2052,12 +2337,28 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   app.post("/api/pharmacy/closing", requireAuth, requireRole("admin", "pharmacist"), async (req, res) => {
     try {
       const clinicId = req.session.clinicId!;
-      const { closingDate, cashExpected, cashActual, upiTotal, cardTotal, onlineTotal, totalSales, totalReturns, notes } = req.body;
+      const { closingDate, notes } = req.body ?? {};
+      // These all land in integer columns and are read back as the day's cash record,
+      // so anything non-numeric (or a malformed date key, which would create a second
+      // row for the same day) has to be rejected rather than handed to Postgres raw.
+      if (typeof closingDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(closingDate)) {
+        return res.status(400).json({ message: "closingDate must be in YYYY-MM-DD format" });
+      }
+      const money = (v: any) => Math.max(0, Math.round(Number(v) || 0));
+      const amounts = {
+        cashExpected: money(req.body?.cashExpected),
+        cashActual: money(req.body?.cashActual),
+        upiTotal: money(req.body?.upiTotal),
+        cardTotal: money(req.body?.cardTotal),
+        onlineTotal: money(req.body?.onlineTotal),
+        totalSales: money(req.body?.totalSales),
+        totalReturns: money(req.body?.totalReturns),
+      };
       const [row] = await db.insert(dailyClosings)
-        .values({ clinicId, closingDate, cashExpected, cashActual, upiTotal, cardTotal, onlineTotal, totalSales, totalReturns, notes: notes || null })
+        .values({ clinicId, closingDate, ...amounts, notes: notes || null })
         .onConflictDoUpdate({
           target: [dailyClosings.clinicId, dailyClosings.closingDate],
-          set: { cashExpected, cashActual, upiTotal, cardTotal, onlineTotal, totalSales, totalReturns, notes: notes || null },
+          set: { ...amounts, notes: notes || null },
         })
         .returning();
       res.json(row);
@@ -2072,6 +2373,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     try {
       const clinicId = req.session.clinicId!;
       const month = (req.query.month as string) || istDateKey(new Date()).slice(0, 7);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+        return res.status(400).json({ message: "month must be in YYYY-MM format" });
+      }
       const [year, mon] = month.split("-").map(Number);
       // IST month boundaries, not server-local — bookend via istDayRange on day 1 of
       // this month and day 1 of next month, so it's correct regardless of days-in-month.
@@ -2610,11 +2914,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         await tx.delete(prescriptions).where(eq(prescriptions.clinicId, id));
         await tx.delete(bills).where(eq(bills.clinicId, id));
         await tx.delete(appointments).where(eq(appointments.clinicId, id));
-        // Delete doctor profiles before deleting users
-        const clinicUsers = await tx.select({ id: users.id }).from(users).where(eq(users.clinicId, id));
-        for (const u of clinicUsers) {
-          await tx.delete(doctorProfiles).where(eq(doctorProfiles.userId, u.id));
-        }
+        // Delete doctor profiles before deleting users — one statement scoped by a
+        // subquery rather than a DELETE per user row.
+        await tx.delete(doctorProfiles).where(
+          inArray(doctorProfiles.userId, tx.select({ id: users.id }).from(users).where(eq(users.clinicId, id))),
+        );
         await tx.delete(users).where(eq(users.clinicId, id));
         await tx.delete(patients).where(eq(patients.clinicId, id));
         await tx.delete(clinicSettings).where(eq(clinicSettings.clinicId, id));
@@ -2750,6 +3054,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── STAFF MANAGEMENT (receptionist / pharmacist) ──────────────────────────
 
+  // These endpoints only ever manage non-doctor staff. Doctors are created and
+  // removed through /api/doctors, which also maintains their profile row and
+  // appointment links, so every staff query is scoped to these roles.
+  const STAFF_ROLES_FILTER = inArray(users.role, ["receptionist", "pharmacist", "staff"]);
+
   // GET /api/staff — list all non-doctor staff for this clinic
   app.get("/api/staff", requireAuth, requireRole("admin"), async (req, res) => {
     try {
@@ -2757,7 +3066,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         id: users.id, name: users.name, email: users.email, role: users.role, createdAt: users.createdAt,
       }).from(users).where(and(
         eq(users.clinicId, req.session.clinicId!),
-        sql`${users.role} IN ('receptionist','pharmacist','staff')`,
+        STAFF_ROLES_FILTER,
       )).orderBy(users.createdAt);
       res.json(rows);
     } catch (err) {
@@ -2799,7 +3108,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (password && password.length >= 6) updates.passwordHash = await bcrypt.hash(password, 10);
       if (!Object.keys(updates).length) return res.status(400).json({ message: "Nothing to update" });
       const [row] = await db.update(users).set(updates)
-        .where(and(eq(users.id, req.params.id), eq(users.clinicId, req.session.clinicId!)))
+        // Same role scope the staff LIST uses — without it this endpoint reached
+        // doctor accounts too (renaming one, or setting a login password on it,
+        // from a screen that only ever shows staff).
+        .where(and(
+          eq(users.id, req.params.id),
+          eq(users.clinicId, req.session.clinicId!),
+          STAFF_ROLES_FILTER,
+        ))
         .returning({ id: users.id, name: users.name, email: users.email, role: users.role, createdAt: users.createdAt });
       if (!row) return res.status(404).json({ message: "Staff not found" });
       res.json(row);
@@ -2811,7 +3127,17 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   // DELETE /api/staff/:id
   app.delete("/api/staff/:id", requireAuth, requireRole("admin"), async (req, res) => {
     try {
-      await db.delete(users).where(and(eq(users.id, req.params.id), eq(users.clinicId, req.session.clinicId!)));
+      // Role-scoped for the same reason as the update above: a doctor id sent here
+      // used to hit the plain users delete, which either wiped a doctor outside the
+      // deleteDoctor path or blew up on the appointments foreign key.
+      const [deleted] = await db.delete(users)
+        .where(and(
+          eq(users.id, req.params.id),
+          eq(users.clinicId, req.session.clinicId!),
+          STAFF_ROLES_FILTER,
+        ))
+        .returning({ id: users.id });
+      if (!deleted) return res.status(404).json({ message: "Staff not found" });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: "Failed to delete staff" });

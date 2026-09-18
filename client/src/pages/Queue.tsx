@@ -821,6 +821,12 @@ export default function Queue() {
     }
   }, [doctors, selectedDoctor]);
 
+  // A drag leaves a 500ms debounce pending; navigating away before it fires used to
+  // still send the reorder (and set state on an unmounted component) afterwards.
+  useEffect(() => () => {
+    if (reorderTimeoutRef.current) clearTimeout(reorderTimeoutRef.current);
+  }, []);
+
   // SSE: live queue updates when doctor marks patient as consulted.
   // Skip invalidation if a drag-reorder is in-flight to avoid overwriting the local state.
   // Auto-reconnects on error with a 5-second delay so live updates survive transient drops.

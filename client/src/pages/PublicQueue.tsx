@@ -35,7 +35,7 @@ export default function PublicQueue() {
       if (!res.ok) throw new Error("Doctor not found");
       return res.json();
     },
-    refetchInterval: 60000, // safety net only — SSE below drives real-time updates
+    refetchInterval: 180000, // safety net only — SSE below drives real-time updates
     refetchIntervalInBackground: true,
     staleTime: 0,
     enabled: !!doctorId,

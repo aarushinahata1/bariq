@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { InsertAppointment } from "@shared/schema";
 
 export function useAppointments(
-  filters?: { date?: string; doctorId?: string; status?: string; patientId?: number },
+  filters?: { date?: string; doctorId?: string; status?: string; patientId?: number; from?: string; to?: string },
   options?: { refetchInterval?: number | false; keepPrevious?: boolean }
 ) {
   return useQuery({
@@ -17,13 +17,22 @@ export function useAppointments(
         if (filters.doctorId) params.append("doctorId", filters.doctorId);
         if (filters.status) params.append("status", filters.status);
         if (filters.patientId) params.append("patientId", String(filters.patientId));
+        // Explicit window so the server returns just this view's range instead of
+        // falling back to its default recent window.
+        if (filters.from) params.append("from", filters.from);
+        if (filters.to) params.append("to", filters.to);
         url += `?${params.toString()}`;
       }
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch appointments");
       return api.appointments.list.responses[200].parse(await res.json());
     },
-    refetchInterval: options?.refetchInterval ?? 30000,
+    // SSE (see Queue.tsx / DoctorConsole.tsx) pushes queue changes the moment they
+    // happen, so this timer is a fallback for a dropped stream, not the primary path.
+    // Every tick costs a request and a multi-table query per open tab.
+    refetchInterval: options?.refetchInterval ?? 120000,
+    // Switching tabs/pages shouldn't refire the query when we just fetched it.
+    staleTime: 15000,
     placeholderData: options?.keepPrevious ? keepPreviousData : undefined,
   });
 }

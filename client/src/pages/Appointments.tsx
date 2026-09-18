@@ -131,7 +131,35 @@ function RescheduleDialog({ appointment }: { appointment: any }) {
 export default function Appointments() {
   const { can } = useRole();
   const { toast } = useToast();
-  const { data: appointments, isLoading } = useAppointments();
+  const [filter, setFilter] = useState("all");
+  const [selectedDate, setSelectedDate] = useState("");
+
+  // Fetch only the range the active tab actually displays. This list used to pull
+  // every appointment the clinic had ever recorded on every load and then throw most
+  // of them away client-side — the largest response the app produced, growing for as
+  // long as the clinic stays in business.
+  const apptWindow = useMemo(() => {
+    if (selectedDate) return { date: selectedDate };
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (filter === "today") return { date: format(now, "yyyy-MM-dd") };
+    if (filter === "upcoming") {
+      return {
+        from: new Date(startOfToday.getTime() + DAY).toISOString(),
+        to: new Date(startOfToday.getTime() + 365 * DAY).toISOString(),
+      };
+    }
+    if (filter === "past") {
+      return {
+        from: new Date(startOfToday.getTime() - 365 * DAY).toISOString(),
+        to: new Date(startOfToday.getTime() - 1).toISOString(),
+      };
+    }
+    return {}; // "all" — the server's default recent window
+  }, [filter, selectedDate]);
+
+  const { data: appointments, isLoading } = useAppointments(apptWindow, { keepPrevious: true });
   const updateAppointment = useUpdateAppointment();
   const deleteAppointment = useDeleteAppointment();
   const { data: doctors } = useDoctors();
@@ -143,11 +171,9 @@ export default function Appointments() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<any>(null);
   const [deleteTarget, setDeleteTarget] = useState<any>(null);
-  const [filter, setFilter] = useState("all");
   const [selectedDoctor, setSelectedDoctor] = useState("all");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [patientSearch, setPatientSearch] = useState("");
-  const [selectedDate, setSelectedDate] = useState("");
 
   if (isLoading) return <Loading />;
 
@@ -565,7 +591,7 @@ export default function Appointments() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Appointment?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete <strong>{deleteTarget?.patient?.name}</strong>'s {deleteTarget?.status} appointment with Dr. {deleteTarget?.doctor?.name}. This cannot be undone.
+              This will permanently delete <strong>{deleteTarget?.patient?.name}</strong>'s {deleteTarget?.status} appointment with Dr. {deleteTarget?.doctor?.name}, along with any bill and prescription recorded for that visit. This cannot be undone — cancel the appointment instead if you only want it off the queue.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -692,7 +718,7 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
     enabled: showPreview,
     staleTime: 0,
     gcTime: 0,
-    refetchInterval: showPreview ? 10000 : false,
+    refetchInterval: showPreview ? 30000 : false,
   });
 
   const resetPatientState = () => {

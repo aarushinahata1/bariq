@@ -134,7 +134,10 @@ async function buildClinicSessionResponse(
   role?: string | null,
   userName?: string | null
 ) {
-  let clinic = await getClinic(clinicId);
+  // Served from the same short-TTL cache the plan-check middleware fills, so the
+  // /api/auth/me poll every open tab makes doesn't add a clinics SELECT per tab per
+  // interval. Plan changes invalidate the cache explicitly (invalidateClinicPlanCache).
+  let clinic = await getClinicForPlanCheck(clinicId);
   if (!clinic) return null;
   clinic = await syncPlanStatus(clinic);
   const { passwordHash: _, ...safe } = clinic;
@@ -212,6 +215,10 @@ export function setupAuth(app: Express) {
         // run an UPDATE on every single authenticated request writing that exact
         // same, unchanged expire value. Disabling it drops a no-op write per request.
         disableTouch: true,
+        // Expired-session cleanup defaults to a DELETE every 60s — per instance, so
+        // the write multiplies with autoscaling for a table that only needs sweeping
+        // occasionally. Hourly is plenty for 7-day sessions.
+        pruneSessionInterval: 60 * 60,
       }),
       resave: false,
       saveUninitialized: false,
@@ -226,6 +233,15 @@ export function setupAuth(app: Express) {
 
   // ── Current session info ──────────────────────────────────────────────────
   app.get("/api/auth/me", async (req, res) => {
+    try {
+      await handleAuthMe(req, res);
+    } catch (err) {
+      console.error("/api/auth/me error:", err);
+      if (!res.headersSent) res.status(500).json({ message: "Failed to load session" });
+    }
+  });
+
+  async function handleAuthMe(req: Request, res: Response) {
     if (req.session.isSuperAdmin) {
       return res.json({ isSuperAdmin: true, email: SUPER_ADMIN_EMAIL });
     }
@@ -254,7 +270,7 @@ export function setupAuth(app: Express) {
     const body = await buildClinicSessionResponse(req.session.clinicId, userId, role, userName);
     if (!body) return res.status(401).json({ message: "Clinic not found" });
     res.json(body);
-  });
+  }
 
   // ── Signup ───────────────────────────────────────────────────────────────
   app.post("/api/auth/signup", async (req, res) => {
@@ -371,7 +387,7 @@ export function setupAuth(app: Express) {
 
       // Super admin — timing-safe comparison
       if (
-        email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() &&
+        email.toLowerCase().trim() === SUPER_ADMIN_EMAIL.toLowerCase().trim() &&
         timingSafeEqual(password, SUPER_ADMIN_PASSWORD)
       ) {
         return req.session.regenerate((err) => {
@@ -403,13 +419,22 @@ export function setupAuth(app: Express) {
           req.session.partnerId = undefined;
           req.session.userId = undefined;
           req.session.role = undefined;
+          // The session-store callback is outside the outer try/catch, so anything
+          // thrown in here escapes as an unhandled rejection (fatal on Node >= 15)
+          // and the request never gets answered.
           req.session.save(async (saveErr) => {
             if (saveErr) {
               console.error("Session save error:", saveErr);
               return res.status(500).json({ message: "Login failed" });
             }
-            const body = await buildClinicSessionResponse(clinic.id);
-            res.json(body);
+            try {
+              const body = await buildClinicSessionResponse(clinic.id);
+              if (!body) return res.status(401).json({ message: "Clinic not found" });
+              res.json(body);
+            } catch (bodyErr) {
+              console.error("Login response error:", bodyErr);
+              res.status(500).json({ message: "Login failed" });
+            }
           });
         });
       }
@@ -448,9 +473,14 @@ export function setupAuth(app: Express) {
               console.error("Session save error:", saveErr);
               return res.status(500).json({ message: "Login failed" });
             }
-            const body = await buildClinicSessionResponse(staffUser.clinicId!, staffUser.id, staffUser.role, staffUser.name);
-            if (!body) return res.status(401).json({ message: "Clinic not found" });
-            res.json(body);
+            try {
+              const body = await buildClinicSessionResponse(staffUser.clinicId!, staffUser.id, staffUser.role, staffUser.name);
+              if (!body) return res.status(401).json({ message: "Clinic not found" });
+              res.json(body);
+            } catch (bodyErr) {
+              console.error("Login response error:", bodyErr);
+              res.status(500).json({ message: "Login failed" });
+            }
           });
         });
       }

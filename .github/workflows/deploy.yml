@@ -63,4 +63,9 @@ jobs:
             --region=${{ env.REGION }} \
             --platform=managed \
             --allow-unauthenticated \
-            --set-env-vars="^||^NODE_ENV=production||DATABASE_URL=${{ secrets.DATABASE_URL }}||SESSION_SECRET=${{ secrets.SESSION_SECRET }}"
+            --min-instances=0 \
+            --max-instances=4 \
+            --concurrency=250 \
+            --cpu=1 \
+            --memory=512Mi \
+            --update-env-vars="^||^NODE_ENV=production||DB_POOL_MAX=5||DATABASE_URL=${{ secrets.DATABASE_URL }}||SESSION_SECRET=${{ secrets.SESSION_SECRET }}"

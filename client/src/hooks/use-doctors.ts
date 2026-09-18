@@ -62,7 +62,12 @@ export function useDeleteDoctor() {
   return useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/doctors/${id}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) throw new Error("Failed to delete doctor");
+      if (!res.ok) {
+        // The server explains *why* a removal was refused (e.g. the doctor still has
+        // appointment history) — show that rather than a generic failure.
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || "Failed to delete doctor");
+      }
       return res.json();
     },
     onSuccess: () => {

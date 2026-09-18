@@ -538,8 +538,40 @@ export default function DoctorConsole() {
       return res.json();
     },
     enabled: !!selectedDoctorId,
-    refetchInterval: 15000,
+    // The SSE subscription below pushes every change to this doctor's queue the
+    // moment it happens, so this timer is only a fallback for a dropped stream.
+    // Polling it every 15s ran the console's six queries four times a minute per
+    // open console, all day, almost always to rediscover nothing had changed.
+    refetchInterval: 120000,
   });
+
+  // Live queue updates over the shared per-doctor SSE channel (the same one the
+  // queue board and public display use), with a 5s reconnect so the console stays
+  // live across transient drops.
+  useEffect(() => {
+    if (!selectedDoctorId) return;
+    let es: EventSource;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      es = new EventSource(`/api/sse/doctor/${selectedDoctorId}`);
+      es.onmessage = (e) => {
+        if (e.data === "connected") return;
+        queryClient.invalidateQueries({ queryKey: ["/api/doctor-console", selectedDoctorId] });
+      };
+      es.onerror = () => {
+        es.close();
+        reconnectTimer = setTimeout(connect, 5000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      es?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [selectedDoctorId, queryClient]);
 
   // Clinic profile (for print) — there is no /api/settings/:key GET route (only
   // PATCH), so fetching that path always 404s and silently falls back to {}; the

@@ -1,5 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
+import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -8,6 +9,23 @@ import { createServer } from "http";
 const app = express();
 app.set("trust proxy", 1); // Required for secure cookies behind Render's proxy
 const httpServer = createServer(app);
+
+// Gzip every response above 1 KB. JSON from this API compresses ~8-10x, and egress
+// is billed per byte on Cloud Run/Render while the CPU cost of gzip at this size is
+// negligible next to the DB round trip that produced the payload.
+app.use(compression({
+  threshold: 1024,
+  // Never compress the SSE streams. compression() buffers until it has enough bytes
+  // to emit a block, so an event stream — whose frames are a few dozen bytes and must
+  // arrive the instant they're written — gets held indefinitely and the live queue
+  // boards silently stop updating. Verified: with the stream compressed, not a single
+  // push arrives.
+  filter: (req, res) => {
+    const type = String(res.getHeader("Content-Type") || "");
+    if (type.includes("text/event-stream")) return false;
+    return compression.filter(req, res);
+  },
+}));
 
 // Security headers
 app.use(helmet({
@@ -85,6 +103,14 @@ app.use((req, res, next) => {
 
 (async () => {
   await registerRoutes(httpServer, app);
+
+  // Unknown /api paths must be answered here. Both serveStatic and setupVite end in
+  // an app.use("*") SPA fallback, so without this a typo'd or removed endpoint came
+  // back as index.html with a 200 — every client call site treats that as success
+  // and then dies on res.json().
+  app.use("/api", (_req: Request, res: Response) => {
+    res.status(404).json({ message: "Not found" });
+  });
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

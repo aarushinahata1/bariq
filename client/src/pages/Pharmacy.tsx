@@ -1440,7 +1440,14 @@ function ReturnDialog({ bill, open, onClose }: { bill: PharmacyBill | null; open
   const returnItems = Object.entries(selected).map(([idx, qty]) => ({
     ...items[Number(idx)], qty,
   }));
-  const returnTotal = returnItems.reduce((s, i) => s + Math.round((i.sellingPrice * i.qty) * (1 + (i.gstPercent ?? 0) / 100)), 0);
+  // Mirror of the server's calculation (which is authoritative): line price + GST,
+  // then the bill's own discount, so what's shown here is what's actually refunded.
+  const returnGross = returnItems.reduce((s, i) => {
+    const base = i.sellingPrice * i.qty;
+    return s + base + Math.round(base * (i.gstPercent ?? 0) / 100);
+  }, 0);
+  const returnDiscount = Math.round(returnGross * (bill?.discountPercent ?? 0) / 100);
+  const returnTotal = returnGross - returnDiscount;
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -1449,10 +1456,9 @@ function ReturnDialog({ bill, open, onClose }: { bill: PharmacyBill | null; open
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           originalBillId: bill?.id,
-          patientName: bill?.patientName,
-          patientPhone: bill?.patientPhone,
-          items: returnItems,
-          totalAmount: returnTotal,
+          // Quantities and the bill reference only — the server re-derives prices and
+          // the refund total from the original bill.
+          items: returnItems.map(i => ({ medicineId: i.medicineId, qty: i.qty })),
           refundMethod: refundMethod.toLowerCase(),
           reason: reason.trim() || null,
         }),
@@ -1461,11 +1467,12 @@ function ReturnDialog({ bill, open, onClose }: { bill: PharmacyBill | null; open
       if (!r.ok) { const e = await r.json(); throw new Error(e.message); }
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (record: any) => {
       qc.invalidateQueries({ queryKey: ["/api/pharmacy/returns"] });
       qc.invalidateQueries({ queryKey: ["/api/pharmacy/medicines"] });
       qc.invalidateQueries({ queryKey: ["/api/pharmacy/stats"] });
-      toast({ title: "Return processed", description: `₹${rupees(returnTotal)} refunded via ${refundMethod}` });
+      qc.invalidateQueries({ queryKey: ["/api/pharmacy/closing/today"] });
+      toast({ title: "Return processed", description: `₹${rupees(record?.totalAmount ?? returnTotal)} refunded via ${refundMethod}` });
       onClose();
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
@@ -2036,7 +2043,9 @@ function ClosingTab() {
   const { data: summary, refetch: refetchSummary } = useQuery<TodaySummary>({
     queryKey: ["/api/pharmacy/closing/today"],
     queryFn: () => fetch("/api/pharmacy/closing/today", { credentials: "include" }).then(r => r.json()),
-    refetchInterval: 30000,
+    // Recomputed from the day's bills on every call; it also refetches on each sale
+    // and each return, so the timer only needs to catch another till's activity.
+    refetchInterval: 300000,
   });
 
   const { data: history = [] } = useQuery<DailyClosing[]>({
@@ -2242,7 +2251,9 @@ export default function Pharmacy() {
   const { data: stats } = useQuery<Stats>({
     queryKey: ["/api/pharmacy/stats"],
     queryFn: () => fetch("/api/pharmacy/stats", { credentials: "include" }).then(r => r.json()),
-    refetchInterval: 30000,
+    // Five aggregate counts over the medicine and bill tables; invalidated on every
+    // stock or billing mutation, so a slow timer is enough.
+    refetchInterval: 300000,
   });
 
   const { data: medicines = [] } = useQuery<Medicine[]>({

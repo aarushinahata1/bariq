@@ -8,7 +8,7 @@ import {
   type Bill, type InsertBill, type ClinicSetting, type Clinic, type ClinicPayment,
   type DentalChart, type InsertDentalChart, type BodyChart, type InsertBodyChart,
 } from "@shared/schema";
-import { eq, and, desc, asc, sql, gte, lte, like, or, inArray } from "drizzle-orm";
+import { eq, and, desc, asc, sql, gte, lte, ilike, or, inArray } from "drizzle-orm";
 import { format } from "date-fns";
 
 export class DatabaseStorage {
@@ -117,14 +117,21 @@ export class DatabaseStorage {
 
   async deleteDoctor(userId: string): Promise<void> {
     await db.transaction(async (tx) => {
-      // Cancel all active/upcoming appointments for this doctor
-      await tx.update(appointments)
-        .set({ status: "cancelled" })
-        .where(and(
-          eq(appointments.clinicId, this.clinicId),
-          eq(appointments.doctorId, userId),
-          sql`${appointments.status} IN ('booked', 'checked_in')`
-        ));
+      // appointments.doctorId and prescriptions.doctorId are NOT NULL foreign keys to
+      // users with no cascade, so the DELETE below fails outright for any doctor who
+      // has ever been booked — which surfaced as an opaque 500. Past clinical records
+      // must not be deleted to make room for it either, so refuse explicitly and let
+      // the route turn this into an actionable message.
+      const [history] = await tx.select({ cnt: sql<number>`count(*)::int` })
+        .from(appointments)
+        .where(and(eq(appointments.clinicId, this.clinicId), eq(appointments.doctorId, userId)));
+      if ((history?.cnt ?? 0) > 0) {
+        throw Object.assign(
+          new Error(`This doctor has ${history!.cnt} appointment record(s) that must be kept`),
+          { code: "DOCTOR_HAS_HISTORY", count: history!.cnt },
+        );
+      }
+
       await tx.delete(doctorProfiles)
         .where(and(eq(doctorProfiles.userId, userId), this.doctorInThisClinic(userId)));
       await tx.delete(users)
@@ -134,52 +141,64 @@ export class DatabaseStorage {
 
   // ── Patients ──────────────────────────────────────────────────────────────
 
-  async getPatients(search?: string, filters?: { status?: string; source?: string }): Promise<(Patient & { lastAppointmentStatus?: string | null })[]> {
+  async getPatients(
+    search?: string,
+    filters?: { status?: string; source?: string; limit?: number },
+  ): Promise<(Patient & { lastAppointmentStatus?: string | null })[]> {
     const appointmentStatuses = ["booked", "checked_in", "in_progress", "completed", "cancelled", "no_show"];
-    let conditions: any[] = [eq(patients.clinicId, this.clinicId)];
+    const conditions: any[] = [eq(patients.clinicId, this.clinicId)];
 
     if (search) {
-      conditions.push(or(like(patients.name, `%${search}%`), like(patients.phone, `%${search}%`)));
+      // ILIKE, not LIKE: Postgres LIKE is case-sensitive, so searching "john" never
+      // matched "John Doe" — the same case-insensitive match the medicine search uses.
+      // % and _ are escaped so a stray wildcard in the box doesn't match everything.
+      const term = search.replace(/[\\%_]/g, c => `\\${c}`);
+      conditions.push(or(ilike(patients.name, `%${term}%`), ilike(patients.phone, `%${term}%`)));
     }
 
+    // EXISTS instead of loading every matching appointment id into Node and
+    // re-injecting them as a giant IN (...) list — that second round trip grew with
+    // the clinic's entire appointment history.
     if (filters?.status && appointmentStatuses.includes(filters.status)) {
-      const rows = await db.select({ patientId: appointments.patientId })
-        .from(appointments)
-        .where(and(eq(appointments.clinicId, this.clinicId), sql`${appointments.status} = ${filters.status}`));
-      const ids = Array.from(new Set(rows.map(r => r.patientId)));
-      if (ids.length > 0) {
-        conditions.push(sql`${patients.id} IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`);
-      } else {
-        return [];
-      }
+      conditions.push(sql`EXISTS (
+        SELECT 1 FROM ${appointments}
+        WHERE ${appointments.patientId} = ${patients.id}
+          AND ${appointments.clinicId} = ${this.clinicId}
+          AND ${appointments.status} = ${filters.status}
+      )`);
     }
 
     if (filters?.source) conditions.push(eq(patients.source, filters.source));
 
-    const patientRows = await db.select().from(patients)
+    // Hard ceiling so one clinic's list can never become an unbounded scan-and-ship;
+    // the UI filters client-side, so this is the safety net, not the pagination.
+    const limit = Math.min(Math.max(1, filters?.limit ?? 5000), 5000);
+
+    // The "last appointment status" badge used to cost a second query that pulled
+    // EVERY appointment belonging to EVERY returned patient just to read the newest
+    // one per patient. A LATERAL does that inside the same scan, touching one index
+    // row per patient instead.
+    const rows = await db
+      .select({
+        patient: patients,
+        lastAppointmentStatus: sql<string | null>`last_appt.status`,
+      })
+      .from(patients)
+      .leftJoin(
+        sql`LATERAL (
+          SELECT a.status
+          FROM ${appointments} a
+          WHERE a.patient_id = ${patients.id} AND a.clinic_id = ${this.clinicId}
+          ORDER BY a.date DESC, a.id DESC
+          LIMIT 1
+        ) AS last_appt`,
+        sql`true`,
+      )
       .where(and(...conditions))
-      .orderBy(desc(patients.createdAt));
+      .orderBy(desc(patients.createdAt))
+      .limit(limit);
 
-    const patientIds = patientRows.map(p => p.id);
-    if (patientIds.length === 0) return patientRows.map(p => ({ ...p, lastAppointmentStatus: null }));
-
-    const latestAppts = await db.select({
-      patientId: appointments.patientId,
-      status: appointments.status,
-      date: appointments.date,
-    }).from(appointments)
-      .where(and(
-        eq(appointments.clinicId, this.clinicId),
-        sql`${appointments.patientId} IN (${sql.join(patientIds.map(id => sql`${id}`), sql`, `)})`,
-      ))
-      .orderBy(desc(appointments.date));
-
-    const latestStatusMap = new Map<number, string>();
-    for (const appt of latestAppts) {
-      if (!latestStatusMap.has(appt.patientId)) latestStatusMap.set(appt.patientId, appt.status);
-    }
-
-    return patientRows.map(p => ({ ...p, lastAppointmentStatus: latestStatusMap.get(p.id) || null }));
+    return rows.map(r => ({ ...r.patient, lastAppointmentStatus: r.lastAppointmentStatus ?? null }));
   }
 
   async getPatient(id: number): Promise<Patient | undefined> {
@@ -222,7 +241,10 @@ export class DatabaseStorage {
 
   // ── Appointments ──────────────────────────────────────────────────────────
 
-  async getAppointments(filters: { date?: Date; doctorId?: string; status?: string; patientId?: number }): Promise<(Appointment & { patient: Patient; doctor: Omit<User, "passwordHash"> | null; bill?: Bill | null })[]> {
+  async getAppointments(filters: {
+    date?: Date; doctorId?: string; status?: string; patientId?: number;
+    from?: Date; to?: Date; limit?: number;
+  }): Promise<(Appointment & { patient: Patient; doctor: Omit<User, "passwordHash"> | null; bill?: Bill | null })[]> {
     let conditions: any[] = [eq(appointments.clinicId, this.clinicId)];
 
     if (filters.date) {
@@ -233,6 +255,10 @@ export class DatabaseStorage {
       const endOfDay = new Date(filters.date.getTime() + 24 * 60 * 60 * 1000 - 1);
       conditions.push(and(gte(appointments.date, startOfDay), lte(appointments.date, endOfDay)));
     }
+    // Explicit window (used by the Appointments page's tabs) — keeps "all appointments
+    // ever" off the wire while still letting the UI reach any range it asks for.
+    if (filters.from) conditions.push(gte(appointments.date, filters.from));
+    if (filters.to) conditions.push(lte(appointments.date, filters.to));
     if (filters.doctorId) conditions.push(eq(appointments.doctorId, filters.doctorId));
     if (filters.patientId) conditions.push(eq(appointments.patientId, filters.patientId));
     if (filters.status) {
@@ -240,8 +266,41 @@ export class DatabaseStorage {
       conditions.push(sql`${appointments.status} IN (${sql.join(statuses.map(s => sql`${s}`), sql`, `)})`);
     }
 
+    // Hard ceiling on rows per request. This endpoint used to be unbounded: with no
+    // filters it serialised every appointment the clinic had ever taken, each with a
+    // full patient row, a full user row and a bill attached.
+    const limit = Math.min(Math.max(1, filters.limit ?? 1000), 2000);
+
+    // Explicit projection rather than `select()`: the bare form returns every column
+    // of all four joined tables, including patient columns no list view reads and the
+    // doctor's entire user row. Same data the callers use, a fraction of the bytes.
     const rows = await db
-      .select()
+      .select({
+        appointment: appointments,
+        patient: {
+          id: patients.id,
+          clinicId: patients.clinicId,
+          name: patients.name,
+          phone: patients.phone,
+          email: patients.email,
+          source: patients.source,
+          status: patients.status,
+          funnelStage: patients.funnelStage,
+          dateOfBirth: patients.dateOfBirth,
+          gender: patients.gender,
+          bloodGroup: patients.bloodGroup,
+          allergies: patients.allergies,
+          createdAt: patients.createdAt,
+        },
+        doctor: {
+          id: users.id,
+          name: users.name,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          role: users.role,
+        },
+        bill: bills,
+      })
       .from(appointments)
       .leftJoin(patients, eq(patients.id, appointments.patientId))
       .leftJoin(users, eq(users.id, appointments.doctorId))
@@ -253,29 +312,22 @@ export class DatabaseStorage {
       // unspecified/unstable order — which is what made queue numbers look shuffled
       // in this list. queuePosition (asc; NULLS LAST is Postgres's default for ASC) is
       // the actual queue order, and id is a final tiebreaker for full determinism.
-      .orderBy(desc(appointments.date), asc(appointments.queuePosition), asc(appointments.id));
+      .orderBy(desc(appointments.date), asc(appointments.queuePosition), asc(appointments.id))
+      .limit(limit);
 
-    return rows.map(r => {
-      // doctorId is a hard FK but the referenced user can still be deleted (deleteDoctor
-      // only cascades booked/checked_in appointments to "cancelled", not the FK itself),
-      // so this leftJoin can legitimately come back empty — callers must handle null.
-      let doctor: Omit<User, "passwordHash"> | null = null;
-      if (r.users) {
-        const { passwordHash, ...safeDoctor } = r.users;
-        doctor = safeDoctor;
-      }
-      return {
-        ...r.appointments,
-        patient: {
-          ...r.patients!,
-          source: r.patients?.source || "internal",
-          status: r.patients?.status || "active",
-          funnelStage: r.patients?.funnelStage || "new",
-        },
-        doctor,
-        bill: r.bills || null,
-      };
-    });
+    return rows.map(r => ({
+      ...r.appointment,
+      patient: {
+        ...(r.patient as any),
+        source: r.patient?.source || "internal",
+        status: r.patient?.status || "active",
+        funnelStage: r.patient?.funnelStage || "new",
+      },
+      // doctorId is a hard FK but the referenced user can still be deleted, so this
+      // leftJoin can legitimately come back empty — callers must handle null.
+      doctor: r.doctor?.id ? r.doctor : null,
+      bill: r.bill || null,
+    })) as any;
   }
 
   async getAppointment(id: number): Promise<Appointment | undefined> {
@@ -294,12 +346,25 @@ export class DatabaseStorage {
       .set(updates)
       .where(and(eq(appointments.id, id), eq(appointments.clinicId, this.clinicId)))
       .returning();
-    return row!;
+    // An id from another clinic (or an already-deleted one) matches nothing, and the
+    // non-null assertion handed that `undefined` back as a valid Appointment.
+    if (!row) throw new Error("Appointment not found");
+    return row;
   }
 
   async deleteAppointment(id: number): Promise<void> {
-    await db.delete(appointments)
-      .where(and(eq(appointments.id, id), eq(appointments.clinicId, this.clinicId)));
+    // bills.appointmentId and prescriptions.appointmentId are NOT NULL foreign keys
+    // with no cascade, so deleting the appointment on its own raised a FK violation
+    // for any visit that had been billed or prescribed for — which is most of them.
+    // Same dependency-order delete deletePatient already does.
+    await db.transaction(async (tx) => {
+      await tx.delete(prescriptions)
+        .where(and(eq(prescriptions.clinicId, this.clinicId), eq(prescriptions.appointmentId, id)));
+      await tx.delete(bills)
+        .where(and(eq(bills.clinicId, this.clinicId), eq(bills.appointmentId, id)));
+      await tx.delete(appointments)
+        .where(and(eq(appointments.id, id), eq(appointments.clinicId, this.clinicId)));
+    });
   }
 
   // ── Bills ─────────────────────────────────────────────────────────────────
@@ -390,7 +455,10 @@ export class DatabaseStorage {
     const e = new Date(nowIST); e.setUTCHours(23, 59, 59, 999);
     const today = new Date(s.getTime() - IST_MS);
     const endOfToday = new Date(e.getTime() - IST_MS);
-    const weekStart = new Date(today); weekStart.setDate(weekStart.getDate() - 6);
+    // Whole-day subtraction in raw ms, for the same reason the weeklyData loop below
+    // does it: `today` is an IST-midnight instant, and setDate() reads/writes it
+    // through the server's local calendar, which shifts the bucket off IST.
+    const weekStart = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
 
     const rangeStart = range?.start ?? today;
     const rangeEnd = range?.end ?? endOfToday;
@@ -405,26 +473,74 @@ export class DatabaseStorage {
     }
     // else range = {start: null, end: null} ("all time") — no date bound added
 
-    const [todaysAppts, weekAppts, weekPaidBills, pendingTotal, doctors, sourceCounts, rangeApptStats, rangeCollected] = await Promise.all([
-      this.getAppointments({ date: today }),
+    // Everything below is aggregated by Postgres and comes back as a handful of rows.
+    // This used to pull every appointment for the week, every paid bill for the week,
+    // and a full four-table join of today's appointments (with patient, doctor and bill
+    // rows attached) into Node just to count them and average two timestamps — on every
+    // 60s poll, from every open dashboard, growing with each clinic's volume. The
+    // numbers are identical; the bytes crossing the wire are not.
+    const IST_INTERVAL = sql`interval '5 hours 30 minutes'`;
+
+    const [weekByDay, weekRevenueByDay, pendingTotal, liveQueues, liveWait, sourceCounts, rangeApptStats, rangeCollected] = await Promise.all([
+      // One row per IST day: appointment count + average wait for consultations that
+      // actually started that day.
       db.select({
-        id: appointments.id,
-        date: appointments.date,
-        status: appointments.status,
-        doctorId: appointments.doctorId,
-        checkInTime: appointments.checkInTime,
-        consultationStartTime: appointments.consultationStartTime,
+        day: sql<string>`to_char((${appointments.date} + ${IST_INTERVAL})::date, 'YYYY-MM-DD')`,
+        patients: sql<number>`count(*)::int`,
+        avgWait: sql<number>`COALESCE(ROUND(AVG(
+          CASE WHEN ${appointments.checkInTime} IS NOT NULL AND ${appointments.consultationStartTime} IS NOT NULL
+               THEN EXTRACT(EPOCH FROM (${appointments.consultationStartTime} - ${appointments.checkInTime})) / 60
+          END
+        )), 0)::int`,
       }).from(appointments)
-        .where(and(eq(appointments.clinicId, this.clinicId), gte(appointments.date, weekStart), lte(appointments.date, endOfToday))),
-      db.select({ amount: bills.amount, billingDate: bills.billingDate })
-        .from(bills)
-        .where(and(eq(bills.clinicId, this.clinicId), gte(bills.billingDate, weekStart), lte(bills.billingDate, endOfToday), eq(bills.status, "paid"))),
+        .where(and(eq(appointments.clinicId, this.clinicId), gte(appointments.date, weekStart), lte(appointments.date, endOfToday)))
+        .groupBy(sql`(${appointments.date} + ${IST_INTERVAL})::date`),
+
+      db.select({
+        day: sql<string>`to_char((${bills.billingDate} + ${IST_INTERVAL})::date, 'YYYY-MM-DD')`,
+        revenue: sql<number>`COALESCE(SUM(${bills.amount}), 0)::int`,
+      }).from(bills)
+        .where(and(eq(bills.clinicId, this.clinicId), gte(bills.billingDate, weekStart), lte(bills.billingDate, endOfToday), eq(bills.status, "paid")))
+        .groupBy(sql`(${bills.billingDate} + ${IST_INTERVAL})::date`),
+
       // Aggregated in SQL rather than pulling every bill this clinic has ever
       // issued into Node just to sum one field — that scan only grows over a
-      // clinic's lifetime, and this query re-runs on every dashboard poll (60s).
+      // clinic's lifetime, and this query re-runs on every dashboard poll.
       db.select({ total: sql<number>`COALESCE(SUM(${bills.amount}), 0)::int` })
         .from(bills).where(and(eq(bills.clinicId, this.clinicId), eq(bills.status, "pending"))),
-      this.getDoctors(),
+
+      // Today's waiting count per doctor, with the doctor's name and consult time —
+      // only doctors who actually have someone waiting come back.
+      db.select({
+        doctorId: appointments.doctorId,
+        doctorName: users.name,
+        avgConsultationTime: doctorProfiles.avgConsultationTime,
+        waitingCount: sql<number>`count(*)::int`,
+      }).from(appointments)
+        .leftJoin(users, eq(users.id, appointments.doctorId))
+        .leftJoin(doctorProfiles, eq(doctorProfiles.userId, appointments.doctorId))
+        .where(and(
+          eq(appointments.clinicId, this.clinicId),
+          gte(appointments.date, today), lte(appointments.date, endOfToday),
+          inArray(appointments.status, ["booked", "checked_in", "in_progress"]),
+        ))
+        .groupBy(appointments.doctorId, users.name, doctorProfiles.avgConsultationTime)
+        // GROUP BY output order is unspecified, and this list is re-rendered on every
+        // dashboard refresh — without an explicit order the doctor cards reshuffle.
+        .orderBy(desc(sql`count(*)`), users.name),
+
+      // Live average wait: elapsed minutes for everyone checked in and not yet seen.
+      db.select({
+        avgMinutes: sql<number>`COALESCE(ROUND(AVG(
+          GREATEST(0, EXTRACT(EPOCH FROM (NOW() - COALESCE(${appointments.checkInTime}, ${appointments.date}))) / 60)
+        )), 0)::int`,
+      }).from(appointments)
+        .where(and(
+          eq(appointments.clinicId, this.clinicId),
+          gte(appointments.date, today), lte(appointments.date, endOfToday),
+          eq(appointments.status, "checked_in"),
+        )),
+
       db.select({ source: patients.source, cnt: sql<number>`count(*)::int` })
         .from(patients)
         .where(eq(patients.clinicId, this.clinicId))
@@ -437,7 +553,10 @@ export class DatabaseStorage {
         .from(bills).where(and(...rangeBillConditions)),
     ]);
 
-    // Build weekly chart data from in-memory aggregation
+    // Stitch the per-day rows onto the 7-day axis (missing days = zero).
+    const apptsByDay = new Map(weekByDay.map(r => [r.day, r]));
+    const revenueByDay = new Map(weekRevenueByDay.map(r => [r.day, r.revenue]));
+
     const weeklyData = [];
     let totalRevenue = 0;
     for (let i = 6; i >= 0; i--) {
@@ -445,33 +564,19 @@ export class DatabaseStorage {
       // instead of setDate()/setHours(), which reset to the server's local (UTC)
       // midnight and silently shift every bucket ~5.5h off its IST calendar day.
       const d = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
-      const dEnd = new Date(d.getTime() + 24 * 60 * 60 * 1000 - 1);
-      const dayTs = d.getTime();
-      const dEndTs = dEnd.getTime();
-
-      const dayAppts = weekAppts.filter(a => {
-        const t = new Date(a.date).getTime();
-        return t >= dayTs && t <= dEndTs;
-      });
-      const dayBills = weekPaidBills.filter(b => {
-        const t = new Date(b.billingDate).getTime();
-        return t >= dayTs && t <= dEndTs;
-      });
-
-      const dayRevenue = dayBills.reduce((acc, b) => acc + b.amount, 0) / 100;
+      // Shift by the IST offset before formatting so the label (and the key matched
+      // against the SQL buckets, which are grouped in IST) reflects the IST date —
+      // date-fns' format() reads local (server/UTC) getters otherwise.
+      const istDay = new Date(d.getTime() + IST_MS);
+      const key = istDay.toISOString().slice(0, 10);
+      const dayRevenue = (revenueByDay.get(key) ?? 0) / 100;
       totalRevenue += dayRevenue;
-
-      const waitTimes = dayAppts
-        .filter(a => a.checkInTime && a.consultationStartTime)
-        .map(a => (new Date(a.consultationStartTime!).getTime() - new Date(a.checkInTime!).getTime()) / 60000);
-
-      const avgWait = waitTimes.length > 0
-        ? Math.round(waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length)
-        : 0;
-
-      // Shift by the IST offset before formatting so the label reflects the IST
-      // calendar date — date-fns' format() reads local (server/UTC) getters otherwise.
-      weeklyData.push({ date: format(new Date(d.getTime() + IST_MS), "MMM dd"), patients: dayAppts.length, avgWait, revenue: dayRevenue });
+      weeklyData.push({
+        date: format(istDay, "MMM dd"),
+        patients: apptsByDay.get(key)?.patients ?? 0,
+        avgWait: apptsByDay.get(key)?.avgWait ?? 0,
+        revenue: dayRevenue,
+      });
     }
 
     // Pending is always the current outstanding balance across all time — it doesn't
@@ -480,16 +585,12 @@ export class DatabaseStorage {
     const totalPending = pendingTotal[0]?.total ?? 0;
     const rangeCollectedAmount = rangeCollected[0]?.total ?? 0;
 
-    const activeQueues = doctors.map(doc => {
-      const docAppts = todaysAppts.filter(a => a.doctorId === doc.id);
-      const docWaiting = docAppts.filter(a => ["booked", "checked_in", "in_progress"].includes(a.status)).length;
-      return {
-        doctorId: doc.id,
-        doctorName: doc.name,
-        waitingCount: docWaiting,
-        currentWaitTime: docWaiting * (doc.doctorProfile?.avgConsultationTime || 15),
-      };
-    }).filter(q => q.waitingCount > 0);
+    const activeQueues = liveQueues.map(q => ({
+      doctorId: q.doctorId,
+      doctorName: q.doctorName,
+      waitingCount: q.waitingCount,
+      currentWaitTime: q.waitingCount * (q.avgConsultationTime || 15),
+    }));
 
     const sourceDistribution = sourceCounts.map(r => ({ name: r.source || "other", value: r.cnt }));
 
@@ -499,17 +600,8 @@ export class DatabaseStorage {
     // whenever nobody has been called in yet, it sits frozen at 0 (or a stale earlier
     // value) while people physically checked in keep waiting longer with nothing
     // reflecting it. This instead measures elapsed wait, right now, for everyone
-    // currently checked in and not yet seen — it changes every time the dashboard
-    // polls, same as the room actually looks.
-    const now = Date.now();
-    const currentlyWaiting = todaysAppts.filter(a => a.status === "checked_in");
-    const liveWaitMinutes = currentlyWaiting.map(a => {
-      const since = a.checkInTime ? new Date(a.checkInTime).getTime() : new Date(a.date).getTime();
-      return Math.max(0, (now - since) / 60000);
-    });
-    const avgWaitTime = liveWaitMinutes.length > 0
-      ? Math.round(liveWaitMinutes.reduce((a, b) => a + b, 0) / liveWaitMinutes.length)
-      : 0;
+    // currently checked in and not yet seen.
+    const avgWaitTime = liveWait[0]?.avgMinutes ?? 0;
 
     return {
       // These three respect the requested `range` (default: today); everything else

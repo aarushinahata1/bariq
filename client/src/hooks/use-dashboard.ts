@@ -9,6 +9,7 @@ export function useDashboardStats() {
       if (!res.ok) throw new Error("Failed to fetch dashboard stats");
       return api.dashboard.stats.responses[200].parse(await res.json());
     },
-    refetchInterval: 60000, // Refresh every minute
+    refetchInterval: 180000, // Refresh every 3 minutes — these are reporting
+    // figures, not live queue state, and each refresh runs eight aggregate queries.
   });
 }
