@@ -15,7 +15,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
 import QRCode from "react-qr-code";
 
-type Tab = "clinic" | "billing" | "whatsapp" | "sms" | "staff";
+type Tab = "clinic" | "billing" | "whatsapp" | "sms" | "staff" | "account";
 
 const WHATSAPP_PROVIDERS = [
   { value: "web", label: "WhatsApp Web (Free, scan QR)" },
@@ -412,6 +412,48 @@ function WhatsAppWebPanel() {
   );
 }
 
+// ── Change Password ──────────────────────────────────────────────────────────
+function ChangePasswordCard() {
+  const { toast } = useToast();
+  const [form, setForm] = useState({ currentPassword: "", newPassword: "", confirm: "" });
+  const change = useMutation({
+    mutationFn: () => apiRequest("POST", "/api/auth/change-password", {
+      currentPassword: form.currentPassword, newPassword: form.newPassword,
+    }).then(r => r.json()),
+    onSuccess: () => {
+      setForm({ currentPassword: "", newPassword: "", confirm: "" });
+      toast({ title: "Password changed", description: "Use your new password next time you log in." });
+    },
+    onError: (e: Error) => toast({ title: "Could not change password", description: e.message, variant: "destructive" }),
+  });
+  const mismatch = form.confirm.length > 0 && form.confirm !== form.newPassword;
+  const ready = form.currentPassword && form.newPassword.length >= 8 && form.newPassword === form.confirm;
+  return (
+    <Card className="p-6 space-y-4">
+      <div>
+        <h2 className="font-semibold text-slate-900">Change Password</h2>
+        <p className="text-sm text-slate-500">Choose a new password with at least 8 characters.</p>
+      </div>
+      {([
+        ["currentPassword", "Current password"],
+        ["newPassword", "New password"],
+        ["confirm", "Repeat new password"],
+      ] as const).map(([key, label]) => (
+        <div key={key} className="space-y-1.5">
+          <Label>{label}</Label>
+          <Input type="password" autoComplete={key === "currentPassword" ? "current-password" : "new-password"}
+            value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} />
+        </div>
+      ))}
+      {mismatch && <p className="text-sm text-red-600">The two new passwords don't match.</p>}
+      <Button onClick={() => change.mutate()} disabled={!ready || change.isPending}
+        className="bg-teal-600 hover:bg-teal-700 text-white">
+        {change.isPending ? "Saving…" : "Change Password"}
+      </Button>
+    </Card>
+  );
+}
+
 // ── Staff & Roles Panel ──────────────────────────────────────────────────────
 
 const STAFF_ROLES = [
@@ -743,6 +785,7 @@ export default function Settings() {
     { id: "clinic", label: "Clinic Profile", icon: Building2, color: "text-teal-700" },
     { id: "billing", label: "Plan & Billing", icon: CreditCard, color: "text-teal-700" },
     { id: "staff", label: "Staff & Roles", icon: Users, color: "text-violet-600" },
+    { id: "account", label: "Account", icon: Eye, color: "text-slate-600" },
     { id: "whatsapp", label: "WhatsApp API", icon: MessageCircle, color: "text-emerald-600" },
     { id: "sms", label: "SMS API", icon: MessageSquare, color: "text-teal-700" },
   ];
@@ -1387,6 +1430,8 @@ export default function Settings() {
 
         {/* Staff & Roles Panel */}
         {activeTab === "staff" && <StaffPanel />}
+
+        {activeTab === "account" && <ChangePasswordCard />}
 
         {/* Info banner */}
         <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3 flex gap-3 text-sm text-amber-800">

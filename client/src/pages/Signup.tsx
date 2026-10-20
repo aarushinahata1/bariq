@@ -44,8 +44,8 @@ export default function Signup() {
       toast({ title: "Required fields missing", description: "Please fill all required fields", variant: "destructive" });
       return;
     }
-    if (form.password.length < 6) {
-      toast({ title: "Weak password", description: "Password must be at least 6 characters", variant: "destructive" });
+    if (form.password.length < 8) {
+      toast({ title: "Weak password", description: "Password must be at least 8 characters", variant: "destructive" });
       return;
     }
     signup.mutate(form);

@@ -486,7 +486,7 @@ export class DatabaseStorage {
       // actually started that day.
       db.select({
         day: sql<string>`to_char((${appointments.date} + ${IST_INTERVAL})::date, 'YYYY-MM-DD')`,
-        patients: sql<number>`count(*)::int`,
+        patients: sql<number>`count(*) filter (where ${appointments.status} <> 'cancelled')::int`,
         avgWait: sql<number>`COALESCE(ROUND(AVG(
           CASE WHEN ${appointments.checkInTime} IS NOT NULL AND ${appointments.consultationStartTime} IS NOT NULL
                THEN EXTRACT(EPOCH FROM (${appointments.consultationStartTime} - ${appointments.checkInTime})) / 60
@@ -546,7 +546,7 @@ export class DatabaseStorage {
         .where(eq(patients.clinicId, this.clinicId))
         .groupBy(patients.source),
       db.select({
-        total: sql<number>`count(*)::int`,
+        total: sql<number>`count(*) filter (where ${appointments.status} <> 'cancelled')::int`,
         completed: sql<number>`count(*) filter (where ${appointments.status} = 'completed')::int`,
       }).from(appointments).where(and(...rangeApptConditions)),
       db.select({ total: sql<number>`COALESCE(SUM(${bills.amount}), 0)::int` })

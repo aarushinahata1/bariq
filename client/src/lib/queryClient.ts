@@ -7,7 +7,14 @@ async function throwIfResNotOk(res: Response) {
       queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     }
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    // Servers answer with {"message": "..."} — surface just that sentence so toasts
+    // read "Email already exists" instead of `409: {"message":"Email already exists"}`.
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && typeof parsed.message === "string" && parsed.message) message = parsed.message;
+    } catch {}
+    throw Object.assign(new Error(message), { status: res.status });
   }
 }
 

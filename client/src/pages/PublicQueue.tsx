@@ -102,7 +102,9 @@ export default function PublicQueue() {
     .sort((a: any, b: any) => (a.queuePosition ?? Infinity) - (b.queuePosition ?? Infinity));
 
   const avgConsultTime = doctor.doctorProfile?.avgConsultationTime || 15;
-  const totalWaitMins = waitingList.length * avgConsultTime;
+  // Whoever is with the doctor now still needs (roughly) one consultation to finish.
+  const aheadOffset = currentPatient ? 1 : 0;
+  const totalWaitMins = (waitingList.length + aheadOffset) * avgConsultTime;
 
   // Personalized "you" banner, only shown when this URL carries `?n=` — everyone
   // else just sees the plain shared board. queueNumber is stable across a staff
@@ -144,7 +146,7 @@ export default function PublicQueue() {
             <p className="text-teal-100/70 text-[10px] uppercase tracking-[0.2em] font-bold mb-2">Your Token</p>
             <div className="text-6xl font-black text-white leading-none tracking-tighter mb-3">#{myNumber}</div>
             {!myAppt ? (
-              <p className="text-teal-100/70 text-sm">Not found in today's queue — check with reception</p>
+              <p className="text-teal-100/80 text-sm">This token isn't in the waiting list. If you've already seen the doctor, thank you! Otherwise please ask at reception.</p>
             ) : myAppt.status === "completed" ? (
               <p className="text-green-200 font-bold text-sm">Consultation complete!</p>
             ) : myAppt.status === "in_progress" ? (
@@ -273,7 +275,7 @@ export default function PublicQueue() {
                           Token #{apt.queueNumber ?? apt.queuePosition ?? idx + 1}
                         </p>
                         <p className="text-slate-600 text-sm">
-                          Est. wait: ~{(idx + 1) * avgConsultTime} min
+                          Est. wait: ~{(idx + aheadOffset) * avgConsultTime} min
                         </p>
                       </div>
                     </div>
@@ -286,7 +288,7 @@ export default function PublicQueue() {
                     )}>
                       {isFirst && isCheckedIn ? "Up next" :
                        isFirst ? "Soon" :
-                       isCheckedIn ? "Paid" :
+                       isCheckedIn ? "Checked in" :
                        "Waiting"}
                     </span>
                   </div>

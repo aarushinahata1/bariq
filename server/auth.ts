@@ -33,6 +33,8 @@ const SUPER_ADMIN_PASSWORD = requireEnv("SUPER_ADMIN_PASSWORD");
 // A fixed bcrypt hash (of an arbitrary placeholder, cost 10) with no corresponding
 // real account — compared against on login when no clinic/partner matches the given
 // email, purely to burn roughly the same time as a real password check would.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 const DUMMY_BCRYPT_HASH = "$2a$10$CwTycUXWue0Thq9StjUM0uJ8Q4wF5C0Ie6C7z2joNa9DE1NpZ2K5m";
 
 // Timing-safe string comparison — prevents timing attacks on password checks.
@@ -75,6 +77,21 @@ async function getClinicForPlanCheck(id: number): Promise<Clinic | undefined> {
   if (clinic) clinicPlanCache.set(id, { clinic, ts: Date.now() });
   else clinicPlanCache.delete(id);
   return clinic;
+}
+
+const staffSessionCache = new Map<string, { role: string; ts: number }>();
+
+async function getStaffForSession(userId: string, clinicId: number): Promise<{ role: string } | null> {
+  const cached = staffSessionCache.get(userId);
+  if (cached && Date.now() - cached.ts < CLINIC_PLAN_CACHE_TTL_MS) return { role: cached.role };
+  const [row] = await db.select({ role: users.role }).from(users)
+    .where(and(eq(users.id, userId), eq(users.clinicId, clinicId)));
+  if (!row) {
+    staffSessionCache.delete(userId);
+    return null;
+  }
+  staffSessionCache.set(userId, { role: row.role, ts: Date.now() });
+  return { role: row.role };
 }
 
 export async function getPartner(id: number): Promise<Partner | undefined> {
@@ -275,15 +292,22 @@ export function setupAuth(app: Express) {
   // ── Signup ───────────────────────────────────────────────────────────────
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { name, email, password, phone, address, referralCode } = req.body;
-      if (!name || !email || !password) {
+      const { name, email, password, phone, address, referralCode } = req.body ?? {};
+      if (typeof name !== "string" || typeof email !== "string" || typeof password !== "string" || !name.trim() || !email.trim() || !password) {
         return res.status(400).json({ message: "Name, email and password are required" });
+      }
+      if (!EMAIL_RE.test(email.trim())) {
+        return res.status(400).json({ message: "Please enter a valid email address" });
       }
       if (password.length < 8) {
         return res.status(400).json({ message: "Password must be at least 8 characters" });
       }
       const existing = await db.select().from(clinics).where(eq(clinics.email, email.toLowerCase().trim()));
-      if (existing.length > 0) {
+      // Login checks clinics, then staff, then partners — so an email already used by
+      // any of them would make the new account unreachable (or hijack the other's login).
+      const [staffClash] = await db.select({ id: users.id }).from(users).where(eq(users.email, email.toLowerCase().trim()));
+      const [partnerClash] = await db.select({ id: partners.id }).from(partners).where(eq(partners.email, email.toLowerCase().trim()));
+      if (existing.length > 0 || staffClash || partnerClash) {
         return res.status(400).json({ message: "An account with this email already exists" });
       }
       const passwordHash = await hashPassword(password);
@@ -334,9 +358,12 @@ export function setupAuth(app: Express) {
   // ── Partner signup ─────────────────────────────────────────────────────────
   app.post("/api/auth/partner-signup", async (req, res) => {
     try {
-      const { name, email, password, phone } = req.body;
-      if (!name || !email || !password) {
+      const { name, email, password, phone } = req.body ?? {};
+      if (typeof name !== "string" || typeof email !== "string" || typeof password !== "string" || !name.trim() || !email.trim() || !password) {
         return res.status(400).json({ message: "Name, email and password are required" });
+      }
+      if (!EMAIL_RE.test(email.trim())) {
+        return res.status(400).json({ message: "Please enter a valid email address" });
       }
       if (password.length < 8) {
         return res.status(400).json({ message: "Password must be at least 8 characters" });
@@ -380,8 +407,8 @@ export function setupAuth(app: Express) {
   // ── Login ────────────────────────────────────────────────────────────────
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const { email, password } = req.body;
-      if (!email || !password) {
+      const { email, password } = req.body ?? {};
+      if (typeof email !== "string" || typeof password !== "string" || !email || !password) {
         return res.status(400).json({ message: "Email and password are required" });
       }
 
@@ -528,6 +555,49 @@ export function setupAuth(app: Express) {
     }
   });
 
+  // ── Change password (clinic owner, staff, or partner — whoever is logged in) ──
+  app.post("/api/auth/change-password", async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body ?? {};
+      if (typeof currentPassword !== "string" || typeof newPassword !== "string" || !currentPassword) {
+        return res.status(400).json({ message: "Current and new password are required" });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: "New password must be at least 8 characters" });
+      }
+      if (newPassword === currentPassword) {
+        return res.status(400).json({ message: "New password must be different from the current one" });
+      }
+
+      let hash: string | null | undefined;
+      let apply: (h: string) => Promise<unknown>;
+      if (req.session.userId && req.session.clinicId) {
+        const [u] = await db.select().from(users).where(eq(users.id, req.session.userId));
+        hash = u?.passwordHash;
+        apply = (h) => db.update(users).set({ passwordHash: h }).where(eq(users.id, u!.id));
+      } else if (req.session.clinicId) {
+        const clinic = await getClinic(req.session.clinicId);
+        hash = clinic?.passwordHash;
+        apply = (h) => db.update(clinics).set({ passwordHash: h }).where(eq(clinics.id, clinic!.id));
+      } else if (req.session.partnerId) {
+        const partner = await getPartner(req.session.partnerId);
+        hash = partner?.passwordHash;
+        apply = (h) => db.update(partners).set({ passwordHash: h }).where(eq(partners.id, partner!.id));
+      } else {
+        return res.status(401).json({ message: "Unauthorized" });
+      }
+
+      if (!hash || !(await verifyPassword(currentPassword, hash))) {
+        return res.status(400).json({ message: "Current password is incorrect" });
+      }
+      await apply(await hashPassword(newPassword));
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Change password error:", err);
+      res.status(500).json({ message: "Failed to change password" });
+    }
+  });
+
   // ── Logout ───────────────────────────────────────────────────────────────
   app.post("/api/auth/logout", (req, res) => {
     req.session.destroy(() => res.json({ success: true }));
@@ -544,6 +614,16 @@ export function setupAuth(app: Express) {
     if (req.path === "/payments" || req.path.startsWith("/payments/")) return next();
 
     try {
+      // A staff session outlives the staff row (sessions last 7 days), so a removed
+      // staff member would otherwise keep full access until the cookie expired. Also
+      // re-read the role so a changed role takes effect without a fresh login.
+      if (req.session.userId) {
+        const staff = await getStaffForSession(req.session.userId, req.session.clinicId);
+        if (!staff) {
+          return req.session.destroy(() => res.status(401).json({ message: "Unauthorized" }));
+        }
+        req.session.role = staff.role;
+      }
       const clinic = await getClinicForPlanCheck(req.session.clinicId);
       if (!clinic) return res.status(401).json({ message: "Clinic not found" });
 

@@ -189,7 +189,52 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.type("application/xml").send(buildSitemapXml());
   });
 
+  // ── Housekeeping: close out yesterday's unfinished queue ───────────────────
+  // Patients who were booked/checked-in on an earlier day and never seen are no-shows.
+  // Without this they sit in "booked" forever, polluting patient status, funnels and
+  // the "last appointment" badge.
+  async function sweepStaleAppointments() {
+    try {
+      const { start: todayStart } = dayRangeIST();
+      const swept = await db.update(appointments)
+        .set({ status: "no_show" })
+        .where(and(lt(appointments.date, todayStart), inArray(appointments.status, ["booked", "checked_in"])))
+        .returning({ doctorId: appointments.doctorId });
+      new Set(swept.map(r => r.doctorId)).forEach(broadcastQueueUpdate);
+      if (swept.length) console.log(`[sweep] marked ${swept.length} stale appointment(s) as no_show`);
+    } catch (err) {
+      console.error("[sweep] failed:", err);
+    }
+  }
+  setTimeout(sweepStaleAppointments, 30_000);
+  setInterval(sweepStaleAppointments, 60 * 60 * 1000).unref();
+
   // ── PATIENTS ──────────────────────────────────────────────────────────────
+
+  // CSV download of the patient directory (for backups / moving to another tool).
+  // Registered before /api/patients/:id so "export" isn't read as an id.
+  app.get("/api/patients-export", requireAuth, requireRole("admin", "receptionist"), async (req, res) => {
+    try {
+      const rows = await storage(req).getPatients();
+      // Leading = + - @ can make Excel run a cell as a formula; prefix those.
+      const cell = (v: unknown) => {
+        let t = v == null ? "" : String(v);
+        if (/^[=+\-@]/.test(t)) t = "'" + t;
+        return `"${t.replace(/"/g, '""')}"`;
+      };
+      const header = ["Name", "Phone", "Email", "Gender", "Date of Birth", "Blood Group", "Allergies", "Source", "Added On"];
+      const lines = rows.map(p => [
+        p.name, p.phone, p.email, p.gender, p.dateOfBirth, p.bloodGroup, p.allergies, p.source,
+        p.createdAt ? istDateKey(new Date(p.createdAt)) : "",
+      ].map(cell).join(","));
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="patients-${istDateKey(new Date())}.csv"`);
+      res.send("﻿" + [header.map(cell).join(","), ...lines].join("\r\n"));
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Failed to export patients" });
+    }
+  });
 
   app.get(api.patients.list.path, requireAuth, async (req, res) => {
     try {
@@ -223,7 +268,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.delete("/api/patients/:id", requireAuth, async (req, res) => {
+  app.delete("/api/patients/:id", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (isNaN(id)) return res.status(400).json({ message: "Invalid patient ID" });
@@ -339,6 +384,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (req.query.date) {
         const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
         date = new Date(new Date(req.query.date as string).getTime() - IST_OFFSET_MS);
+        if (Number.isNaN(date.getTime())) return res.status(400).json({ message: "Invalid date" });
       }
       const doctorId = req.query.doctorId as string | undefined;
       const status = req.query.status as string | undefined;
@@ -428,11 +474,31 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             gte(appointments.date, apptDateOnly),
             lte(appointments.date, apptEndOfDay),
           ));
+          let queuePosition = (maxRow?.maxPos ?? 0) + 1;
+          if (data.status === "checked_in") {
+            // Emergency: goes to the front of the waiting line (behind whoever is already
+            // with the doctor), not the back — everyone waiting moves down one place.
+            const waiting = and(
+              eq(appointments.clinicId, req.session.clinicId!),
+              eq(appointments.doctorId, data.doctorId),
+              gte(appointments.date, apptDateOnly),
+              lte(appointments.date, apptEndOfDay),
+              inArray(appointments.status, ["booked", "checked_in"]),
+            );
+            const [front] = await tx.select({ minPos: sql<number | null>`MIN(${appointments.queuePosition})` })
+              .from(appointments).where(waiting);
+            if (front?.minPos != null) {
+              await tx.update(appointments)
+                .set({ queuePosition: sql`${appointments.queuePosition} + 1` })
+                .where(waiting);
+              queuePosition = front.minPos;
+            }
+          }
           const [row] = await tx.insert(appointments).values({
             ...data,
             clinicId: req.session.clinicId!,
             queueNumber: (maxRow?.maxNum ?? 0) + 1,
-            queuePosition: (maxRow?.maxPos ?? 0) + 1,
+            queuePosition,
           }).returning();
           return row!;
         });
@@ -553,7 +619,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.delete("/api/appointments/:id", requireAuth, async (req, res) => {
+  app.delete("/api/appointments/:id", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       const id = Number(req.params.id);
       if (!Number.isInteger(id)) return res.status(400).json({ message: "Invalid appointment ID" });
@@ -736,9 +802,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         queueNumber: appointments.queueNumber,
         queuePosition: appointments.queuePosition,
         status: appointments.status,
-        patientName: patients.name,
       }).from(appointments)
-        .leftJoin(patients, and(eq(patients.id, appointments.patientId), eq(patients.clinicId, clinicId)))
         .where(and(
           eq(appointments.doctorId, doctorId),
           eq(appointments.clinicId, clinicId),
@@ -766,7 +830,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
           queueNumber: r.queueNumber,
           queuePosition: r.queuePosition,
           status: r.status,
-          patientName: r.patientName || "Patient",
         })),
       };
       publicQueueCache.set(doctorId, { data: payload, ts: Date.now() });
@@ -1226,7 +1289,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
 
   // ── DASHBOARD ─────────────────────────────────────────────────────────────
 
-  app.get(api.dashboard.stats.path, requireAuth, async (req, res) => {
+  app.get(api.dashboard.stats.path, requireAuth, requireRole("admin", "receptionist"), async (req, res) => {
     try {
       const rangeParam = (req.query.range as string) || "today";
       let dashboardRange: { start: Date | null; end: Date | null };
@@ -1649,6 +1712,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const [doctor] = await db.select().from(users)
         .where(and(eq(users.id, doctorId), eq(users.clinicId, clinicId), eq(users.role, "doctor")));
       if (!doctor) return res.status(404).json({ message: "Doctor not found" });
+      const [kioskProfile] = await db.select({ isAvailable: doctorProfiles.isAvailable }).from(doctorProfiles)
+        .where(eq(doctorProfiles.userId, doctorId));
+      if (kioskProfile?.isAvailable === false) {
+        return res.status(400).json({ message: "This doctor is not taking appointments right now. Please choose another doctor or ask at reception." });
+      }
       const doctorName = doctor.name || [doctor.firstName, doctor.lastName].filter(Boolean).join(" ") || "Doctor";
 
       // Resolve the target booking date — reject past dates. Uses the same IST-day
@@ -1805,11 +1873,11 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
             sql`${medicines.expiryDate} IS NOT NULL AND ${medicines.expiryDate} <= ${thirtyDaysStr} AND ${medicines.expiryDate} >= CURRENT_DATE`)),
         db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
           .from(pharmacyBills)
-          .where(and(eq(pharmacyBills.clinicId, clinicId),
+          .where(and(eq(pharmacyBills.clinicId, clinicId), eq(pharmacyBills.status, "paid"),
             gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd))),
         db.select({ total: sql<number>`COALESCE(SUM(${pharmacyBills.totalAmount}), 0)::int` })
           .from(pharmacyBills)
-          .where(and(eq(pharmacyBills.clinicId, clinicId),
+          .where(and(eq(pharmacyBills.clinicId, clinicId), eq(pharmacyBills.status, "paid"),
             gte(pharmacyBills.createdAt, monthStart))),
       ]);
 
@@ -2260,7 +2328,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         if (medicineId) {
           const [med] = await tx.select({ stockQty: medicines.stockQty })
             .from(medicines)
-            .where(and(eq(medicines.id, Number(medicineId)), eq(medicines.clinicId, clinicId)));
+            .where(and(eq(medicines.id, Number(medicineId)), eq(medicines.clinicId, clinicId)))
+            .for("update");
           if (!med) throw new Error("Medicine not found");
           if (med.stockQty < qty) throw Object.assign(new Error(`Insufficient stock (${med.stockQty} available)`), { isStockError: true });
           await tx.update(medicines)
@@ -2294,7 +2363,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       const [dayBills, dayReturns, existing] = await Promise.all([
         db.select({ paymentMethod: pharmacyBills.paymentMethod, totalAmount: pharmacyBills.totalAmount })
           .from(pharmacyBills)
-          .where(and(eq(pharmacyBills.clinicId, clinicId), gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd))),
+          .where(and(eq(pharmacyBills.clinicId, clinicId), eq(pharmacyBills.status, "paid"), gte(pharmacyBills.createdAt, todayStart), lte(pharmacyBills.createdAt, todayEnd))),
         db.select({ totalAmount: pharmacyReturns.totalAmount })
           .from(pharmacyReturns)
           .where(and(eq(pharmacyReturns.clinicId, clinicId), gte(pharmacyReturns.createdAt, todayStart), lte(pharmacyReturns.createdAt, todayEnd))),
@@ -2466,7 +2535,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     res.json(waWeb.getStatus(req.session.clinicId!));
   });
 
-  app.post("/api/whatsapp-web/connect", requireAuth, async (req, res) => {
+  app.post("/api/whatsapp-web/connect", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       await waWeb.initClient(req.session.clinicId!);
       res.json({ success: true });
@@ -2475,7 +2544,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     }
   });
 
-  app.post("/api/whatsapp-web/disconnect", requireAuth, async (req, res) => {
+  app.post("/api/whatsapp-web/disconnect", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       await waWeb.disconnectClient(req.session.clinicId!);
       res.json({ success: true });
@@ -2547,7 +2616,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
     annual: 4999900,
   };
 
-  app.post("/api/payments", requireAuth, async (req, res) => {
+  app.post("/api/payments", requireAuth, requireRole("admin"), async (req, res) => {
     try {
       const { utr, planType, referralCode } = req.body;
       if (!utr) return res.status(400).json({ message: "UTR is required" });
@@ -2891,6 +2960,14 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
         updates = { planStatus: "trial", trialEndsAt: trialEnds };
       } else if (action === "expire") {
         updates = { planStatus: "expired" };
+      } else if (action === "reset-password") {
+        // No email service yet, so "forgot password" is handled by support: generate a
+        // one-time temporary password, show it to the super admin once, and have the
+        // clinic change it after logging in (Settings → Account).
+        const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+        const tempPassword = Array.from({ length: 10 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+        await db.update(clinics).set({ passwordHash: await hashPassword(tempPassword) }).where(eq(clinics.id, id));
+        return res.json({ success: true, tempPassword });
       } else {
         return res.status(400).json({ message: "Unknown action" });
       }
@@ -3083,6 +3160,13 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
       if (!email?.trim()) return res.status(400).json({ message: "Email is required so this staff member can log in" });
       if (!["receptionist", "pharmacist", "staff"].includes(role)) return res.status(400).json({ message: "Invalid role" });
       if (!password || password.length < 6) return res.status(400).json({ message: "Password must be at least 6 characters" });
+
+      // Login looks at clinic-owner emails before staff emails, so a staff account
+      // sharing one could never sign in.
+      const staffEmail = email.trim().toLowerCase();
+      const [clinicClash] = await db.select({ id: clinics.id }).from(clinics).where(eq(clinics.email, staffEmail));
+      const [partnerClash] = await db.select({ id: partners.id }).from(partners).where(eq(partners.email, staffEmail));
+      if (clinicClash || partnerClash) return res.status(409).json({ message: "Email already exists" });
 
       const passwordHash = await bcrypt.hash(password, 10);
       const [row] = await db.insert(users).values({

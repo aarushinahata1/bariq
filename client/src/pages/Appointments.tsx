@@ -668,7 +668,9 @@ function CreateAppointmentDialog({ open, onOpenChange }: { open: boolean, onOpen
   const matchedPatients = useMemo(() => {
     const digits = normalizePhone(phoneInput);
     if (digits.length < 10 || !patients) return [];
-    return patients.filter(p => normalizePhone(p.phone || "") === digits || normalizePhone(p.phone || "").endsWith(digits));
+    // Compare the last 10 digits so "+91 98765 43210" finds a patient stored as 9876543210.
+    const last10 = digits.slice(-10);
+    return patients.filter(p => normalizePhone(p.phone || "").slice(-10) === last10);
   }, [phoneInput, patients]);
 
   // Auto-select when exactly one match and user hasn't manually switched to "new"

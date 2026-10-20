@@ -91,9 +91,18 @@ export default function Patients() {
         title="Patient Directory"
         description="Manage patient records and medical profiles."
         action={
-          can("patients:create")
-            ? <CreatePatientDialog open={isCreateOpen} onOpenChange={setIsCreateOpen} />
-            : undefined
+          <div className="flex items-center gap-2">
+            {can("patients:create") && (
+              <a
+                href="/api/patients-export"
+                className="inline-flex items-center h-11 px-4 rounded-xl border border-slate-200 bg-white text-sm font-medium text-slate-600 hover:text-teal-700 hover:border-teal-200"
+                title="Download all patients as a spreadsheet (CSV)"
+              >
+                Export
+              </a>
+            )}
+            {can("patients:create") && <CreatePatientDialog open={isCreateOpen} onOpenChange={setIsCreateOpen} />}
+          </div>
         }
       />
 

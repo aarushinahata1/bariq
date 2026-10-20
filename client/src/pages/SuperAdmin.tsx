@@ -287,10 +287,14 @@ export default function SuperAdmin() {
   const clinicAction = useMutation({
     mutationFn: ({ id, action, days }: { id: number; action: string; days?: number }) =>
       apiRequest("PATCH", `/api/admin/clinics/${id}`, { action, days }).then(r => r.json()),
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       qc.invalidateQueries({ queryKey: ["/api/admin/clinics"] });
       qc.invalidateQueries({ queryKey: ["/api/admin/stats"] });
-      toast({ title: "Clinic updated" });
+      if (data?.tempPassword) {
+        window.prompt("Temporary password (copy it now — it is shown only once). Ask the clinic to change it in Settings → Account:", data.tempPassword);
+      } else {
+        toast({ title: "Clinic updated" });
+      }
     },
     onError: () => toast({ title: "Action failed", variant: "destructive" }),
   });
@@ -440,6 +444,10 @@ export default function SuperAdmin() {
                       <Button size="sm" variant="outline" className="h-8 text-xs rounded-lg border-amber-200 text-amber-700 hover:bg-amber-50"
                         onClick={() => clinicAction.mutate({ id: c.id, action: "extend-trial", days: 7 })}>
                         +7 Days
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-8 text-xs rounded-lg"
+                        onClick={() => { if (window.confirm(`Reset the login password for ${c.name}?`)) clinicAction.mutate({ id: c.id, action: "reset-password" }); }}>
+                        Reset Password
                       </Button>
                       <Button size="sm" className="h-8 text-xs rounded-lg bg-teal-700 hover:bg-teal-800 text-white"
                         onClick={() => setGrantingClinic(c)}>
